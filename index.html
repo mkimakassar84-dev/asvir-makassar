@@ -286,7 +286,7 @@
     if (!('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel();
     const BASE_PITCH = 1.05; // slightly higher — reads more natural on most Indonesian TTS voices
-    const BASE_RATE = 1.35; // faster than default — Indonesian TTS voices default to a noticeably slow pace
+    const BASE_RATE = 1.25; // faster than default — Indonesian TTS voices default to a noticeably slow pace
     const segments = buildSpeechSegments(text);
     for (const seg of segments) {
       const utter = new SpeechSynthesisUtterance(seg.text);

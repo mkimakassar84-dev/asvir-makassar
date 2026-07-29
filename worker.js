@@ -1721,6 +1721,22 @@ async function handleChat(request, env) {
   const kpiNames = Array.isArray(kpiData?.kpi) ? kpiData.kpi.map((p) => p.nama).filter(Boolean) : [];
   const absensi = await fetchAttendanceContext(message, kpiNames, history);
 
+  // A handful of dashboard sections were being dumped into EVERY request in full regardless of
+  // relevance (topProduk, deliveryOverview, customerInsights, stockMovement, ...) — measured at
+  // ~25K prompt tokens for a plain "berapa total sales bulan ini" question, which is most of why
+  // responses were slow (large prompts cost real time-to-first-token on top of Gemini's own
+  // "thinking" latency). Gate these behind a topic check, same query-aware-retrieval principle
+  // already used for stock/transactions/piutang, so a typical question's prompt stays small.
+  const nMsgTopic = normText(message);
+  const wantsTopProduk = /terlaris|paling laku|top ?produk|produk ?top|best ?seller|produk.*populer/.test(nMsgTopic);
+  const wantsDeliveryOverview = /ekspedisi|pengiriman|delivery|handcarry|hand carry|same ?day|cut ?off|pihak ketiga/.test(nMsgTopic);
+  const wantsCustomerInsights = /frekuensi|churn|tidak aktif|jarang belanja|paling sering belanja|loyal|repeat ?order/.test(nMsgTopic);
+  const wantsFo1Core = /1.?core|fiber optic 1|kabel 1 core/.test(nMsgTopic);
+  const wantsYoy = /tahun lalu|2025|pertumbuhan|growth|dibanding tahun|yoy|year.?on.?year/.test(nMsgTopic);
+  const wantsTarget = /target|pencapaian|\botd\b|on.?time.?delivery|akurasi delivery/.test(nMsgTopic);
+  const wantsStockMovement = /tidak bergerak|tidak laku|kurang laku|dibawah 5|dead ?stock|slow ?moving/.test(nMsgTopic);
+  const wantsUndelivered = /belum dikirim|belum diantar|belum terkirim|belum sampai|pending.*kirim/.test(nMsgTopic);
+
   const context = {
     // "performa" = SALES (order value from Grand Data 2026). "revenue" = actual cash collected
     // (Rev SUM "Pelunasan") — these are different metrics per the dashboard, don't conflate them.
@@ -1736,25 +1752,24 @@ async function handleChat(request, env) {
       ? { totalPiutang: piutangData.totalPiutang, byKategori: piutangData.byKategori, ratioARtoSalesPersen: piutangData.ratioARtoSales }
       : null,
     piutangRelevan: piutangMatch,
-    kpiPersonel: kpiData,
     stokRelevan: stokMatch.items,
     stokCatatan: stokMatch.note,
     transaksiRelevan: txMatch.items,
     transaksiCatatan: txMatch.note,
     wilayahEkspedisiRelevan: wilayahMatch,
-    topProduk: topProductsRaw ? JSON.parse(topProductsRaw) : null,
-    deliveryOverview: deliveryRaw ? JSON.parse(deliveryRaw) : null,
+    topProduk: wantsTopProduk && topProductsRaw ? JSON.parse(topProductsRaw) : null,
+    deliveryOverview: wantsDeliveryOverview && deliveryRaw ? JSON.parse(deliveryRaw) : null,
     poGudangRingkasan: poGudangData ? { byStatus: poGudangData.byStatus, monthly: poGudangData.monthly } : null,
     poGudangRelevan: poMatch.items,
     poGudangCatatan: poMatch.note,
-    customerInsights: customerInsightsRaw ? JSON.parse(customerInsightsRaw) : null,
+    customerInsights: wantsCustomerInsights && customerInsightsRaw ? JSON.parse(customerInsightsRaw) : null,
     daftarNamaCustomerPerBucket: customerBucketMatch,
-    fiberOptic1Core: fo1coreRaw ? JSON.parse(fo1coreRaw) : null,
-    perbandinganTahunSebelumnya: yoyRaw ? JSON.parse(yoyRaw) : null,
+    fiberOptic1Core: wantsFo1Core && fo1coreRaw ? JSON.parse(fo1coreRaw) : null,
+    perbandinganTahunSebelumnya: wantsYoy && yoyRaw ? JSON.parse(yoyRaw) : null,
     zonaWilayahRelevan: zonaMatch,
-    targetPerformaHarianBulanan: dailyPerformanceRaw ? JSON.parse(dailyPerformanceRaw) : null,
-    stokTidakBergerakDanKurangLaku: stockMovementRaw ? JSON.parse(stockMovementRaw) : null,
-    transaksiBelumDikirim: undeliveredRaw ? JSON.parse(undeliveredRaw) : null,
+    targetPerformaHarianBulanan: wantsTarget && dailyPerformanceRaw ? JSON.parse(dailyPerformanceRaw) : null,
+    stokTidakBergerakDanKurangLaku: wantsStockMovement && stockMovementRaw ? JSON.parse(stockMovementRaw) : null,
+    transaksiBelumDikirim: wantsUndelivered && undeliveredRaw ? JSON.parse(undeliveredRaw) : null,
     referensiLink: referensi,
     absensiDanIndikatorHarian: absensi,
   };
@@ -1836,7 +1851,7 @@ ${JSON.stringify(context)}`;
     body: JSON.stringify({
       contents,
       systemInstruction: { parts: [{ text: systemPrompt }] },
-      generationConfig: { temperature: 0.3 },
+      generationConfig: { temperature: 0.3, thinkingConfig: { thinkingLevel: 'minimal' } },
     }),
   });
 
