@@ -1,0 +1,19 @@
+name = "asvir-makassar"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# Buat namespace lalu tempel id-nya di sini:
+#   npx wrangler kv namespace create SHEET_CACHE
+[[kv_namespaces]]
+binding = "SHEET_CACHE"
+id = "b167303e78c54c6792d1fc6bb94d9b79"
+
+[vars]
+# Ganti setelah frontend online, mis. "https://username.github.io"
+ALLOWED_ORIGIN = "*"
+# Model default sudah diarahkan ke yang terbukti stabil di free tier.
+GEMINI_MODEL = "gemini-3.5-flash-lite"
+
+# Secrets (JANGAN ditulis di sini) — set lewat CLI:
+#   npx wrangler secret put GEMINI_API_KEY
+#   npx wrangler secret put SYNC_TOKEN

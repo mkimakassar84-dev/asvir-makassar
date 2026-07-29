@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Asvir Makassar</title>
+<meta name="theme-color" content="#9c2b2e" />
+<link rel="manifest" href="./manifest.json" />
+<link rel="icon" href="./icon-192.svg" />
+<link rel="apple-touch-icon" href="./icon-192.svg" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          victory: { DEFAULT: '#9c2b2e', dark: '#7a1f22' },
+          sand: { DEFAULT: '#f1e4c6', border: '#e3d3a6' },
+        },
+      },
+    },
+  };
+</script>
+</head>
+<body class="h-screen flex flex-col bg-sand text-gray-800 overflow-hidden">
+
+  <!-- Header -->
+  <header class="bg-victory text-sand px-4 py-3 flex items-center justify-between shadow-md shrink-0">
+    <div>
+      <h1 class="font-bold text-lg leading-tight">Asvir Makassar</h1>
+      <p id="statusText" class="text-xs text-sand/80">Memuat status data…</p>
+    </div>
+    <span id="statusDot" class="w-2.5 h-2.5 rounded-full bg-yellow-400 shrink-0"></span>
+  </header>
+
+  <!-- Chat area -->
+  <main id="chatArea" class="flex-1 overflow-y-auto px-3 py-4 space-y-3">
+    <div class="flex justify-start">
+      <div class="max-w-[85%] bg-white border border-sand-border rounded-2xl rounded-tl-sm px-4 py-2.5 shadow-sm text-sm">
+        Halo! Saya <b>Asvir Makassar</b>. Tanya saya soal performa cabang, piutang, KPI personel, atau stok produk. 👋
+      </div>
+    </div>
+  </main>
+
+  <!-- Input -->
+  <form id="chatForm" class="shrink-0 border-t border-sand-border bg-white p-3 flex items-end gap-2">
+    <textarea
+      id="messageInput"
+      rows="1"
+      placeholder="Tulis pertanyaan…"
+      class="flex-1 resize-none rounded-xl border border-sand-border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-victory/40 max-h-32"
+    ></textarea>
+    <button
+      type="submit"
+      id="sendBtn"
+      class="shrink-0 bg-victory hover:bg-victory-dark text-white rounded-xl w-11 h-11 flex items-center justify-center transition-colors disabled:opacity-40"
+      aria-label="Kirim"
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4 12L20 4L14 20L11 13L4 12Z" fill="currentColor"/></svg>
+    </button>
+  </form>
+
+<script>
+  // ---- Config: ganti sesuai URL Worker yang sudah di-deploy ----
+  const API_BASE = 'https://asvir-makassar.mkimakassar84.workers.dev';
+
+  const chatArea = document.getElementById('chatArea');
+  const chatForm = document.getElementById('chatForm');
+  const messageInput = document.getElementById('messageInput');
+  const sendBtn = document.getElementById('sendBtn');
+  const statusText = document.getElementById('statusText');
+  const statusDot = document.getElementById('statusDot');
+
+  function escapeHtml(str) {
+    return str.replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
+  }
+
+  // Turns bare URLs inside plain text into clickable <a> tags (text is escaped first).
+  function linkify(text) {
+    const escaped = escapeHtml(text);
+    return escaped.replace(/(https?:\/\/[^\s<]+)/g, (url) => {
+      const clean = url.replace(/[),.]+$/, '');
+      return `<a href="${clean}" target="_blank" rel="noopener noreferrer" class="underline text-victory break-all">${clean}</a>`;
+    });
+  }
+
+  function scrollToBottom() {
+    chatArea.scrollTop = chatArea.scrollHeight;
+  }
+
+  function addUserBubble(text) {
+    const wrap = document.createElement('div');
+    wrap.className = 'flex justify-end';
+    wrap.innerHTML = `
+      <div class="max-w-[85%] bg-victory text-white rounded-2xl rounded-tr-sm px-4 py-2.5 shadow-sm text-sm whitespace-pre-wrap">${escapeHtml(text)}</div>
+    `;
+    chatArea.appendChild(wrap);
+    scrollToBottom();
+  }
+
+  function addAiBubble() {
+    const wrap = document.createElement('div');
+    wrap.className = 'flex justify-start';
+    wrap.innerHTML = `
+      <div class="max-w-[85%] bg-white border border-sand-border rounded-2xl rounded-tl-sm px-4 py-2.5 shadow-sm text-sm">
+        <div class="ai-text whitespace-pre-wrap"><span class="typing-cursor">▍</span></div>
+        <div class="ai-actions hidden mt-2 flex gap-3 text-xs text-gray-500">
+          <button type="button" class="share-btn hover:text-victory flex items-center gap-1">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v7a1 1 0 001 1h14a1 1 0 001-1v-7M16 6l-4-4-4 4M12 2v13"/></svg>
+            Teruskan
+          </button>
+        </div>
+      </div>
+    `;
+    chatArea.appendChild(wrap);
+    scrollToBottom();
+    return wrap;
+  }
+
+  function finalizeAiBubble(bubbleEl, fullText) {
+    const textEl = bubbleEl.querySelector('.ai-text');
+    textEl.innerHTML = linkify(fullText || '(tidak ada jawaban)');
+    const actions = bubbleEl.querySelector('.ai-actions');
+    actions.classList.remove('hidden');
+    const shareBtn = bubbleEl.querySelector('.share-btn');
+    shareBtn.addEventListener('click', async () => {
+      if (navigator.share) {
+        try { await navigator.share({ text: fullText, title: 'Asvir Makassar' }); } catch {}
+      } else {
+        await navigator.clipboard.writeText(fullText);
+        shareBtn.textContent = '✓ Disalin';
+        setTimeout(() => { shareBtn.innerHTML = 'Teruskan'; }, 1500);
+      }
+    });
+  }
+
+  async function sendMessage(message) {
+    addUserBubble(message);
+    const bubbleEl = addAiBubble();
+    const textEl = bubbleEl.querySelector('.ai-text');
+    let fullText = '';
+
+    try {
+      const res = await fetch(`${API_BASE}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message }),
+      });
+
+      if (!res.ok || !res.body) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(errBody.error || `HTTP ${res.status}`);
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const events = buffer.split('\n\n');
+        buffer = events.pop(); // last (possibly incomplete) chunk stays in buffer
+
+        for (const evt of events) {
+          const line = evt.split('\n').find((l) => l.startsWith('data:'));
+          if (!line) continue;
+          const jsonStr = line.slice(5).trim();
+          if (!jsonStr || jsonStr === '[DONE]') continue;
+          try {
+            const parsed = JSON.parse(jsonStr);
+            const piece = parsed?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || '';
+            if (piece) {
+              fullText += piece;
+              textEl.innerHTML = linkify(fullText) + '<span class="typing-cursor">▍</span>';
+              scrollToBottom();
+            }
+          } catch { /* ignore partial/non-JSON keepalive lines */ }
+        }
+      }
+    } catch (err) {
+      fullText = fullText || `⚠️ Gagal mengambil jawaban: ${err.message}`;
+    } finally {
+      finalizeAiBubble(bubbleEl, fullText);
+    }
+  }
+
+  chatForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const msg = messageInput.value.trim();
+    if (!msg) return;
+    messageInput.value = '';
+    messageInput.style.height = 'auto';
+    sendMessage(msg);
+  });
+
+  messageInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      chatForm.requestSubmit();
+    }
+  });
+
+  messageInput.addEventListener('input', () => {
+    messageInput.style.height = 'auto';
+    messageInput.style.height = `${messageInput.scrollHeight}px`;
+  });
+
+  async function refreshStatus() {
+    try {
+      const res = await fetch(`${API_BASE}/status`);
+      const data = await res.json();
+      if (data.lastSync) {
+        const d = new Date(data.lastSync);
+        statusText.textContent = `Data terkini — sync ${d.toLocaleString('id-ID')}`;
+        statusDot.className = 'w-2.5 h-2.5 rounded-full bg-green-400 shrink-0';
+      } else {
+        statusText.textContent = 'Belum pernah sync — jalankan /sync di server';
+        statusDot.className = 'w-2.5 h-2.5 rounded-full bg-yellow-400 shrink-0';
+      }
+    } catch {
+      statusText.textContent = 'Tidak bisa terhubung ke server';
+      statusDot.className = 'w-2.5 h-2.5 rounded-full bg-red-400 shrink-0';
+    }
+  }
+  refreshStatus();
+
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js'));
+  }
+</script>
+</body>
+</html>
