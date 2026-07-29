@@ -187,6 +187,7 @@ const PERSONNEL_ROLES = {
   ZUL: 'Logistik Staff',
   ASPAR: 'Logistik Staff',
   TAUFIK: 'Logistik Staff',
+  PUTRI: 'General Admin Support & Operation',
 };
 
 // Full Falcom Technology product catalog (~230 products, no formal SKU — the full product name
