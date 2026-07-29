@@ -198,14 +198,21 @@
   }
 
   // Auto-pick the best available Indonesian voice (free, browser-native — no extra API calls/
-  // latency). Prefers a "Google"-branded voice, which is usually the higher-quality neural one
-  // on Android/Chrome, over generic/robotic system voices.
+  // latency), preferring a female-sounding one. The Web Speech API has no standard "gender"
+  // field, so this is a best-effort name-based heuristic — on devices with only one unlabeled
+  // Indonesian system voice, we can't guarantee it's female, there's simply nothing to pick from.
+  const FEMALE_VOICE_HINTS = /female|wanita|perempuan|damayanti|siti|dewi|putri|ayu|sari|maya/i;
+  const MALE_VOICE_HINTS = /\bmale\b|pria|laki|andika|budi|joko|dermawan/i;
   let indonesianVoice = null;
   function pickIndonesianVoice() {
     const voices = window.speechSynthesis.getVoices();
     const idVoices = voices.filter((v) => v.lang && v.lang.toLowerCase().startsWith('id'));
     if (!idVoices.length) return null;
-    return idVoices.find((v) => /google/i.test(v.name)) || idVoices[0];
+    const female = idVoices.find((v) => (v.gender && /female/i.test(v.gender)) || FEMALE_VOICE_HINTS.test(v.name));
+    if (female) return female;
+    const notMale = idVoices.find((v) => !((v.gender && /male/i.test(v.gender)) || MALE_VOICE_HINTS.test(v.name)));
+    const google = idVoices.find((v) => /google/i.test(v.name));
+    return notMale || google || idVoices[0];
   }
   if ('speechSynthesis' in window) {
     indonesianVoice = pickIndonesianVoice();
