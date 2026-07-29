@@ -146,8 +146,14 @@ const YOUTUBE_VIDEOS_NONTEKNIS = [
 ];
 
 function matchVideos(message) {
-  const nMsg = ` ${normText(message)} `;
-  const teknis = YOUTUBE_VIDEOS.filter((v) => v.keywords.some((kw) => nMsg.includes(kw))).slice(0, 3);
+  const nMsg = normText(message);
+  // Loose phrase matching (word-order tolerant) — a strict substring check missed cases like
+  // "Tutorial setting OLT" against keyword "cara setting olt" (word inserted breaks substring).
+  const scored = YOUTUBE_VIDEOS
+    .map((v) => ({ v, score: Math.max(...v.keywords.map((kw) => phraseMatchScore(kw, nMsg))) }))
+    .filter((x) => x.score >= 0.6)
+    .sort((a, b) => b.score - a.score);
+  const teknis = scored.slice(0, 3).map((x) => x.v);
   const wantsEvent = /kegiatan falcom|berita falcom|event falcom|acara falcom|roadshow|opening cabang/.test(nMsg);
   return { teknis, nonTeknis: wantsEvent ? YOUTUBE_VIDEOS_NONTEKNIS : [] };
 }
@@ -497,7 +503,10 @@ function matchReferences(message) {
     produkSpesifikCocok: produkSpesifik,
     kategoriProduk,
     solusiSistem,
-    tutorialDanDukungan: wantsTutorial ? TUTORIAL_LINKS : [],
+    // Generic bundle (Bantuan & Dukungan + Kelas Pelatihan FTTX + Galeri Video + Channel) is a
+    // FALLBACK only — if a specific video already matched, that's more useful/less cluttered
+    // than dumping all 4 generic links alongside it.
+    tutorialDanDukungan: wantsTutorial && !video.teknis.length ? TUTORIAL_LINKS : [],
     artikel: wantsArticle ? [ARTICLE_LINK] : [],
     videoTutorialRelevan: video.teknis,
     videoKegiatanFalcom: video.nonTeknis,

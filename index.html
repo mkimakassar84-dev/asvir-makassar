@@ -27,10 +27,12 @@
   .mic-btn { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; touch-action: none; }
 </style>
 </head>
-<body class="h-screen flex flex-col bg-sand text-gray-800 overflow-hidden">
+<body class="flex flex-col bg-sand text-gray-800 overflow-hidden" style="height: 100vh; height: 100svh;">
 
-  <!-- Header -->
-  <header class="bg-victory text-sand px-4 py-3 flex items-center justify-between shadow-md shrink-0">
+  <!-- Header: sticky + explicit svh body height so mobile browser chrome (address bar) showing
+       or hiding while scrolling the chat can't push this out of view (a known h-screen/100vh
+       instability on mobile — 100svh stays pinned to the smallest/stable viewport size). -->
+  <header class="sticky top-0 z-10 bg-victory text-sand px-4 py-3 flex items-center justify-between shadow-md shrink-0">
     <div>
       <h1 class="font-bold text-lg leading-tight">MIRA</h1>
       <p id="statusText" class="text-xs text-sand/80">Memuat status data…</p>
