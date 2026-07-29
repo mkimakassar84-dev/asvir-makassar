@@ -457,6 +457,26 @@ function findPoGudangMatches(message, poItems) {
   return { items: matched, note: note || `${matched.length} PO cocok.` };
 }
 
+// "Siapa yang belanja cuma 1x?" — detects which frequency bucket the question means and returns
+// that bucket's actual customer name list. Kept as a separate on-demand lookup (not folded into
+// the always-included customerInsights) since a bucket can have 100s of names — only worth
+// sending when the question is actually asking "who/siapa", not on every unrelated question.
+function findCustomerBucketMatch(message, customerBuckets) {
+  if (!customerBuckets) return null;
+  const nMsg = normText(message);
+  if (!/\bsiapa\b|\bnama\b|\bdaftar\b|\blist\b/.test(nMsg)) return null;
+  let bucket = null;
+  if (/\b1x\b|\bsatu kali\b|\bsekali\b/.test(nMsg)) bucket = '1x';
+  else if (/\b2x\b|\bdua kali\b/.test(nMsg)) bucket = '2x';
+  else if (/\b(3|tiga)\s*-?\s*(sampai\s*)?(5|lima)\s*x?\b/.test(nMsg)) bucket = '3-5x';
+  else if (/\b(5|lima)\s*-?\s*(sampai\s*)?(10|sepuluh)\s*x?\b/.test(nMsg)) bucket = '5-10x';
+  else if (/>\s*10x?|\blebih dari 10\b|\bdiatas 10\b/.test(nMsg)) bucket = '>10x';
+  if (!bucket || !customerBuckets[bucket]) return null;
+  const all = customerBuckets[bucket];
+  const sample = [...all].sort((a, b) => b.totalSales - a.totalSales).slice(0, 60);
+  return { bucket, totalCustomer: all.length, ditampilkan: sample.length, customers: sample };
+}
+
 function matchReferences(message) {
   const nMsg = normText(message);
   return REFERENCE_LINKS.filter((r) => r.keywords.some((kw) => nMsg.includes(normText(kw))))
@@ -632,7 +652,10 @@ async function runSync(env) {
       const qty = toNumber(r['Quantity']);
       const kode = (r['Kode Barang'] || '').trim();
       const company = (r['Company'] || '').trim().toUpperCase();
-      const customer = (r['Customer'] || '').trim();
+      // Uppercase — matches the dashboard's own normalizeGrandData() exactly. Without this,
+      // "Ari"/"ARI"/"ari" count as 3 separate customers instead of 1, inflating customer counts
+      // (confirmed: 9 case-variant names in the sheet == the exact 283-vs-274 discrepancy found).
+      const customer = (r['Customer'] || '').trim().toUpperCase();
       const noInvoice = (r['No Invoice'] || '').trim();
       const stage = (r['Stage'] || '').trim();
       const statusSameCutOff = (r['Status'] || '').trim(); // col H is actually "Same Day / Cut Off" status
@@ -785,12 +808,17 @@ async function runSync(env) {
     });
     const bucketOf = (n) => (n === 1 ? '1x' : n === 2 ? '2x' : n <= 5 ? '3-5x' : n <= 10 ? '5-10x' : '>10x');
     const buckets = {};
+    const namesByBucket = {}; // cached separately from customerInsights so "siapa saja" questions
+    // don't bloat every OTHER question's context with hundreds of names by default.
     for (const c of customerList) {
       const b = bucketOf(c.invoiceUnik);
       if (!buckets[b]) buckets[b] = { bucket: b, jumlahCustomer: 0, totalSales: 0 };
       buckets[b].jumlahCustomer += 1;
       buckets[b].totalSales += c.totalSales;
+      if (!namesByBucket[b]) namesByBucket[b] = [];
+      namesByBucket[b].push({ customer: c.customer, totalSales: c.totalSales });
     }
+    await env.SHEET_CACHE.put('data:customerBuckets', JSON.stringify(namesByBucket));
     const customerInsights = {
       totalCustomer: customerList.length,
       totalChurned: customerList.filter((c) => c.churned).length,
@@ -1049,7 +1077,7 @@ async function runSync(env) {
       rowCount++;
       const kategori = (r[17] || r[16] || 'Tidak diketahui').trim();
       const nilai = toNumber(r[15]);
-      const customer = (r[13] || '').trim();
+      const customer = (r[13] || '').trim().toUpperCase(); // matches dashboard's buildAR() normalization
       totalPiutang += nilai;
       if (!byKategori[kategori]) byKategori[kategori] = { kategori, jumlahInvoice: 0, totalNilai: 0 };
       byKategori[kategori].jumlahInvoice += 1;
@@ -1108,7 +1136,7 @@ async function handleChat(request, env) {
   const [
     stockRaw, perfRaw, piutangRaw, kpiRaw, txRaw, wilayahRaw,
     revenueRaw, poGudangRaw, topProductsRaw, deliveryRaw, customerInsightsRaw, fo1coreRaw,
-    yoyRaw, zonaWilayahRaw, dailyPerformanceRaw, stockMovementRaw, undeliveredRaw,
+    yoyRaw, zonaWilayahRaw, dailyPerformanceRaw, stockMovementRaw, undeliveredRaw, customerBucketsRaw,
     lastSync,
   ] = await Promise.all([
     env.SHEET_CACHE.get('data:stock'),
@@ -1128,6 +1156,7 @@ async function handleChat(request, env) {
     env.SHEET_CACHE.get('data:dailyPerformanceTargets'),
     env.SHEET_CACHE.get('data:stockMovement'),
     env.SHEET_CACHE.get('data:undelivered'),
+    env.SHEET_CACHE.get('data:customerBuckets'),
     env.SHEET_CACHE.get('lastSync'),
   ]);
 
@@ -1144,6 +1173,7 @@ async function handleChat(request, env) {
   const piutangMatch = findPiutangByCustomer(message, piutangData?.detail);
   const poMatch = findPoGudangMatches(message, poGudangData?.items);
   const zonaMatch = findZonaWilayahMatches(message, zonaWilayahData);
+  const customerBucketMatch = findCustomerBucketMatch(message, customerBucketsRaw ? JSON.parse(customerBucketsRaw) : null);
   const referensi = matchReferences(message);
   const kpiNames = Array.isArray(kpiData?.kpi) ? kpiData.kpi.map((p) => p.nama).filter(Boolean) : [];
   const absensi = await fetchAttendanceContext(message, kpiNames);
@@ -1172,6 +1202,7 @@ async function handleChat(request, env) {
     poGudangRelevan: poMatch.items,
     poGudangCatatan: poMatch.note,
     customerInsights: customerInsightsRaw ? JSON.parse(customerInsightsRaw) : null,
+    daftarNamaCustomerPerBucket: customerBucketMatch,
     fiberOptic1Core: fo1coreRaw ? JSON.parse(fo1coreRaw) : null,
     perbandinganTahunSebelumnya: yoyRaw ? JSON.parse(yoyRaw) : null,
     zonaWilayahRelevan: zonaMatch,
@@ -1197,6 +1228,7 @@ Aturan:
 - Untuk "kabel 1 core"/"fiber optic 1 core" secara spesifik sebagai section dashboard, gunakan "fiberOptic1Core" (5 kode resmi: KSFO028, KSFO108, KSFO083, KSFO113, KSFO128, dengan tren bulanan & per kode) — untuk pencarian stok kabel 1-core secara umum tetap pakai "stokRelevan".
 - Untuk pertanyaan PO Gudang (purchase order dari supplier/pusat), gunakan "poGudangRingkasan" (ringkasan per status: ditunggu/diterima/retur/lainnya + tren bulanan) untuk pertanyaan umum, atau "poGudangRelevan" (sudah difilter kode/status, field "poGudangCatatan" menjelaskan filternya) untuk pertanyaan spesifik.
 - Untuk "frekuensi customer", "customer paling sering belanja", atau "customer churn/tidak aktif", gunakan "customerInsights" (totalCustomer, totalChurned = tidak beli >=60 hari, buckets = pengelompokan berdasar jumlah invoice unik, topByFrekuensi, topBySales).
+- Untuk pertanyaan "SIAPA saja" customer di suatu bucket frekuensi (mis. "siapa yang belanja cuma 1x"), gunakan "daftarNamaCustomerPerBucket" — kalau null padahal user tanya "siapa", berarti bucket-nya tidak terdeteksi dari pertanyaan, minta user sebutkan lebih spesifik (1x/2x/3-5x/5-10x/lebih dari 10x). Kalau "ditampilkan" < "totalCustomer", sebutkan bahwa itu sebagian (urut dari nilai belanja terbesar), bukan semuanya.
 - Untuk perbandingan tahun ini vs tahun lalu ("pertumbuhan dibanding 2025", "naik/turun berapa persen dari tahun lalu"), gunakan "perbandinganTahunSebelumnya" (sales2025/sales2026, rev2025/rev2026 per bulan+total, growthSalesPersen, growthRevPersen, achievementSalesPersen/achievementRevPersen terhadap target tahunan).
 - Untuk "zona wilayah" (merah/kuning/hijau berdasar jumlah invoice, BEDA dari topik ekspedisi), "wilayah tanpa pembelanjaan", atau zona per provinsi, gunakan "zonaWilayahRelevan". Zona: hijau jika total invoice >50, kuning jika 20-50, merah jika <20.
 - Untuk target & pencapaian performa harian/bulanan (target invoice 280/bulan, target OTD/On-Time-Delivery 80%), gunakan "targetPerformaHarianBulanan" per bulan (invoiceUnik, pencapaianInvoicePersen, otdAccuracyPersen).
