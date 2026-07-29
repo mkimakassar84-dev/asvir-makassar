@@ -166,6 +166,29 @@ const GENERAL_LINKS = {
   kontak: { judul: 'Kontak / Jaringan Penjualan', url: 'https://falcom-technology.com/contact/' },
 };
 
+// Static org facts (address, personnel roles) — not from Google Sheets, provided directly and
+// updated manually when they change. Small enough to send on every request rather than gating
+// behind keyword detection like the bulkier dashboard sections.
+const COMPANY_INFO = {
+  nama: 'Falcom Technology Cabang Makassar (PT. Mitra Kabel Indonesia, Cabang Makassar)',
+  alamat: 'Jl. Onta Baru No. 84, Mandala, Mamajang, Kota Makassar, Sulawesi Selatan 90135',
+  googleMaps: 'https://maps.app.goo.gl/Ei1xsngqDgzeKTKeA',
+};
+
+// name -> jabatan (org role/title) — distinct from the KPI daily-indicator system: not every
+// person here is tracked in the daily KPI sheet (e.g. the Branch Manager), and not everyone in
+// the KPI sheet necessarily has a role recorded here yet.
+const PERSONNEL_ROLES = {
+  RIFQI: 'Branch Manager MKI Makassar (juga pencipta MIRA)',
+  ASTRID: 'Supervisor Marketing & Customer Relation',
+  ADI: 'Marketing Representative',
+  REZA: 'Marketing Representative',
+  BURHAMIN: 'Kordinator Logistik dan AR',
+  ZUL: 'Logistik Staff',
+  ASPAR: 'Logistik Staff',
+  TAUFIK: 'Logistik Staff',
+};
+
 // Full Falcom Technology product catalog (~230 products, no formal SKU — the full product name
 // IS the identity). Transcribed verbatim from the user-supplied grounding data; never add,
 // remove, or invent an entry here without a matching authoritative source.
@@ -1970,6 +1993,8 @@ async function handleChat(request, env) {
     transaksiBelumDikirim: wantsUndelivered && undeliveredRaw ? JSON.parse(undeliveredRaw) : null,
     referensiLink: referensi,
     absensiDanIndikatorHarian: absensi,
+    infoKantor: COMPANY_INFO,
+    jabatanPersonel: PERSONNEL_ROLES,
   };
 
   const systemPrompt = `Kamu adalah "MIRA". Kalau ditanya siapa/apa kamu, perkenalkan dirimu sebagai "Asisten Virtual MKI Makassar" — JANGAN bilang "asisten AI PT. Mitra Kabel Indonesia" atau sejenisnya, "MKI Makassar" adalah identitas yang dipakai, bukan nama perusahaan penuh. Kamu punya tiga peran: (1) rekan bicara untuk dashboard "Kinerja Cabang Makassar" — bisa menjawab apapun yang bisa dilihat di dashboard itu (performa harian, sales, revenue, wilayah, stok & PO, delivery, piutang, frekuensi customer, KPI personel, dll); (2) membantu pelanggan/teknisi memahami spesifikasi, tutorial, dan informasi produk jaringan (fiber optik, LAN, coaxial, HFC, OLT/ONU, media converter, access point, dll) dari katalog Falcom Technology; (3) teman ngobrol yang hangat dan menyenangkan buat tim Makassar — lihat aturan KEPRIBADIAN di bawah. Untuk pertanyaan seputar data/operasional/produk, jawab HANYA berdasarkan DATA KONTEKS di bawah ini dan histori percakapan sebelumnya — jangan mengarang angka meski sedang ngobrol santai.
@@ -2028,6 +2053,8 @@ Aturan:
   - Kalau field "catatan" terisi (mis. tanggal yang diminta belum ada data sehingga dipakai hari kerja terakhir yang tersedia), sebutkan catatan ini ke user supaya jelas data yang ditampilkan itu untuk tanggal berapa.
   - Kalau berisi "ringkasan10HariTerakhir" (untuk pertanyaan tren/rekap mingguan/bulanan), itu memang ringkasan angka per hari (jumlah indikator tercapai dari total) — BUKAN rincian, cukup sajikan apa adanya per hari.
   - Jika null/kosong padahal user jelas bertanya soal ini, katakan datanya tidak ditemukan (mungkin nama salah ketik, atau tanggalnya di luar rentang).
+- Untuk pertanyaan ALAMAT/lokasi kantor, gunakan "infoKantor" (nama, alamat lengkap, link Google Maps) — sertakan link Maps-nya kalau relevan.
+- Untuk pertanyaan JABATAN/posisi/peran seseorang di tim ("siapa itu X", "jabatan X apa", "siapa Branch Manager"), gunakan "jabatanPersonel" (map nama -> jabatan). Ini beda dari data KPI harian — kalau nama tidak ada di "jabatanPersonel" tapi ada di data KPI/absensi, katakan jabatannya belum tercatat (jangan menebak jabatan).
 - Jawab singkat, padat, dan langsung ke angka/fakta. Gunakan Bahasa Indonesia sehari-hari yang sopan.
 - FORMAT: JANGAN pakai tanda bintang tunggal (*kata*) untuk penekanan biasa — itu bikin tampilan penuh tanda bintang yang mengganggu. Pakai bintang ganda (**angka penting**) SEPERLUNYA saja, hanya untuk angka kunci atau nama entitas utama dalam jawaban — bukan untuk kata biasa seperti "sales", "revenue", "pending", "catatan", dll. Sisanya tulis sebagai teks polos.
 - Data disinkron terakhir: ${lastSync || 'belum pernah sync'}.
