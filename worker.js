@@ -573,7 +573,15 @@ async function handleSync(request, env) {
   if (!env.SYNC_TOKEN || url.searchParams.get('token') !== env.SYNC_TOKEN) {
     return json({ error: 'Unauthorized. Pass ?token=<SYNC_TOKEN>.' }, 401);
   }
+  return json(await runSync(env));
+}
 
+// Actual sync logic, shared by the manual GET /sync (token-protected) and the automatic Cron
+// Trigger below — the cron keeps KV fresh on its own schedule so answers don't go stale between
+// manual syncs (this is what was actually wrong with the KSFO028 stock question: not a parsing
+// bug, just old cached data — the live dashboard "looks always right" only because it re-fetches
+// the sheet with no cache on every page load, not because it reads from a different source).
+async function runSync(env) {
   const summary = { syncedAt: new Date().toISOString(), sources: {} };
 
   // 1) Stock / product data
@@ -1062,7 +1070,7 @@ async function handleSync(request, env) {
   }
 
   await env.SHEET_CACHE.put('lastSync', summary.syncedAt);
-  return json(summary);
+  return summary;
 }
 
 // ---- /status: cheap poll target for the frontend's "Data terkini" indicator ----
@@ -1268,5 +1276,11 @@ export default {
       Object.entries(corsHeaders(env)).forEach(([k, v]) => res.headers.set(k, v));
       return res;
     }
+  },
+
+  // Cron Trigger (see wrangler.toml [triggers]) — keeps KV fresh automatically so answers don't
+  // go stale between manual /sync calls.
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runSync(env));
   },
 };

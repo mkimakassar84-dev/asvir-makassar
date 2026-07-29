@@ -13,6 +13,10 @@ ALLOWED_ORIGIN = "https://mkimakassar84-dev.github.io"
 # Model default sudah diarahkan ke yang terbukti stabil di free tier.
 GEMINI_MODEL = "gemini-3.5-flash-lite"
 
+# Auto-sync setiap 15 menit — supaya KV tidak pernah basi terlalu lama tanpa perlu trigger manual.
+[triggers]
+crons = ["*/15 * * * *"]
+
 # Secrets (JANGAN ditulis di sini) — set lewat CLI:
 #   npx wrangler secret put GEMINI_API_KEY
 #   npx wrangler secret put SYNC_TOKEN
