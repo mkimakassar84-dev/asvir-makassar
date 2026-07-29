@@ -133,10 +133,19 @@
     // Safety net: single-asterisk emphasis rendered as italic instead of showing raw asterisks,
     // in case the model still uses *word* occasionally despite being told to minimize it.
     out = out.replace(/\*(\S(?:[^*]*\S)?)\*/g, '<i>$1</i>');
+    // Images (product photos) BEFORE the plain-link rule below — "![alt](url)" would otherwise
+    // get its "[alt](url)" half matched by the link regex first, leaving a stray "!" next to an
+    // <a> tag instead of rendering an actual photo. onerror hides a broken image instead of
+    // leaving an empty placeholder icon if a product photo URL ever goes stale.
+    out = out.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, (m, alt, url) => {
+      return `<img src="${url}" alt="${alt}" loading="lazy" class="rounded-lg max-w-full max-h-56 object-contain mt-1 mb-1 bg-white" onerror="this.remove()" />`;
+    });
     out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (m, label, url) => {
       return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="underline text-victory">${label}</a>`;
     });
-    out = out.replace(/(?<!href="|>)(https?:\/\/[^\s<]+)/g, (url) => {
+    // Excludes src="..." too, not just href="..." — otherwise a product photo's <img src="URL">
+    // from the rule above would get its URL re-matched here and wrapped in a broken nested <a>.
+    out = out.replace(/(?<!href="|src="|>)(https?:\/\/[^\s<]+)/g, (url) => {
       const clean = url.replace(/[),.]+$/, '');
       return `<a href="${clean}" target="_blank" rel="noopener noreferrer" class="underline text-victory break-all">${clean}</a>`;
     });
