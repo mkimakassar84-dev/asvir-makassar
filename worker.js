@@ -205,9 +205,11 @@ function extractDateMention(message) {
   return { day, month, year };
 }
 
-// Matches transactions by exact date mention, else by a known customer name or delivery
-// location (lokasi) appearing in the question — covers "penjualan tanggal 13 Juli",
-// "Soni Susilo ekspedisinya apa?", and "ekspedisi ke Manado pakai apa?".
+// Matches transactions by exact date mention, else by a known customer name appearing in the
+// question — covers "penjualan tanggal 13 Juli" and "Soni Susilo ekspedisinya apa?". Wilayah/
+// ekspedisi questions ("ekspedisi ke Manado pakai apa?") are handled separately by
+// findWilayahMatches against the full pre-aggregated data, not a capped raw-row scan — a capped
+// scan previously gave incomplete/wrong ekspedisi answers.
 function findTransactionMatches(message, allTransactions) {
   if (!allTransactions.length) return { items: [], note: '' };
   const nMsg = normText(message);
@@ -232,17 +234,6 @@ function findTransactionMatches(message, allTransactions) {
     if (hitCustomer) {
       matched = allTransactions.filter((tx) => tx.customer === hitCustomer);
       note = `Transaksi customer "${hitCustomer}": ${matched.length} baris.`;
-    } else {
-      const lokasiSet = new Set();
-      for (const tx of allTransactions) if (tx.lokasi) lokasiSet.add(tx.lokasi);
-      let hitLokasi = null;
-      for (const l of lokasiSet) {
-        if (l.length >= 3 && nMsg.includes(normText(l))) { hitLokasi = l; break; }
-      }
-      if (hitLokasi) {
-        matched = allTransactions.filter((tx) => tx.lokasi === hitLokasi);
-        note = `Transaksi ke lokasi "${hitLokasi}": ${matched.length} baris.`;
-      }
     }
   }
 
@@ -251,6 +242,19 @@ function findTransactionMatches(message, allTransactions) {
     matched = matched.slice(0, 150);
   }
   return { items: matched, note };
+}
+
+// Wilayah/ekspedisi lookup against the FULL pre-aggregated per-lokasi breakdown (all ~100+
+// locations, every ekspedisi they've ever used, ranked by frequency) — this is what makes
+// "ekspedisi ke Manado pakai apa?" answer completely and correctly (e.g. MEGA MAS as the
+// dominant carrier) instead of whatever happened to be in a capped sample of raw rows.
+function findWilayahMatches(message, wilayahEkspedisi) {
+  if (!wilayahEkspedisi || !wilayahEkspedisi.length) return null;
+  const nMsg = normText(message);
+  for (const w of wilayahEkspedisi) {
+    if (w.lokasi && w.lokasi.length >= 3 && nMsg.includes(normText(w.lokasi))) return w;
+  }
+  return null;
 }
 
 function matchReferences(message) {
@@ -372,6 +376,7 @@ async function handleSync(request, env) {
     const rows = rowsToObjects(parseCsv(csv), 0);
     const byMonth = {};
     const byLokasi = {};
+    const byLokasiEkspedisi = {}; // lokasi -> { ekspedisiName -> count } — full data, not a capped sample
     const transactions = [];
     for (const r of rows) {
       const d = parseFlexibleDate(r['Order Date']);
@@ -382,6 +387,11 @@ async function handleSync(request, env) {
       byMonth[key].transaksi += 1;
       const lokasi = (r['Lokasi'] || '').trim();
       if (lokasi) byLokasi[lokasi] = (byLokasi[lokasi] || 0) + 1;
+      const ekspedisi = (r['Status (Ekspedisi)'] || '').trim();
+      if (lokasi && ekspedisi) {
+        if (!byLokasiEkspedisi[lokasi]) byLokasiEkspedisi[lokasi] = {};
+        byLokasiEkspedisi[lokasi][ekspedisi] = (byLokasiEkspedisi[lokasi][ekspedisi] || 0) + 1;
+      }
       transactions.push({
         tanggal: r['Order Date'],
         invoice: r['No Invoice'],
@@ -401,13 +411,25 @@ async function handleSync(request, env) {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 20)
       .map(([lokasi, jumlahTransaksi]) => ({ lokasi, jumlahTransaksi }));
+    // Complete ekspedisi breakdown per wilayah (all ~100+ locations, not a capped sample) so
+    // "ekspedisi ke <wilayah> pakai apa" is always answered from full data, ranked by usage.
+    const wilayahEkspedisi = Object.entries(byLokasiEkspedisi).map(([lokasi, ekspMap]) => ({
+      lokasi,
+      totalTransaksi: byLokasi[lokasi] || 0,
+      ekspedisi: Object.entries(ekspMap)
+        .sort((a, b) => b[1] - a[1])
+        .map(([nama, jumlah]) => ({ nama, jumlah })),
+    }));
     await env.SHEET_CACHE.put('data:performance', JSON.stringify({ performance, topWilayah }));
     await env.SHEET_CACHE.put('data:transactions', JSON.stringify(transactions));
+    await env.SHEET_CACHE.put('data:wilayahEkspedisi', JSON.stringify(wilayahEkspedisi));
     summary.sources.performance = { ok: true, bulanTersimpan: performance.length, baris: rows.length };
     summary.sources.transactions = { ok: true, baris: transactions.length };
+    summary.sources.wilayahEkspedisi = { ok: true, wilayah: wilayahEkspedisi.length };
   } catch (err) {
     summary.sources.performance = { ok: false, error: String(err) };
     summary.sources.transactions = { ok: false, error: String(err) };
+    summary.sources.wilayahEkspedisi = { ok: false, error: String(err) };
   }
 
   // 3) Piutang / AR aging
@@ -477,20 +499,23 @@ async function handleChat(request, env) {
   if (!message) return json({ error: 'Field "message" wajib diisi.' }, 400);
   if (!env.GEMINI_API_KEY) return json({ error: 'GEMINI_API_KEY belum di-set di server.' }, 500);
 
-  const [stockRaw, perfRaw, piutangRaw, kpiRaw, txRaw, lastSync] = await Promise.all([
+  const [stockRaw, perfRaw, piutangRaw, kpiRaw, txRaw, wilayahRaw, lastSync] = await Promise.all([
     env.SHEET_CACHE.get('data:stock'),
     env.SHEET_CACHE.get('data:performance'),
     env.SHEET_CACHE.get('data:piutang'),
     env.SHEET_CACHE.get('data:kpi'),
     env.SHEET_CACHE.get('data:transactions'),
+    env.SHEET_CACHE.get('data:wilayahEkspedisi'),
     env.SHEET_CACHE.get('lastSync'),
   ]);
 
   const allStock = stockRaw ? JSON.parse(stockRaw) : [];
   const allTransactions = txRaw ? JSON.parse(txRaw) : [];
+  const allWilayahEkspedisi = wilayahRaw ? JSON.parse(wilayahRaw) : [];
   const kpiData = kpiRaw ? JSON.parse(kpiRaw) : null;
   const stokMatch = findStockMatches(message, allStock);
   const txMatch = findTransactionMatches(message, allTransactions);
+  const wilayahMatch = findWilayahMatches(message, allWilayahEkspedisi);
   const referensi = matchReferences(message);
   const kpiNames = Array.isArray(kpiData?.kpi) ? kpiData.kpi.map((p) => p.nama).filter(Boolean) : [];
   const absensi = await fetchAttendanceContext(message, kpiNames);
@@ -503,6 +528,7 @@ async function handleChat(request, env) {
     stokCatatan: stokMatch.note,
     transaksiRelevan: txMatch.items,
     transaksiCatatan: txMatch.note,
+    wilayahEkspedisiRelevan: wilayahMatch,
     referensiLink: referensi,
     absensiDanIndikatorHarian: absensi,
   };
@@ -515,7 +541,9 @@ Aturan:
 - User sering salah ketik (typo 1-2 huruf), menyingkat kata, atau menulis kode barang dengan/tanpa spasi/strip (mis. "DKB180", "DKB-180", "DKB 180" adalah kode yang SAMA) — pahami maksudnya, jangan langsung bilang "tidak ditemukan".
 - Jika user bertanya jumlah spesifik (mis. "10 wilayah penjualan terbesar", "5 customer terbanyak"), berikan SEMUA item yang diminta sesuai jumlah tersebut jika datanya tersedia di konteks, jangan dipotong.
 - Untuk pertanyaan stok/ketersediaan barang, gunakan "stokRelevan" (hasil pencarian kata kunci otomatis) — sebutkan juga rincian per company (MKI/CFN), bukan cuma total. Field "stokCatatan" menjelaskan bagaimana hasil ini difilter.
-- Untuk pertanyaan tanggal tertentu, nama customer, atau ekspedisi/pengiriman ke suatu wilayah, gunakan "transaksiRelevan" (sudah difilter otomatis sesuai pertanyaan) — field "ekspedisi" dan "company" di tiap baris menunjukkan cara pengiriman. Field "transaksiCatatan" menjelaskan filter yang dipakai.
+- Untuk pertanyaan tanggal tertentu atau nama customer spesifik, gunakan "transaksiRelevan" (sudah difilter otomatis) — field "ekspedisi" dan "company" tiap baris menunjukkan cara pengiriman.
+- Untuk pertanyaan "ekspedisi ke wilayah X pakai apa" atau "wilayah X pakai ekspedisi apa", WAJIB gunakan "wilayahEkspedisiRelevan" (data lengkap semua ekspedisi yang pernah dipakai ke wilayah itu, sudah diurutkan dari yang paling sering dipakai) — JANGAN pakai transaksiRelevan untuk pertanyaan jenis ini karena bisa tidak lengkap. Sebutkan ekspedisi yang paling dominan/sering dipakai, boleh sebutkan alternatif lain jika ada.
+- Pahami Bahasa Indonesia informal/sehari-hari dan istilah daerah (mis. "gimana" = "bagaimana", "kemarin" = hari sebelum ini, "pake"/"pakai" = sama). Jangan kaku pada ejaan baku.
 - Gunakan HISTORI PERCAKAPAN untuk memahami pertanyaan lanjutan yang tidak lengkap sendiri, contoh: "kalau revenue-nya?", "bulan lalu gimana?", "itu belanja apa lagi?" — kaitkan dengan topik/entitas yang dibahas sebelumnya.
 - Jika "referensiLink" berisi entri yang relevan dengan pertanyaan (spesifikasi produk atau tutorial), sertakan URL-nya APA ADANYA (utuh, bisa diklik) di jawabanmu — jangan ubah atau potong URL-nya.
 - Untuk pertanyaan jam masuk/pulang karyawan atau isi indikator harian personel, gunakan "absensiDanIndikatorHarian". Jika berisi "jamMasukPulangTim" itu data satu tim untuk satu tanggal (per orang: datang/pulang true-false + jamDatang/jamPulang, dan field ...Ok menandakan apakah role tsb secara keseluruhan tepat waktu). Jika berisi "indikator" (array label + tercapai true/false) itu daftar indikator kerja harian orang tsb — sebutkan yang tercapai dan yang tidak. Jika null/kosong padahal user jelas bertanya soal ini, katakan datanya tidak ditemukan (mungkin nama salah ketik, atau tanggalnya di luar rentang).
