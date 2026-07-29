@@ -161,7 +161,8 @@
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        buffer += decoder.decode(value, { stream: true });
+        // Gemini's SSE stream uses \r\n line endings; normalize before splitting on blank lines.
+        buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
 
         const events = buffer.split('\n\n');
         buffer = events.pop(); // last (possibly incomplete) chunk stays in buffer
