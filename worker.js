@@ -713,14 +713,32 @@ function nameWordsOf(text) {
   return normText(text).replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean);
 }
 
+// Common Indonesian question/operational words that must NEVER count as a candidate name token.
+// Without this, a SHORT single-word customer name (e.g. "YAYAN") can accidentally fuzzy-match an
+// ordinary question word within edit-distance tolerance (e.g. "kapan" is edit-distance 2 from
+// "yayan") — since a single-word name only needs ONE hit to reach the 70% threshold, this silently
+// locks onto the WRONG customer (whichever false-positive happens to appear first in Set iteration
+// order) and the customer the user actually asked about is never reached. Root-caused from a real
+// report: "kapan pembayaran terakhir Soni Susilo" matched "YAYAN" instead.
+const QUERY_NOISE_WORDS = new Set([
+  'kapan', 'terakhir', 'terbaru', 'terkini', 'pembayaran', 'bayar', 'membayar', 'dibayar', 'lunas',
+  'melunasi', 'pelunasan', 'cicilan', 'piutang', 'tagihan', 'invoice', 'faktur', 'nomor', 'transaksi',
+  'belanja', 'membeli', 'beli', 'pembelian', 'order', 'pesan', 'memesan', 'customer', 'pelanggan',
+  'sudah', 'belum', 'masih', 'punya', 'mempunyai', 'sekarang', 'tidak', 'siapa', 'berapa', 'gimana',
+  'bagaimana', 'kah', 'dong', 'nih', 'sisa', 'saldo', 'total', 'jumlah', 'rincian', 'detail', 'data',
+]);
+
 // True typo tolerance (not just missing/partial words): each significant word in the stored
 // customer name is matched against message words either exactly OR within edit-distance 1-2
-// (scaled to word length), so "Arsad Ambo Dale" still finds "MUH. ARSYAD AMBO DALLE".
+// (scaled to word length), so "Arsad Ambo Dale" still finds "MUH. ARSYAD AMBO DALLE". Message
+// words are first stripped of generic question/operational words (see QUERY_NOISE_WORDS above)
+// so they never masquerade as a name match.
 function customerNameFuzzyMatch(msgWords, customerName) {
   const nameWords = nameWordsOf(customerName).filter((w) => w.length >= 3 && !NAME_STOPWORDS.has(w));
   if (!nameWords.length) return false;
+  const candidateWords = msgWords.filter((w) => !STOPWORDS.has(w) && !QUERY_NOISE_WORDS.has(w));
   const hits = nameWords.filter((nw) =>
-    msgWords.some((mw) => mw === nw || (Math.abs(mw.length - nw.length) <= 2 && levenshtein(mw, nw) <= (nw.length <= 4 ? 1 : 2)))
+    candidateWords.some((mw) => mw === nw || (Math.abs(mw.length - nw.length) <= 2 && levenshtein(mw, nw) <= (nw.length <= 4 ? 1 : 2)))
   ).length;
   return hits / nameWords.length >= 0.7;
 }
@@ -861,7 +879,13 @@ function findPiutangByCustomer(message, piutangDetail) {
 // Per-customer PAYMENT history ("kapan X terakhir bayar/lunas piutang?") — distinct from
 // findPiutangByCustomer (outstanding invoice balances) and from sales transaction lookup
 // (order date). Sorted newest-first so "terakhir bayar" reads the top row.
-function findPaymentsByCustomer(message, paymentDetail) {
+//
+// A single invoice can receive several PARTIAL payments over time (cicilan) — e.g. 3 separate
+// payment records on the same noFaktur that still leave a balance in piutangDetail. Each payment
+// is annotated with the invoice's CURRENT status (lunas vs masih ada sisa) by cross-checking
+// against piutangDetail, so Gemini never has to infer/guess it — and never mixes a payment's
+// date with a different invoice's remaining-balance figure, the exact bug this was fixed for.
+function findPaymentsByCustomer(message, paymentDetail, piutangDetail) {
   if (!paymentDetail || !paymentDetail.length) return null;
   const customerSet = new Set();
   for (const p of paymentDetail) if (p.customer) customerSet.add(p.customer);
@@ -871,18 +895,38 @@ function findPaymentsByCustomer(message, paymentDetail) {
     if (c.length >= 4 && customerNameFuzzyMatch(msgWords, c)) { hit = c; break; }
   }
   if (!hit) return null;
+
+  const openInvoices = new Map();
+  for (const p of piutangDetail || []) {
+    if (p.customer === hit && p.noFaktur) openInvoices.set(p.noFaktur, p.nilaiSisa);
+  }
+
   const payments = paymentDetail
     .filter((p) => p.customer === hit)
     .sort((a, b) => {
       const da = parseFlexibleDate(a.tanggal);
       const db = parseFlexibleDate(b.tanggal);
       return (db ? db.getTime() : 0) - (da ? da.getTime() : 0);
+    })
+    .map((p) => {
+      const sisa = openInvoices.get(p.noFaktur);
+      return {
+        ...p,
+        statusFaktur: sisa === undefined ? 'LUNAS (faktur ini sudah tidak ada sisa piutang)' : `BELUM LUNAS — sisa piutang faktur ini saat ini Rp${sisa.toLocaleString('id-ID')} (pembayaran ini baru cicilan, bukan pelunasan)`,
+      };
     });
+
+  // "Pembayaran terakhir yang benar-benar melunasi" = payments on invoices with NO remaining
+  // balance today. This is what "kapan pembayaran/pelunasan terakhir" should answer with,
+  // NOT just the chronologically-last payment record (which may be a partial/cicilan payment).
+  const pembayaranMelunasi = payments.filter((p) => !openInvoices.has(p.noFaktur));
+
   return {
     customer: hit,
     jumlahPembayaran: payments.length,
     totalDibayar: payments.reduce((sum, p) => sum + p.amount, 0),
     pembayaranTerbaruDulu: payments,
+    pembayaranYangMelunasiTerbaruDulu: pembayaranMelunasi,
   };
 }
 
@@ -1637,7 +1681,7 @@ async function handleChat(request, env) {
   const wilayahMatch = findWilayahMatches(message, allWilayahEkspedisi);
   const piutangMatch = findPiutangByCustomer(message, piutangData?.detail);
   const revenueData = revenueRaw ? JSON.parse(revenueRaw) : null;
-  const paymentMatch = findPaymentsByCustomer(message, revenueData?.detail);
+  const paymentMatch = findPaymentsByCustomer(message, revenueData?.detail, piutangData?.detail);
   const poMatch = findPoGudangMatches(message, poGudangData?.items);
   const zonaMatch = findZonaWilayahMatches(message, zonaWilayahData);
   const customerBucketMatch = findCustomerBucketMatch(message, customerBucketsRaw ? JSON.parse(customerBucketsRaw) : null);
@@ -1698,6 +1742,9 @@ Aturan:
 - PENTING — TIGA hal ini BEDA, jangan pernah dicampur:
   1. **PENJUALAN/SALES** = transaksi ke customer (Grand Data, field "transaksiRelevan"/"performa") — kapan customer ORDER/beli.
   2. **PEMBAYARAN/PELUNASAN** = uang yang BENAR-BENAR masuk dari customer (Rev SUM, field "pembayaranRelevan"/"revenue") — BEDA dari tanggal order, seorang customer bisa order duluan lalu bayar belakangan (atau sebaliknya bayar dulu untuk order lama). Kalau user tanya "kapan X bayar/lunas/pembayaran terakhir", WAJIB pakai "pembayaranRelevan" — JANGAN jawab pakai tanggal transaksi/order dari "transaksiRelevan", itu beda hal.
+     Satu faktur BISA dibayar beberapa kali (cicilan) sebelum lunas — karena itu tiap baris di "pembayaranRelevan.pembayaranTerbaruDulu" SUDAH punya field "statusFaktur" yang bilang persis apakah faktur itu SEKARANG sudah "LUNAS" atau "BELUM LUNAS" (dan kalau belum lunas, berapa sisanya) — SELALU baca & sebutkan status ini, JANGAN pernah menyimpulkan sendiri, dan JANGAN PERNAH menukar angka "sisa piutang" dari satu baris dengan tanggal/nomor faktur dari baris lain.
+     Kalau user tanya "kapan pembayaran/pelunasan TERAKHIR" secara polos (tanpa minta riwayat cicilan), WAJIB jawab pakai baris PERTAMA dari "pembayaranRelevan.pembayaranYangMelunasiTerbaruDulu" (ini sudah difilter HANYA pembayaran yang benar-benar membuat fakturnya lunas, cicilan yang masih menyisakan piutang TIDAK masuk di sini) — kalau array ini kosong padahal "pembayaranTerbaruDulu" tidak kosong, artinya semua pembayaran yang tercatat masih berupa cicilan (belum ada faktur yang lunas total), sampaikan itu apa adanya beserta status sisa piutangnya, JANGAN sebut salah satunya sebagai "lunas".
+     Kalau user tanya riwayat pembayaran secara umum (bukan spesifik "yang lunas"), baru gunakan "pembayaranTerbaruDulu" lengkap dengan statusFaktur masing-masing.
   3. **PO GUDANG** = pembelian stok dari SUPPLIER ke gudang kita (bukan dari customer) — HANYA relevan kalau user secara eksplisit menulis "PO" atau "PO Gudang" dalam pertanyaannya. Kalau user tanya "pembelian"/"pemesanan" TANPA menyebut "PO" secara eksplisit, itu KEMUNGKINAN BESAR maksudnya penjualan ke customer (poin 1), BUKAN PO Gudang — jangan otomatis anggap "pembelian" = PO Gudang.
   Rasio Sales-ke-Revenue = revenue/sales*100 per bulan, hitung sendiri dari kedua array bulanan itu kalau ditanya.
 - Untuk pertanyaan stok/ketersediaan barang, gunakan "stokRelevan". Jawab SINGKAT: cukup jumlah stok per company (MKI/CFN) + total, TANPA menyebut turnover/perputaran gudang kecuali user SPESIFIK menanyakan turnover/perputaran. Field "stokCatatan" menjelaskan filter yang dipakai (untuk konteksmu sendiri, tidak perlu disebut ke user).
