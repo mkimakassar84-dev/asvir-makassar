@@ -1,6 +1,6 @@
 {
-  "name": "Asvir Makassar",
-  "short_name": "Asvir",
+  "name": "MIRA - Makassar Intelligent Response Assistant",
+  "short_name": "MIRA",
   "description": "Asisten AI cabang Makassar — performa, KPI personel, dan stok produk.",
   "start_url": "./index.html",
   "scope": "./",

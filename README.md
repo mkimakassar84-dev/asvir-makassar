@@ -1,4 +1,4 @@
-# Asvir Makassar
+# MIRA (Makassar Intelligent Response Assistant)
 
 PWA chat AI (Gemini) untuk cabang Makassar — performa cabang, piutang, KPI personel, dan stok produk. 100% gratis (Cloudflare Workers + KV free tier, hosting statis gratis).
 

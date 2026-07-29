@@ -1,5 +1,5 @@
 /**
- * Asvir Makassar — Cloudflare Worker backend
+ * MIRA (Makassar Intelligent Response Assistant) — Cloudflare Worker backend
  * Routes:
  *   GET  /sync   -> refresh Cloudflare KV cache from Google Sheets (protected by ?token=)
  *   POST /chat   -> stream a Gemini answer (SSE) grounded on the KV cache + query-aware retrieval
@@ -259,6 +259,82 @@ function matchReferences(message) {
     .map((r) => ({ judul: r.judul, links: r.links }));
 }
 
+function detectPersonMention(message, knownNames) {
+  const nMsg = normText(message);
+  for (const name of knownNames) {
+    if (name && name.length >= 3 && nMsg.includes(normText(name))) return name;
+  }
+  return null;
+}
+
+function toIsoDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Attendance / daily-indicator lookup — hits the KPI Apps Script live (not KV-cached, since
+// per-day-per-person data is too combinatorial to pre-aggregate and needs to stay fresh for
+// "hari ini" questions). Only called when the question actually looks attendance/indicator-related.
+// Real actions below were discovered by reading the sister app's own source
+// (KPI-Personel-Cabang-Makassar/{rekap-kinerja-tim,input-makassar}.html) — do not guess new
+// action names without checking that source first, this endpoint 400s on unknown actions.
+async function fetchAttendanceContext(message, kpiNames) {
+  const nMsg = normText(message);
+  const wantsAttendance = /jam\s*masuk|jam\s*pulang|jam\s*datang|\btelat\b|terlambat|\babsen\b|absensi|kehadiran/.test(nMsg);
+  const wantsIndicator = /indikator|checklist|ceklist|kerjakan|dikerjakan|kegiatan harian|dikerjain/.test(nMsg);
+  const personHit = detectPersonMention(message, kpiNames);
+  if (!wantsAttendance && !wantsIndicator && !personHit) return null;
+
+  const dateMention = extractDateMention(message);
+  const targetDate = dateMention ? new Date(dateMention.year, dateMention.month - 1, dateMention.day) : new Date();
+  const isoDay = toIsoDate(targetDate);
+  const yearMonth = isoDay.slice(0, 7);
+
+  try {
+    if (personHit) {
+      const res = await fetch(
+        `${KPI_WEBAPP_URL}?action=personView&nama=${encodeURIComponent(personHit)}&month=${yearMonth}`
+      );
+      const data = await res.json();
+      const labels = data?.detail?.labels || [];
+      const days = data?.detail?.days || [];
+      if (dateMention) {
+        const dayEntry = days.find((d) => d.tanggal === isoDay);
+        if (!dayEntry) return { nama: personHit, tanggal: isoDay, catatan: 'Tidak ada data untuk tanggal ini (mungkin hari libur atau belum lewat).' };
+        return {
+          nama: personHit,
+          tanggal: isoDay,
+          jamDatang: dayEntry.jamDatang || null,
+          jamPulang: dayEntry.jamPulang || null,
+          submitted: dayEntry.submitted,
+          dinas: dayEntry.dinas,
+          indikator: labels.map((label, i) => ({ label, tercapai: !!dayEntry.values?.[i] })),
+        };
+      }
+      // No specific date — give a recent-days summary instead of the whole month.
+      return {
+        nama: personHit,
+        bulan: yearMonth,
+        ringkasan10HariTerakhir: days.slice(-10).map((d) => ({
+          tanggal: d.tanggal,
+          jamDatang: d.jamDatang || null,
+          jamPulang: d.jamPulang || null,
+          indikatorTercapai: (d.values || []).filter(Boolean).length,
+          totalIndikator: labels.length,
+        })),
+      };
+    }
+
+    // No specific person — team-wide attendance + indicator status for the target date.
+    const [teamStatus, dayStatus] = await Promise.all([
+      fetch(`${KPI_WEBAPP_URL}?action=teamStatus&tanggal=${isoDay}`).then((r) => r.json()),
+      fetch(`${KPI_WEBAPP_URL}?action=dayStatus&nama=MAKASSAR&tanggal=${isoDay}`).then((r) => r.json()),
+    ]);
+    return { tanggal: isoDay, jamMasukPulangTim: teamStatus, indikatorTim: dayStatus };
+  } catch (err) {
+    return { error: `Gagal mengambil data absensi: ${String(err)}` };
+  }
+}
+
 // ---- /sync: fetch + aggregate + store compact summaries (+ raw transactions) in KV ----
 async function handleSync(request, env) {
   const url = new URL(request.url);
@@ -412,22 +488,26 @@ async function handleChat(request, env) {
 
   const allStock = stockRaw ? JSON.parse(stockRaw) : [];
   const allTransactions = txRaw ? JSON.parse(txRaw) : [];
+  const kpiData = kpiRaw ? JSON.parse(kpiRaw) : null;
   const stokMatch = findStockMatches(message, allStock);
   const txMatch = findTransactionMatches(message, allTransactions);
   const referensi = matchReferences(message);
+  const kpiNames = Array.isArray(kpiData?.kpi) ? kpiData.kpi.map((p) => p.nama).filter(Boolean) : [];
+  const absensi = await fetchAttendanceContext(message, kpiNames);
 
   const context = {
     performa: perfRaw ? JSON.parse(perfRaw) : null,
     piutang: piutangRaw ? JSON.parse(piutangRaw) : null,
-    kpiPersonel: kpiRaw ? JSON.parse(kpiRaw) : null,
+    kpiPersonel: kpiData,
     stokRelevan: stokMatch.items,
     stokCatatan: stokMatch.note,
     transaksiRelevan: txMatch.items,
     transaksiCatatan: txMatch.note,
     referensiLink: referensi,
+    absensiDanIndikatorHarian: absensi,
   };
 
-  const systemPrompt = `Kamu adalah "Asvir Makassar", asisten AI internal untuk cabang Makassar PT. Mitra Kabel Indonesia.
+  const systemPrompt = `Kamu adalah "MIRA" (Makassar Intelligent Response Assistant), asisten AI internal untuk cabang Makassar PT. Mitra Kabel Indonesia.
 Tugasmu: menjawab pertanyaan tentang performa cabang, piutang, KPI personel, transaksi/penjualan, ekspedisi, dan stok/spesifikasi produk, HANYA berdasarkan DATA KONTEKS di bawah ini dan histori percakapan sebelumnya.
 
 Aturan:
@@ -438,6 +518,7 @@ Aturan:
 - Untuk pertanyaan tanggal tertentu, nama customer, atau ekspedisi/pengiriman ke suatu wilayah, gunakan "transaksiRelevan" (sudah difilter otomatis sesuai pertanyaan) — field "ekspedisi" dan "company" di tiap baris menunjukkan cara pengiriman. Field "transaksiCatatan" menjelaskan filter yang dipakai.
 - Gunakan HISTORI PERCAKAPAN untuk memahami pertanyaan lanjutan yang tidak lengkap sendiri, contoh: "kalau revenue-nya?", "bulan lalu gimana?", "itu belanja apa lagi?" — kaitkan dengan topik/entitas yang dibahas sebelumnya.
 - Jika "referensiLink" berisi entri yang relevan dengan pertanyaan (spesifikasi produk atau tutorial), sertakan URL-nya APA ADANYA (utuh, bisa diklik) di jawabanmu — jangan ubah atau potong URL-nya.
+- Untuk pertanyaan jam masuk/pulang karyawan atau isi indikator harian personel, gunakan "absensiDanIndikatorHarian". Jika berisi "jamMasukPulangTim" itu data satu tim untuk satu tanggal (per orang: datang/pulang true-false + jamDatang/jamPulang, dan field ...Ok menandakan apakah role tsb secara keseluruhan tepat waktu). Jika berisi "indikator" (array label + tercapai true/false) itu daftar indikator kerja harian orang tsb — sebutkan yang tercapai dan yang tidak. Jika null/kosong padahal user jelas bertanya soal ini, katakan datanya tidak ditemukan (mungkin nama salah ketik, atau tanggalnya di luar rentang).
 - Jawab singkat, padat, dan langsung ke angka/fakta. Gunakan Bahasa Indonesia sehari-hari yang sopan.
 - Data disinkron terakhir: ${lastSync || 'belum pernah sync'}.
 
