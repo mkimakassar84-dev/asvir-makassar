@@ -489,15 +489,35 @@ function findProductCatalogMatch(message) {
   };
 }
 
-function matchReferences(message) {
-  const nMsg = ` ${normText(message)} `; // padded so ' ap ' / ' rack ' style keywords can match at string edges
+// The product CATALOG (marketing pages) only has full descriptive names/keywords, never SKU-style
+// codes — but users very naturally ask about a product using the CODE they see in stock/invoices
+// ("spek KSFO108"), which never overlaps with any catalog keyword on its own. Bridge the two: look
+// the code up in the STOCK data to get its real description ("Kabel Fiber Optik 1Core G657A ..."),
+// which DOES have enough descriptive words for the catalog's phrase matching to find the product.
+function resolveStockCodeDescriptions(message, allStock) {
+  if (!allStock || !allStock.length) return [];
+  const keywords = extractKeywords(message);
+  const found = [];
+  for (const kw of keywords) {
+    const ckw = normCode(kw);
+    if (ckw.length < 4) continue;
+    const item = allStock.find((p) => normCode(p.kode) === ckw);
+    if (item && item.nama) found.push(item.nama);
+  }
+  return found;
+}
+
+function matchReferences(message, allStock) {
+  const stockDescriptions = resolveStockCodeDescriptions(message, allStock);
+  const augmentedMessage = stockDescriptions.length ? `${message} ${stockDescriptions.join(' ')}` : message;
+  const nMsg = ` ${normText(augmentedMessage)} `; // padded so ' ap ' / ' rack ' style keywords can match at string edges
   const kategoriProduk = PRODUCT_CATEGORIES.filter((c) => c.keywords.some((kw) => nMsg.includes(kw)));
   const solusiSistem = SOLUTIONS.filter((s) => s.keywords.some((kw) => nMsg.includes(kw)));
   const wantsTutorial = /tutorial|cara pasang|cara install|cara setting|cara konfigurasi|cara pakai|cara menggunakan|troubleshoot|bagaimana cara|video (tutorial|demo)/.test(nMsg);
   const wantsArticle = /\bartikel\b|berita teknis/.test(nMsg);
   const wantsSpec = /\bspek\b|spesifikasi|datasheet/.test(nMsg);
-  const video = matchVideos(message);
-  const produkSpesifik = findProductCatalogMatch(message);
+  const video = matchVideos(augmentedMessage);
+  const produkSpesifik = findProductCatalogMatch(augmentedMessage);
   const hasAnyMatch = kategoriProduk.length || solusiSistem.length || wantsTutorial || wantsArticle || video.teknis.length || produkSpesifik;
   return {
     produkSpesifikCocok: produkSpesifik,
@@ -626,10 +646,32 @@ function levenshtein(a, b) {
 // Matches stock by product code (typo/format tolerant: "DKB180" == "DKB-180" == "DKB 180",
 // plus up to ~2-char edit-distance) or by description keyword (handles "kabel 1 core yang
 // ready", "odp yang ready", etc.), then optionally narrows to in-stock only for "ready"-style asks.
+// A bare company mention ("stok MKI", "stock CFN") with no product keyword at all used to come
+// back completely empty — the company (MKI/CFN) is a per-item FIELD (stokMKI/stokCFN), never
+// checked against at all — so it now falls through to a company-wide summary instead.
 function findStockMatches(message, allStock) {
-  const keywords = extractKeywords(message);
+  const nMsgStock = normText(message);
+  const company = /\bmki\b/.test(nMsgStock) ? 'MKI' : /\bcfn\b/.test(nMsgStock) ? 'CFN' : null;
+  // Generic phrasing words ("stok", "hari ini") aren't product search terms — extractKeywords()
+  // only strips filler like "apa"/"yang"/"dong", not domain words like these, so without this
+  // filter a bare "Stok CFN hari ini" left "stok"/"hari" behind as fake keywords, which made the
+  // company-wide-summary branch below think there was still a specific product to search for and
+  // it never fired — every bare company question came back completely empty instead.
+  const keywords = extractKeywords(message).filter((kw) => !/^(mki|cfn|stok|stock|hari|skrg|sekarang)$/i.test(kw));
+
+  if (company && keywords.length === 0) {
+    const field = company === 'MKI' ? 'stokMKI' : 'stokCFN';
+    const inStock = allStock.filter((p) => p[field] > 0);
+    const totalQty = inStock.reduce((sum, p) => sum + p[field], 0);
+    const top = [...inStock].sort((a, b) => b[field] - a[field]).slice(0, 30);
+    return {
+      items: top,
+      note: `Ringkasan stok company ${company}: ${inStock.length} kode barang punya stok > 0, total ${totalQty} unit (jumlah dari field "${field}" tiap item). Ditampilkan 30 kode teratas urut stok terbanyak — kalau user tanya kode spesifik, sebutkan field ${field}-nya, bukan stokTotal (itu gabungan MKI+CFN).`,
+    };
+  }
+
   if (keywords.length === 0) return { items: [], note: 'Tidak ada kata kunci spesifik terdeteksi di pertanyaan.' };
-  const wantsReady = /ready|tersedia|stok|stock|\bada\b/.test(normText(message));
+  const wantsReady = /ready|tersedia|stok|stock|\bada\b/.test(nMsgStock);
 
   let matched = allStock.filter((p) => {
     const nKode = normCode(p.kode);
@@ -645,6 +687,11 @@ function findStockMatches(message, allStock) {
   });
 
   let note = '';
+  if (company) {
+    const field = company === 'MKI' ? 'stokMKI' : 'stokCFN';
+    matched = matched.filter((p) => p[field] > 0);
+    note += `Difilter hanya company ${company} (field ${field} > 0). `;
+  }
   if (wantsReady) {
     const before = matched.length;
     matched = matched.filter((p) => p.stokTotal > 0);
@@ -1717,7 +1764,7 @@ async function handleChat(request, env) {
   const poMatch = findPoGudangMatches(message, poGudangData?.items);
   const zonaMatch = findZonaWilayahMatches(message, zonaWilayahData);
   const customerBucketMatch = findCustomerBucketMatch(message, customerBucketsRaw ? JSON.parse(customerBucketsRaw) : null);
-  const referensi = matchReferences(message);
+  const referensi = matchReferences(message, allStock);
   const kpiNames = Array.isArray(kpiData?.kpi) ? kpiData.kpi.map((p) => p.nama).filter(Boolean) : [];
   const absensi = await fetchAttendanceContext(message, kpiNames, history);
 
