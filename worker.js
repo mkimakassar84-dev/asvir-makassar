@@ -507,6 +507,53 @@ function resolveStockCodeDescriptions(message, allStock) {
   return found;
 }
 
+const CABLE_CATEGORIES = new Set(['Optical Fiber Cable', 'LAN Cable', 'Coaxial Cable']);
+function extractCoreCount(text) {
+  const m = normText(text).match(/(\d+)\s*core/);
+  return m ? m[1] : null;
+}
+
+// Bridging a resolved stock CODE to a catalog product needs to be much stricter than the general
+// findProductCatalogMatch below (used for free-text browsing, where offering several loose options
+// to clarify is fine) — a wrong single guess here is worse than none, and the catalog's own model
+// numbers (e.g. "GJYXCH-1F") have NO relation to stock codes (e.g. "KSFO108"), so matching can only
+// ever go through shared descriptive wording, which plain word-overlap scoring doesn't handle well:
+// a 6-core or even a totally different product (a switch, not a cable) can score just as high as
+// the right cable, and the truly correct variant can score LOWER than a similar-but-wrong one, since
+// nothing here penalizes a mismatched spec. Two extra filters catch what score alone can't: reject
+// any candidate whose OWN text mentions a different core count than the resolved description, and
+// if the description says "kabel", restrict to actual cable categories (drops unrelated categories
+// like switches that happened to share enough generic words like "premium"/"messenger").
+function resolveStockCodeToCatalogProduct(stockDescription) {
+  const nMsg = normText(stockDescription);
+  const descCore = extractCoreCount(stockDescription);
+  const isCable = /\bkabel\b|\bcable\b/.test(nMsg);
+  const scored = [];
+  for (const p of PRODUCT_CATALOG) {
+    if (isCable && !CABLE_CATEGORIES.has(p.kategori)) continue;
+    let best = 0;
+    for (const kw of p.keywords) {
+      const s = phraseMatchScore(kw, nMsg);
+      if (s > best) best = s;
+    }
+    if (best < 0.6) continue;
+    if (descCore) {
+      const candidateCore = extractCoreCount(`${p.nama} ${p.keywords.join(' ')}`);
+      if (candidateCore && candidateCore !== descCore) continue;
+    }
+    scored.push({ p, score: best });
+  }
+  if (!scored.length) return null;
+  scored.sort((a, b) => b.score - a.score);
+  // Genuinely ambiguous even after filtering (several close variants survived) — present up to 3
+  // as candidates to confirm rather than silently betting on whichever happened to score highest.
+  const top = scored.filter((x) => x.score >= scored[0].score - 0.15).slice(0, 3);
+  return {
+    jumlahCocok: top.length,
+    produk: top.map((x) => ({ nama: x.p.nama, url: x.p.url, gambar: x.p.gambar, kategori: x.p.kategori })),
+  };
+}
+
 function matchReferences(message, allStock) {
   const stockDescriptions = resolveStockCodeDescriptions(message, allStock);
   const augmentedMessage = stockDescriptions.length ? `${message} ${stockDescriptions.join(' ')}` : message;
@@ -517,7 +564,13 @@ function matchReferences(message, allStock) {
   const wantsArticle = /\bartikel\b|berita teknis/.test(nMsg);
   const wantsSpec = /\bspek\b|spesifikasi|datasheet/.test(nMsg);
   const video = matchVideos(augmentedMessage);
-  const produkSpesifik = findProductCatalogMatch(augmentedMessage);
+  // A resolved stock CODE goes through the stricter dedicated matcher (core-count + category
+  // filtering, see resolveStockCodeToCatalogProduct) instead of the general one — the code itself
+  // already pins down one exact physical item, so the noisier free-text matcher's tolerance for
+  // several loosely-related options (including flat-out wrong specs) isn't appropriate here.
+  const produkSpesifik = stockDescriptions.length
+    ? resolveStockCodeToCatalogProduct(stockDescriptions.join(' '))
+    : findProductCatalogMatch(augmentedMessage);
   const hasAnyMatch = kategoriProduk.length || solusiSistem.length || wantsTutorial || wantsArticle || video.teknis.length || produkSpesifik;
   return {
     produkSpesifikCocok: produkSpesifik,
