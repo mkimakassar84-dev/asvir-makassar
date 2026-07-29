@@ -15,10 +15,16 @@
 // and "KPI Personel Cabang MKS" spreadsheets — see README.md if these ever need to change) ----
 const PERFORMANCE_SHEET_ID = '1_uou6JDGV-Tm80oALMrduuj9ZIVWM1r9ppuQsYq7_qo';
 const GIDS = {
-  grandData: '1703817529', // Grand Data 2026 — line-item transactions
+  grandData: '1703817529', // Grand Data 2026 — line-item transactions (= SALES, order amount)
   stock: '507949843',      // Stock GD MKS — product/stock by SKU
   ar: '1407414424',        // AR 2026 — piutang / aging
+  revSum: '1062237088',    // Rev SUM — actual payments collected (REVENUE, different from Sales)
+  poGudang: '2047354384',  // PO Gudang — incoming supplier purchase orders (columns A-K only)
 };
+
+// Same 5 codes the live Kinerja-Cabang-Makassar dashboard hardcodes for its "Fiber Optic 1-Core"
+// section — kept identical here so MIRA's answer matches what the dashboard shows.
+const FO_1CORE_CODES = ['KSFO028', 'KSFO108', 'KSFO083', 'KSFO113', 'KSFO128'];
 const KPI_WEBAPP_URL =
   'https://script.google.com/macros/s/AKfycbyZjdcOqCzQZ3i54Y2pAZVfbnMfuaEHmPFOaMhlpPqBgD958CWKTN5iujN4lPOkvJ43/exec';
 
@@ -279,6 +285,35 @@ function findPiutangByCustomer(message, piutangDetail) {
   };
 }
 
+// PO Gudang item-level lookup ("PO kode X status apa", "PO yang masih ditunggu apa saja") —
+// only the matched subset is sent to Gemini, the full ~250-row list stays out of every request.
+function findPoGudangMatches(message, poItems) {
+  if (!poItems || !poItems.length) return { items: [], note: '' };
+  const nMsg = normText(message);
+  const keywords = extractKeywords(message);
+  let matched = poItems.filter((p) => {
+    const nKode = normCode(p.kode);
+    return keywords.some((kw) => {
+      const ckw = normCode(kw);
+      return ckw.length >= 3 && nKode.includes(ckw);
+    });
+  });
+  let note = '';
+  const statusWords = { ditunggu: 'ditunggu', diterima: 'diterima', retur: 'retur', lainnya: 'lainnya' };
+  for (const [word, status] of Object.entries(statusWords)) {
+    if (nMsg.includes(word)) {
+      matched = (matched.length ? matched : poItems).filter((p) => p.statusBarang === status);
+      note = `Difilter status "${status}". `;
+      break;
+    }
+  }
+  if (matched.length > 100) {
+    note += `Total ${matched.length} PO cocok, ditampilkan 100 terbaru.`;
+    matched = matched.slice(-100);
+  }
+  return { items: matched, note: note || `${matched.length} PO cocok.` };
+}
+
 function matchReferences(message) {
   const nMsg = normText(message);
   return REFERENCE_LINKS.filter((r) => r.keywords.some((kw) => nMsg.includes(normText(kw))))
@@ -390,6 +425,9 @@ async function handleSync(request, env) {
         stokMKI: toNumber(r['MKI']),
         stokCFN: toNumber(r['CFN']),
         stokTotal: toNumber(r['MKI & CFN']),
+        turnoverMKI: toNumber(r['MKI Turnover']),
+        turnoverCFN: toNumber(r['CFN Turnover']),
+        turnoverTotal: toNumber(r['MKI & CFN Turnover']),
       }))
       .filter((p) => p.stokTotal > 0 || p.harga > 0);
     await env.SHEET_CACHE.put('data:stock', JSON.stringify(products));
@@ -406,36 +444,87 @@ async function handleSync(request, env) {
     const byMonth = {};
     const byLokasi = {};
     const byLokasiEkspedisi = {}; // lokasi -> { ekspedisiName -> count } — full data, not a capped sample
+    const byKode = {}; // top products: kode -> { amount, qty, amountMKI, amountCFN }
+    const byEkspedisiGlobal = {};
+    const byCustomer = {}; // frekuensi customer
+    const fo1core = { byMonth: {}, byKode: {} };
+    let sameDayCount = 0;
+    let cutOffCount = 0;
+    let handCarryCount = 0;
     const transactions = [];
     for (const r of rows) {
       const d = parseFlexibleDate(r['Order Date']);
       const key = d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` : 'unknown';
       const amount = toNumber(r['Amount']);
-      if (!byMonth[key]) byMonth[key] = { bulan: key, revenue: 0, transaksi: 0 };
-      byMonth[key].revenue += amount;
-      byMonth[key].transaksi += 1;
-      const lokasi = (r['Lokasi'] || '').trim();
-      if (lokasi) byLokasi[lokasi] = (byLokasi[lokasi] || 0) + 1;
+      const qty = toNumber(r['Quantity']);
+      const kode = (r['Kode Barang'] || '').trim();
+      const company = (r['Company'] || '').trim().toUpperCase();
+      const customer = (r['Customer'] || '').trim();
+      const statusSameCutOff = (r['Status'] || '').trim(); // col H is actually "Same Day / Cut Off" status
       const ekspedisi = (r['Status (Ekspedisi)'] || '').trim();
+      const lokasi = (r['Lokasi'] || '').trim();
+
+      if (!byMonth[key]) byMonth[key] = { bulan: key, sales: 0, transaksi: 0 };
+      byMonth[key].sales += amount;
+      byMonth[key].transaksi += 1;
+
+      if (lokasi) byLokasi[lokasi] = (byLokasi[lokasi] || 0) + 1;
       if (lokasi && ekspedisi) {
         if (!byLokasiEkspedisi[lokasi]) byLokasiEkspedisi[lokasi] = {};
         byLokasiEkspedisi[lokasi][ekspedisi] = (byLokasiEkspedisi[lokasi][ekspedisi] || 0) + 1;
       }
+
+      if (kode) {
+        if (!byKode[kode]) byKode[kode] = { kode, amount: 0, qty: 0, amountMKI: 0, amountCFN: 0 };
+        byKode[kode].amount += amount;
+        byKode[kode].qty += qty;
+        if (company === 'MKI') byKode[kode].amountMKI += amount;
+        else if (company === 'CFN') byKode[kode].amountCFN += amount;
+      }
+
+      if (/same/i.test(statusSameCutOff)) sameDayCount++;
+      else if (/cut/i.test(statusSameCutOff)) cutOffCount++;
+      const ekspUpper = ekspedisi.toUpperCase();
+      if (ekspUpper.includes('HAND CARRY')) handCarryCount++;
+      const ekspLabel = ekspedisi || 'TIDAK TERCATAT';
+      byEkspedisiGlobal[ekspLabel] = (byEkspedisiGlobal[ekspLabel] || 0) + 1;
+
+      if (customer) {
+        if (!byCustomer[customer]) {
+          byCustomer[customer] = { customer, invoices: new Set(), totalSales: 0, frequency: 0, lastPurchase: null };
+        }
+        const c = byCustomer[customer];
+        if (r['No Invoice']) c.invoices.add(r['No Invoice']);
+        c.totalSales += amount;
+        c.frequency += 1;
+        if (d && (!c.lastPurchase || d > c.lastPurchase)) c.lastPurchase = d;
+      }
+
+      if (FO_1CORE_CODES.includes(kode)) {
+        if (!fo1core.byMonth[key]) fo1core.byMonth[key] = { bulan: key, amount: 0, qty: 0 };
+        fo1core.byMonth[key].amount += amount;
+        fo1core.byMonth[key].qty += qty;
+        if (!fo1core.byKode[kode]) fo1core.byKode[kode] = { kode, amount: 0, qty: 0 };
+        fo1core.byKode[kode].amount += amount;
+        fo1core.byKode[kode].qty += qty;
+      }
+
       transactions.push({
         tanggal: r['Order Date'],
         invoice: r['No Invoice'],
-        customer: r['Customer'],
-        kode: r['Kode Barang'],
-        qty: toNumber(r['Quantity']),
+        customer,
+        kode,
+        qty,
         amount,
-        status: r['Status'],
-        company: r['Company'],
-        ekspedisi: r['Status (Ekspedisi)'],
+        status: statusSameCutOff,
+        company,
+        ekspedisi,
         lokasi,
         tglTerkirim: r['Tanggal Terkirim'],
       });
     }
     const performance = Object.values(byMonth).sort((a, b) => a.bulan.localeCompare(b.bulan));
+    const totalSales2026 = performance.reduce((s, m) => s + m.sales, 0);
     const topWilayah = Object.entries(byLokasi)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 20)
@@ -449,16 +538,163 @@ async function handleSync(request, env) {
         .sort((a, b) => b[1] - a[1])
         .map(([nama, jumlah]) => ({ nama, jumlah })),
     }));
-    await env.SHEET_CACHE.put('data:performance', JSON.stringify({ performance, topWilayah }));
+
+    const produkList = Object.values(byKode);
+    const topProducts = {
+      byAmount: [...produkList].sort((a, b) => b.amount - a.amount).slice(0, 20),
+      byQty: [...produkList].sort((a, b) => b.qty - a.qty).slice(0, 20),
+    };
+
+    const delivery = {
+      sameDayCount,
+      cutOffCount,
+      handCarryCount,
+      pihakKetigaCount: rows.length - handCarryCount,
+      byEkspedisi: Object.entries(byEkspedisiGlobal)
+        .sort((a, b) => b[1] - a[1])
+        .map(([nama, jumlah]) => ({ nama, jumlah })),
+    };
+
+    const now = new Date();
+    const customerList = Object.values(byCustomer).map((c) => {
+      const daysSince = c.lastPurchase ? Math.floor((now - c.lastPurchase) / 86400000) : null;
+      return {
+        customer: c.customer,
+        invoiceUnik: c.invoices.size,
+        totalSales: c.totalSales,
+        frequency: c.frequency,
+        lastPurchase: c.lastPurchase ? toIsoDate(c.lastPurchase) : null,
+        daysSinceLastPurchase: daysSince,
+        churned: daysSince !== null && daysSince >= 60,
+      };
+    });
+    const bucketOf = (n) => (n === 1 ? '1x' : n === 2 ? '2x' : n <= 5 ? '3-5x' : n <= 10 ? '5-10x' : '>10x');
+    const buckets = {};
+    for (const c of customerList) {
+      const b = bucketOf(c.invoiceUnik);
+      if (!buckets[b]) buckets[b] = { bucket: b, jumlahCustomer: 0, totalSales: 0 };
+      buckets[b].jumlahCustomer += 1;
+      buckets[b].totalSales += c.totalSales;
+    }
+    const customerInsights = {
+      totalCustomer: customerList.length,
+      totalChurned: customerList.filter((c) => c.churned).length,
+      buckets: Object.values(buckets),
+      topByFrekuensi: [...customerList].sort((a, b) => b.invoiceUnik - a.invoiceUnik).slice(0, 20),
+      topBySales: [...customerList].sort((a, b) => b.totalSales - a.totalSales).slice(0, 20),
+    };
+
+    const fiberOptic1Core = {
+      kodeList: FO_1CORE_CODES,
+      monthly: Object.values(fo1core.byMonth).sort((a, b) => a.bulan.localeCompare(b.bulan)),
+      perKode: Object.values(fo1core.byKode),
+    };
+
+    await env.SHEET_CACHE.put('data:performance', JSON.stringify({ performance, topWilayah, totalSales2026 }));
     await env.SHEET_CACHE.put('data:transactions', JSON.stringify(transactions));
     await env.SHEET_CACHE.put('data:wilayahEkspedisi', JSON.stringify(wilayahEkspedisi));
+    await env.SHEET_CACHE.put('data:topProducts', JSON.stringify(topProducts));
+    await env.SHEET_CACHE.put('data:delivery', JSON.stringify(delivery));
+    await env.SHEET_CACHE.put('data:customerInsights', JSON.stringify(customerInsights));
+    await env.SHEET_CACHE.put('data:fiberOptic1Core', JSON.stringify(fiberOptic1Core));
     summary.sources.performance = { ok: true, bulanTersimpan: performance.length, baris: rows.length };
     summary.sources.transactions = { ok: true, baris: transactions.length };
     summary.sources.wilayahEkspedisi = { ok: true, wilayah: wilayahEkspedisi.length };
+    summary.sources.topProducts = { ok: true, produk: produkList.length };
+    summary.sources.delivery = { ok: true };
+    summary.sources.customerInsights = { ok: true, customer: customerList.length };
+    summary.sources.fiberOptic1Core = { ok: true };
   } catch (err) {
     summary.sources.performance = { ok: false, error: String(err) };
     summary.sources.transactions = { ok: false, error: String(err) };
     summary.sources.wilayahEkspedisi = { ok: false, error: String(err) };
+    summary.sources.topProducts = { ok: false, error: String(err) };
+    summary.sources.delivery = { ok: false, error: String(err) };
+    summary.sources.customerInsights = { ok: false, error: String(err) };
+    summary.sources.fiberOptic1Core = { ok: false, error: String(err) };
+  }
+
+  // 2b) Revenue (Rev SUM) — this is DIFFERENT from Sales (Grand Data Amount): Revenue is actual
+  // cash collected ("Pelunasan"), Sales is order value at invoice time. Only columns A-E are
+  // real data — later columns repeat the same header names for a recap block (would silently
+  // collide if read by name), so this sheet is read by fixed position: 0 Payment Date,
+  // 1 No Faktur, 2 Customer, 3 Pelunasan, 4 Company.
+  try {
+    const csv = await (await fetch(csvExportUrl(PERFORMANCE_SHEET_ID, GIDS.revSum))).text();
+    const allRows = parseCsv(csv).slice(1);
+    const byMonth = {};
+    for (const r of allRows) {
+      if (!r[1]) continue; // No Faktur empty = past the real data block
+      const d = parseFlexibleDate(r[0]);
+      const key = d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` : 'unknown';
+      const amount = toNumber(r[3]);
+      if (!byMonth[key]) byMonth[key] = { bulan: key, revenue: 0, pembayaran: 0 };
+      byMonth[key].revenue += amount;
+      byMonth[key].pembayaran += 1;
+    }
+    const monthly = Object.values(byMonth).sort((a, b) => a.bulan.localeCompare(b.bulan));
+    const total2026 = monthly.reduce((s, m) => s + m.revenue, 0);
+    await env.SHEET_CACHE.put('data:revenue', JSON.stringify({ monthly, total2026 }));
+    summary.sources.revenue = { ok: true, bulan: monthly.length };
+  } catch (err) {
+    summary.sources.revenue = { ok: false, error: String(err) };
+  }
+
+  // 2c) PO Gudang (incoming supplier purchase orders). Only columns A-K are real/used by the
+  // live dashboard — a second block from column M onward exists in the raw sheet but is dead
+  // data (confirmed unused anywhere), so it's ignored here too.
+  try {
+    const csv = await (await fetch(csvExportUrl(PERFORMANCE_SHEET_ID, GIDS.poGudang))).text();
+    const rows = rowsToObjects(parseCsv(csv), 0);
+    const byStatus = {};
+    const byMonth = {};
+    const items = [];
+    for (const r of rows) {
+      if (!r['NO PO']) continue;
+      const stage = (r['Stage'] || '').trim().toLowerCase();
+      const noSuratJalan = (r['NO Surat Jalan'] || '').trim();
+      const statusEkspedisi = (r['Status (Ekspedisi)'] || '').trim();
+      const qtyPesan = toNumber(r['Quantity']);
+      const qtyDiterima = toNumber(r['Quantity Diterima (GD MKS)']);
+      let statusBarang;
+      if (stage === 'complete') statusBarang = 'diterima';
+      else if (stage === 'return') statusBarang = 'retur';
+      else if (!stage && !noSuratJalan && !statusEkspedisi) statusBarang = 'ditunggu';
+      else statusBarang = 'lainnya';
+
+      if (!byStatus[statusBarang]) byStatus[statusBarang] = { status: statusBarang, jumlahPO: 0, qtyPesan: 0, qtyDiterima: 0 };
+      byStatus[statusBarang].jumlahPO += 1;
+      byStatus[statusBarang].qtyPesan += qtyPesan;
+      byStatus[statusBarang].qtyDiterima += qtyDiterima;
+
+      const d = parseFlexibleDate(r['Order Date']);
+      const key = d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` : 'unknown';
+      if (!byMonth[key]) byMonth[key] = { bulan: key, jumlahPO: 0, qtyPesan: 0 };
+      byMonth[key].jumlahPO += 1;
+      byMonth[key].qtyPesan += qtyPesan;
+
+      items.push({
+        tanggal: r['Order Date'],
+        noPO: r['NO PO'],
+        company: r['COMPANY'],
+        kode: r['Kode Barang'],
+        qtyPesan,
+        qtyDiterima,
+        statusBarang,
+        tanggalMasukGudang: r['Tanggal Masuk GD MKS'],
+      });
+    }
+    await env.SHEET_CACHE.put(
+      'data:poGudang',
+      JSON.stringify({
+        byStatus: Object.values(byStatus),
+        monthly: Object.values(byMonth).sort((a, b) => a.bulan.localeCompare(b.bulan)),
+        items,
+      })
+    );
+    summary.sources.poGudang = { ok: true, baris: items.length };
+  } catch (err) {
+    summary.sources.poGudang = { ok: false, error: String(err) };
   }
 
   // 3) Piutang / AR aging
@@ -487,9 +723,14 @@ async function handleSync(request, env) {
       byKategori[kategori].totalNilai += nilai;
       detail.push({ tanggal: r[11], noFaktur: r[12], customer, nilaiSisa: nilai, kategori });
     }
+    // Ratio AR-to-sales needs total 2026 sales, already computed and cached above in this
+    // same /sync run — read it back rather than re-deriving from a second data pass.
+    const perfCached = await env.SHEET_CACHE.get('data:performance');
+    const totalSales2026 = perfCached ? JSON.parse(perfCached).totalSales2026 : 0;
+    const ratioARtoSales = totalSales2026 ? (totalPiutang / totalSales2026) * 100 : null;
     await env.SHEET_CACHE.put(
       'data:piutang',
-      JSON.stringify({ totalPiutang, byKategori: Object.values(byKategori), detail })
+      JSON.stringify({ totalPiutang, byKategori: Object.values(byKategori), ratioARtoSales, detail })
     );
     summary.sources.piutang = { ok: true, baris: rowCount };
   } catch (err) {
@@ -531,13 +772,23 @@ async function handleChat(request, env) {
   if (!message) return json({ error: 'Field "message" wajib diisi.' }, 400);
   if (!env.GEMINI_API_KEY) return json({ error: 'GEMINI_API_KEY belum di-set di server.' }, 500);
 
-  const [stockRaw, perfRaw, piutangRaw, kpiRaw, txRaw, wilayahRaw, lastSync] = await Promise.all([
+  const [
+    stockRaw, perfRaw, piutangRaw, kpiRaw, txRaw, wilayahRaw,
+    revenueRaw, poGudangRaw, topProductsRaw, deliveryRaw, customerInsightsRaw, fo1coreRaw,
+    lastSync,
+  ] = await Promise.all([
     env.SHEET_CACHE.get('data:stock'),
     env.SHEET_CACHE.get('data:performance'),
     env.SHEET_CACHE.get('data:piutang'),
     env.SHEET_CACHE.get('data:kpi'),
     env.SHEET_CACHE.get('data:transactions'),
     env.SHEET_CACHE.get('data:wilayahEkspedisi'),
+    env.SHEET_CACHE.get('data:revenue'),
+    env.SHEET_CACHE.get('data:poGudang'),
+    env.SHEET_CACHE.get('data:topProducts'),
+    env.SHEET_CACHE.get('data:delivery'),
+    env.SHEET_CACHE.get('data:customerInsights'),
+    env.SHEET_CACHE.get('data:fiberOptic1Core'),
     env.SHEET_CACHE.get('lastSync'),
   ]);
 
@@ -546,20 +797,27 @@ async function handleChat(request, env) {
   const allWilayahEkspedisi = wilayahRaw ? JSON.parse(wilayahRaw) : [];
   const piutangData = piutangRaw ? JSON.parse(piutangRaw) : null;
   const kpiData = kpiRaw ? JSON.parse(kpiRaw) : null;
+  const poGudangData = poGudangRaw ? JSON.parse(poGudangRaw) : null;
   const stokMatch = findStockMatches(message, allStock);
   const txMatch = findTransactionMatches(message, allTransactions);
   const wilayahMatch = findWilayahMatches(message, allWilayahEkspedisi);
   const piutangMatch = findPiutangByCustomer(message, piutangData?.detail);
+  const poMatch = findPoGudangMatches(message, poGudangData?.items);
   const referensi = matchReferences(message);
   const kpiNames = Array.isArray(kpiData?.kpi) ? kpiData.kpi.map((p) => p.nama).filter(Boolean) : [];
   const absensi = await fetchAttendanceContext(message, kpiNames);
 
   const context = {
+    // "performa" = SALES (order value from Grand Data 2026). "revenue" = actual cash collected
+    // (Rev SUM "Pelunasan") — these are different metrics per the dashboard, don't conflate them.
     performa: perfRaw ? JSON.parse(perfRaw) : null,
+    revenue: revenueRaw ? JSON.parse(revenueRaw) : null,
     // Only the compact totals go in by default — the 189-row invoice detail is never sent
     // wholesale, only the customer-matched subset via piutangRelevan (keeps every other
     // question's context small, same principle as stock/transactions retrieval).
-    piutang: piutangData ? { totalPiutang: piutangData.totalPiutang, byKategori: piutangData.byKategori } : null,
+    piutang: piutangData
+      ? { totalPiutang: piutangData.totalPiutang, byKategori: piutangData.byKategori, ratioARtoSalesPersen: piutangData.ratioARtoSales }
+      : null,
     piutangRelevan: piutangMatch,
     kpiPersonel: kpiData,
     stokRelevan: stokMatch.items,
@@ -567,21 +825,32 @@ async function handleChat(request, env) {
     transaksiRelevan: txMatch.items,
     transaksiCatatan: txMatch.note,
     wilayahEkspedisiRelevan: wilayahMatch,
+    topProduk: topProductsRaw ? JSON.parse(topProductsRaw) : null,
+    deliveryOverview: deliveryRaw ? JSON.parse(deliveryRaw) : null,
+    poGudangRingkasan: poGudangData ? { byStatus: poGudangData.byStatus, monthly: poGudangData.monthly } : null,
+    poGudangRelevan: poMatch.items,
+    poGudangCatatan: poMatch.note,
+    customerInsights: customerInsightsRaw ? JSON.parse(customerInsightsRaw) : null,
+    fiberOptic1Core: fo1coreRaw ? JSON.parse(fo1coreRaw) : null,
     referensiLink: referensi,
     absensiDanIndikatorHarian: absensi,
   };
 
-  const systemPrompt = `Kamu adalah "MIRA" (Makassar Intelligent Response Assistant), asisten AI internal untuk cabang Makassar PT. Mitra Kabel Indonesia.
-Tugasmu: menjawab pertanyaan tentang performa cabang, piutang, KPI personel, transaksi/penjualan, ekspedisi, dan stok/spesifikasi produk, HANYA berdasarkan DATA KONTEKS di bawah ini dan histori percakapan sebelumnya.
+  const systemPrompt = `Kamu adalah "MIRA" (Makassar Intelligent Response Assistant), asisten AI internal untuk cabang Makassar PT. Mitra Kabel Indonesia. Kamu adalah rekan bicara untuk dashboard "Kinerja Cabang Makassar" — kamu harus bisa menjawab apapun yang bisa dilihat di dashboard itu (semua section: performa harian, sales, revenue, rasio sales/revenue, wilayah, turnover gudang, stok & PO, delivery/ekspedisi, piutang, frekuensi customer, fiber optic 1-core, KPI personel), HANYA berdasarkan DATA KONTEKS di bawah ini dan histori percakapan sebelumnya.
 
 Aturan:
 - Jika data yang ditanyakan tidak ada di konteks, katakan terus terang tidak tahu / datanya belum tersedia — jangan mengarang angka.
 - User sering salah ketik (typo 1-2 huruf), menyingkat kata, atau menulis kode barang dengan/tanpa spasi/strip (mis. "DKB180", "DKB-180", "DKB 180" adalah kode yang SAMA) — pahami maksudnya, jangan langsung bilang "tidak ditemukan".
 - Jika user bertanya jumlah spesifik (mis. "10 wilayah penjualan terbesar", "5 customer terbanyak"), berikan SEMUA item yang diminta sesuai jumlah tersebut jika datanya tersedia di konteks, jangan dipotong.
-- Untuk pertanyaan stok/ketersediaan barang, gunakan "stokRelevan" (hasil pencarian kata kunci otomatis) — sebutkan juga rincian per company (MKI/CFN), bukan cuma total. Field "stokCatatan" menjelaskan bagaimana hasil ini difilter.
-- Untuk pertanyaan tanggal tertentu atau nama customer spesifik terkait TRANSAKSI/PENJUALAN, gunakan "transaksiRelevan" (sudah difilter otomatis) — field "ekspedisi" dan "company" tiap baris menunjukkan cara pengiriman.
-- Untuk pertanyaan PIUTANG customer tertentu (mis. "piutang si X berapa"), WAJIB gunakan "piutangRelevan" (sudah difilter per nama customer, berisi jumlah invoice dan rincian tiap invoice) — field umum "piutang" cuma berisi total keseluruhan per kategori umur, TIDAK punya rincian per customer.
-- Untuk pertanyaan "ekspedisi ke wilayah X pakai apa" atau "wilayah X pakai ekspedisi apa", WAJIB gunakan "wilayahEkspedisiRelevan" (data lengkap semua ekspedisi yang pernah dipakai ke wilayah itu, sudah diurutkan dari yang paling sering dipakai) — JANGAN pakai transaksiRelevan untuk pertanyaan jenis ini karena bisa tidak lengkap. Sebutkan ekspedisi yang paling dominan/sering dipakai, boleh sebutkan alternatif lain jika ada.
+- PENTING: "performa" (Sales) dan "revenue" adalah DUA metrik BERBEDA — Sales = nilai order/invoice (Grand Data), Revenue = uang yang benar-benar sudah masuk/dibayar (Pelunasan). Jangan disamakan. Rasio Sales-ke-Revenue = revenue/sales*100 per bulan, hitung sendiri dari kedua array bulanan itu kalau ditanya.
+- Untuk pertanyaan stok/ketersediaan barang, gunakan "stokRelevan" — sebutkan juga rincian per company (MKI/CFN) DAN "turnoverMKI"/"turnoverCFN"/"turnoverTotal" (perputaran gudang) kalau relevan, bukan cuma total stok. Field "stokCatatan" menjelaskan filter yang dipakai.
+- Untuk pertanyaan tanggal tertentu atau nama customer spesifik terkait TRANSAKSI/PENJUALAN, gunakan "transaksiRelevan" — field "ekspedisi" dan "company" tiap baris menunjukkan cara pengiriman.
+- Untuk pertanyaan PIUTANG customer tertentu, WAJIB gunakan "piutangRelevan" (rincian per invoice) — field umum "piutang" cuma total per kategori umur + "ratioARtoSalesPersen" (rasio piutang terhadap total sales 2026), TIDAK punya rincian per customer.
+- Untuk pertanyaan "ekspedisi ke wilayah X pakai apa", WAJIB gunakan "wilayahEkspedisiRelevan" (lengkap, terurut dari paling sering) — JANGAN pakai transaksiRelevan untuk ini. Untuk pertanyaan ekspedisi SECARA UMUM (bukan per wilayah, mis. "berapa banyak pakai hand carry", "ekspedisi apa yang paling sering dipakai", "berapa yang same day"), gunakan "deliveryOverview" (sameDayCount, cutOffCount, handCarryCount, pihakKetigaCount, byEkspedisi).
+- Untuk "produk paling laku/terlaris", gunakan "topProduk" (byAmount = berdasarkan nilai rupiah, byQty = berdasarkan jumlah unit, sudah top-20).
+- Untuk "kabel 1 core"/"fiber optic 1 core" secara spesifik sebagai section dashboard, gunakan "fiberOptic1Core" (5 kode resmi: KSFO028, KSFO108, KSFO083, KSFO113, KSFO128, dengan tren bulanan & per kode) — untuk pencarian stok kabel 1-core secara umum tetap pakai "stokRelevan".
+- Untuk pertanyaan PO Gudang (purchase order dari supplier/pusat), gunakan "poGudangRingkasan" (ringkasan per status: ditunggu/diterima/retur/lainnya + tren bulanan) untuk pertanyaan umum, atau "poGudangRelevan" (sudah difilter kode/status, field "poGudangCatatan" menjelaskan filternya) untuk pertanyaan spesifik.
+- Untuk "frekuensi customer", "customer paling sering belanja", atau "customer churn/tidak aktif", gunakan "customerInsights" (totalCustomer, totalChurned = tidak beli >=60 hari, buckets = pengelompokan berdasar jumlah invoice unik, topByFrekuensi, topBySales).
 - Pahami Bahasa Indonesia informal/sehari-hari dan istilah daerah (mis. "gimana" = "bagaimana", "kemarin" = hari sebelum ini, "pake"/"pakai" = sama). Jangan kaku pada ejaan baku.
 - Gunakan HISTORI PERCAKAPAN untuk memahami pertanyaan lanjutan yang tidak lengkap sendiri, contoh: "kalau revenue-nya?", "bulan lalu gimana?", "itu belanja apa lagi?" — kaitkan dengan topik/entitas yang dibahas sebelumnya.
 - Jika "referensiLink" berisi entri yang relevan dengan pertanyaan (spesifikasi produk atau tutorial), sertakan URL-nya APA ADANYA (utuh, bisa diklik) di jawabanmu — jangan ubah atau potong URL-nya.
