@@ -197,11 +197,27 @@
     return t;
   }
 
+  // Auto-pick the best available Indonesian voice (free, browser-native — no extra API calls/
+  // latency). Prefers a "Google"-branded voice, which is usually the higher-quality neural one
+  // on Android/Chrome, over generic/robotic system voices.
+  let indonesianVoice = null;
+  function pickIndonesianVoice() {
+    const voices = window.speechSynthesis.getVoices();
+    const idVoices = voices.filter((v) => v.lang && v.lang.toLowerCase().startsWith('id'));
+    if (!idVoices.length) return null;
+    return idVoices.find((v) => /google/i.test(v.name)) || idVoices[0];
+  }
+  if ('speechSynthesis' in window) {
+    indonesianVoice = pickIndonesianVoice();
+    window.speechSynthesis.onvoiceschanged = () => { indonesianVoice = pickIndonesianVoice(); };
+  }
+
   function speak(text) {
     if (!('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel();
     const utter = new SpeechSynthesisUtterance(toSpeakable(text));
     utter.lang = 'id-ID';
+    if (indonesianVoice) utter.voice = indonesianVoice;
     window.speechSynthesis.speak(utter);
   }
 
