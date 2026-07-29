@@ -257,14 +257,20 @@ function extractDateMention(message) {
 // partial/shortened names (e.g. message "Arsyad Ambo Dalle" vs stored "MUH. ARSYAD AMBO DALLE")
 // which a plain substring check misses since the stored name is LONGER than what the user typed.
 const NAME_STOPWORDS = new Set(['muh', 'tk', 'pt', 'cv', 'toko', 'bpk', 'ibu', 'dan']);
-function customerNameFuzzyMatch(nMsg, customerName) {
-  const words = normText(customerName)
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .split(/\s+/)
-    .filter((w) => w.length >= 3 && !NAME_STOPWORDS.has(w));
-  if (!words.length) return false;
-  const hits = words.filter((w) => nMsg.includes(w)).length;
-  return hits / words.length >= 0.7;
+function nameWordsOf(text) {
+  return normText(text).replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean);
+}
+
+// True typo tolerance (not just missing/partial words): each significant word in the stored
+// customer name is matched against message words either exactly OR within edit-distance 1-2
+// (scaled to word length), so "Arsad Ambo Dale" still finds "MUH. ARSYAD AMBO DALLE".
+function customerNameFuzzyMatch(msgWords, customerName) {
+  const nameWords = nameWordsOf(customerName).filter((w) => w.length >= 3 && !NAME_STOPWORDS.has(w));
+  if (!nameWords.length) return false;
+  const hits = nameWords.filter((nw) =>
+    msgWords.some((mw) => mw === nw || (Math.abs(mw.length - nw.length) <= 2 && levenshtein(mw, nw) <= (nw.length <= 4 ? 1 : 2)))
+  ).length;
+  return hits / nameWords.length >= 0.7;
 }
 
 // Matches transactions by (in priority order): exact date mention, product code mention (for
@@ -312,9 +318,10 @@ function findTransactionMatches(message, allTransactions) {
     } else {
       const customerSet = new Set();
       for (const tx of allTransactions) if (tx.customer) customerSet.add(tx.customer);
+      const msgWords = nameWordsOf(message);
       let hitCustomer = null;
       for (const c of customerSet) {
-        if (c.length >= 4 && customerNameFuzzyMatch(nMsg, c)) { hitCustomer = c; break; }
+        if (c.length >= 4 && customerNameFuzzyMatch(msgWords, c)) { hitCustomer = c; break; }
       }
       if (hitCustomer) {
         matched = allTransactions.filter((tx) => tx.customer === hitCustomer).sort(byDateDesc);
@@ -367,12 +374,12 @@ function findZonaWilayahMatches(message, zonaData) {
 // per-customer breakdown at all, which is why these questions used to come back empty.
 function findPiutangByCustomer(message, piutangDetail) {
   if (!piutangDetail || !piutangDetail.length) return null;
-  const nMsg = normText(message);
   const customerSet = new Set();
   for (const p of piutangDetail) if (p.customer) customerSet.add(p.customer);
+  const msgWords = nameWordsOf(message);
   let hit = null;
   for (const c of customerSet) {
-    if (c.length >= 4 && nMsg.includes(normText(c))) { hit = c; break; }
+    if (c.length >= 4 && customerNameFuzzyMatch(msgWords, c)) { hit = c; break; }
   }
   if (!hit) return null;
   const invoices = piutangDetail.filter((p) => p.customer === hit);
