@@ -750,6 +750,16 @@ async function runSync(env) {
       byQty: [...produkList].sort((a, b) => b.qty - a.qty).slice(0, 20),
     };
 
+    // "Transaksi Belum Dikirim" (dashboard Daily Performance > Delivery tab): stage is neither
+    // "Complete" nor "Return" — confirmed against real rows (empty stage = still pending).
+    const undelivered = transactions
+      .filter((tx) => !['complete', 'return'].includes((tx.stage || '').toLowerCase().trim()))
+      .sort((a, b) => {
+        const da = parseFlexibleDate(a.tanggal);
+        const db = parseFlexibleDate(b.tanggal);
+        return (db ? db.getTime() : 0) - (da ? da.getTime() : 0);
+      });
+
     const delivery = {
       sameDayCount,
       cutOffCount,
@@ -825,6 +835,7 @@ async function runSync(env) {
     await env.SHEET_CACHE.put('data:fiberOptic1Core', JSON.stringify(fiberOptic1Core));
     await env.SHEET_CACHE.put('data:dailyPerformanceTargets', JSON.stringify(dailyPerformanceTargets));
     await env.SHEET_CACHE.put('data:stockMovement', JSON.stringify(stockMovement));
+    await env.SHEET_CACHE.put('data:undelivered', JSON.stringify(undelivered));
     summary.sources.performance = { ok: true, bulanTersimpan: performance.length, baris: rows.length };
     summary.sources.transactions = { ok: true, baris: transactions.length };
     summary.sources.wilayahEkspedisi = { ok: true, wilayah: wilayahEkspedisi.length };
@@ -833,6 +844,7 @@ async function runSync(env) {
     summary.sources.customerInsights = { ok: true, customer: customerList.length };
     summary.sources.fiberOptic1Core = { ok: true };
     summary.sources.dailyPerformanceTargets = { ok: true };
+    summary.sources.undelivered = { ok: true, jumlah: undelivered.length };
     summary.sources.stockMovement = { ok: true, tidakBergerak: stockMovement.tidakBergerak.length, dibawah5: stockMovement.terjualDibawah5.length };
   } catch (err) {
     summary.sources.performance = { ok: false, error: String(err) };
@@ -844,6 +856,7 @@ async function runSync(env) {
     summary.sources.fiberOptic1Core = { ok: false, error: String(err) };
     summary.sources.dailyPerformanceTargets = { ok: false, error: String(err) };
     summary.sources.stockMovement = { ok: false, error: String(err) };
+    summary.sources.undelivered = { ok: false, error: String(err) };
   }
 
   // 2b) YoY comparison (Sales SUM sheet, columns AS-BB / absolute index 44-53). Row 0 is a
@@ -1095,7 +1108,7 @@ async function handleChat(request, env) {
   const [
     stockRaw, perfRaw, piutangRaw, kpiRaw, txRaw, wilayahRaw,
     revenueRaw, poGudangRaw, topProductsRaw, deliveryRaw, customerInsightsRaw, fo1coreRaw,
-    yoyRaw, zonaWilayahRaw, dailyPerformanceRaw, stockMovementRaw,
+    yoyRaw, zonaWilayahRaw, dailyPerformanceRaw, stockMovementRaw, undeliveredRaw,
     lastSync,
   ] = await Promise.all([
     env.SHEET_CACHE.get('data:stock'),
@@ -1114,6 +1127,7 @@ async function handleChat(request, env) {
     env.SHEET_CACHE.get('data:zonaWilayah'),
     env.SHEET_CACHE.get('data:dailyPerformanceTargets'),
     env.SHEET_CACHE.get('data:stockMovement'),
+    env.SHEET_CACHE.get('data:undelivered'),
     env.SHEET_CACHE.get('lastSync'),
   ]);
 
@@ -1163,6 +1177,7 @@ async function handleChat(request, env) {
     zonaWilayahRelevan: zonaMatch,
     targetPerformaHarianBulanan: dailyPerformanceRaw ? JSON.parse(dailyPerformanceRaw) : null,
     stokTidakBergerakDanKurangLaku: stockMovementRaw ? JSON.parse(stockMovementRaw) : null,
+    transaksiBelumDikirim: undeliveredRaw ? JSON.parse(undeliveredRaw) : null,
     referensiLink: referensi,
     absensiDanIndikatorHarian: absensi,
   };
@@ -1186,6 +1201,7 @@ Aturan:
 - Untuk "zona wilayah" (merah/kuning/hijau berdasar jumlah invoice, BEDA dari topik ekspedisi), "wilayah tanpa pembelanjaan", atau zona per provinsi, gunakan "zonaWilayahRelevan". Zona: hijau jika total invoice >50, kuning jika 20-50, merah jika <20.
 - Untuk target & pencapaian performa harian/bulanan (target invoice 280/bulan, target OTD/On-Time-Delivery 80%), gunakan "targetPerformaHarianBulanan" per bulan (invoiceUnik, pencapaianInvoicePersen, otdAccuracyPersen).
 - Untuk "stok tidak bergerak/tidak laku" atau "produk terjual di bawah 5 unit", gunakan "stokTidakBergerakDanKurangLaku" (tidakBergerak = stok ada tapi 0 terjual sepanjang 2026, terjualDibawah5 = terjual tapi kurang dari 5 unit).
+- Untuk pertanyaan "customer/barang yang belum dikirim/belum diantar/belum terkirim", gunakan "transaksiBelumDikirim" (daftar lengkap transaksi tahun 2026 yang statusnya masih pending, belum "Complete" dan belum "Return") — sebutkan nama customer, kode barang, dan tanggal order-nya.
 - Pahami Bahasa Indonesia informal/sehari-hari dan istilah daerah (mis. "gimana" = "bagaimana", "kemarin" = hari sebelum ini, "pake"/"pakai" = sama). Jangan kaku pada ejaan baku.
 - Gunakan HISTORI PERCAKAPAN untuk memahami pertanyaan lanjutan yang tidak lengkap sendiri, contoh: "kalau revenue-nya?", "bulan lalu gimana?", "itu belanja apa lagi?" — kaitkan dengan topik/entitas yang dibahas sebelumnya.
 - Jika "referensiLink" berisi entri yang relevan dengan pertanyaan (spesifikasi produk atau tutorial), sertakan URL-nya APA ADANYA (utuh, bisa diklik) di jawabanmu — jangan ubah atau potong URL-nya.
