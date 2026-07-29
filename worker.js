@@ -104,6 +104,54 @@ const TUTORIAL_LINKS = [
   { judul: 'Channel YouTube Falcom Technology (semua video tutorial & demo produk)', url: 'https://www.youtube.com/@falcomtechnologyofficial2262' },
 ];
 
+// Curated Falcom YouTube video map — keyword-matched per video (not just per category), so a
+// specific question ("cara pasang fast connector") lands on the exact tutorial, not just the
+// general channel link. Never invent a video/keyword outside this list.
+const YOUTUBE_VIDEOS = [
+  { judul: 'Kabel Koaksial RG11 & RG6', url: 'https://www.youtube.com/watch?v=WpBoDU9Q7Fo', keywords: ['kabel koaksial', 'rg6', 'rg11', 'kode kabel coaxial', 'struktur kabel coax', 'kabel antena', 'tv kabel'] },
+  { judul: 'Kabel Fiber Optik Armored vs Non Armored', url: 'https://www.youtube.com/watch?v=Qeqyo6aoCgA', keywords: ['kabel fiber armored', 'kabel fiber non armored', 'perbedaan armored', 'tahan gigitan tikus', 'pilih kabel fiber'] },
+  { judul: 'Kelebihan ODP Berbahan PC/ABS di Jaringan FTTH', url: 'https://www.youtube.com/watch?v=phrnH1QICgE', keywords: [' odp', 'optical distribution point', 'odp pc abs', 'kotak pembagi fiber', 'material odp'] },
+  { judul: 'Fusion Splicer Jilong KL-260T', url: 'https://www.youtube.com/watch?v=BImn1JIng7s', keywords: ['fusion splicer kl-260t', 'kl-260t', 'splicer jilong', 'alat sambung fiber', 'trunk line splicer'] },
+  { judul: 'OLT GPON 3 PON Fastlink (kelebihan & cara setting)', url: 'https://www.youtube.com/watch?v=pEZHy1OrByU', keywords: ['olt gpon 3 pon', 'olt 3 pon', 'fastlink olt', 'cara setting olt', 'konfigurasi gpon', 'tutorial olt'] },
+  { judul: 'Media Transmisi Terpandu (LAN, Fiber Optik, Coaxial)', url: 'https://www.youtube.com/watch?v=VjYtpEj6sIE', keywords: ['jenis kabel jaringan', 'media transmisi', 'perbedaan kabel lan fiber coaxial', 'dasar kabel jaringan'] },
+  { judul: 'Pembagian Segmen Kabel Fiber Optik di Jaringan FTTH', url: 'https://www.youtube.com/watch?v=_zVYXtevSIc', keywords: ['segmen kabel ftth', 'feeder distribusi', 'drop core', 'arsitektur jaringan ftth', 'pembagian jalur fiber'] },
+  { judul: 'FTTH EPON atau GPON?', url: 'https://www.youtube.com/watch?v=VVPAzg6Nhzc', keywords: ['epon vs gpon', 'pilih epon atau gpon', 'perbedaan epon gpon', 'teknologi ftth'] },
+  { judul: 'Keunggulan OLT Outdoor 8 PON Fastlink', url: 'https://www.youtube.com/watch?v=p2P8G7NlwGk', keywords: ['olt outdoor', 'olt 8 pon', 'fastlink outdoor', 'olt tahan cuaca', 'spesifikasi olt outdoor'] },
+  { judul: 'Cara Pemasangan Fast Connector FMC-S', url: 'https://www.youtube.com/watch?v=C58b2tOGhS8', keywords: ['fast connector', 'fmc-s', 'cara pasang konektor fiber cepat', 'konektor anti gagal', 'tutorial konektor fiber'] },
+  { judul: 'Konektivitas Paling Populer WLAN', url: 'https://www.youtube.com/watch?v=SZ3OSUhIRfQ', keywords: ['wlan', 'wireless lan', 'jaringan nirkabel', 'konektivitas wifi'] },
+  { judul: 'Perbedaan WiFi 4, WiFi 5, WiFi 6', url: 'https://www.youtube.com/watch?v=naigj3y7RgI', keywords: ['wifi 4', 'wifi 5', 'wifi 6', 'sejarah wifi', 'standar wireless', 'pilih access point'] },
+  { judul: 'Solusi Jaringan Fiber Optik Termurah — Media Converter', url: 'https://www.youtube.com/watch?v=ijlfUFAcDL4', keywords: ['media converter', 'solusi fiber murah', 'konversi sinyal fiber ke ethernet'] },
+  { judul: 'Perbedaan Fusion Splicer KL-500E, KL-280T & KL-360E', url: 'https://www.youtube.com/watch?v=9djM62OP4fg', keywords: ['perbandingan splicer', 'kl-500e', 'kl-280t', 'kl-360e', 'pilih fusion splicer'] },
+  { judul: 'Cari OLT Murah dan Handal', url: 'https://www.youtube.com/watch?v=ZyFaibynEWQ', keywords: ['olt murah', 'rekomendasi olt', 'olt terjangkau'] },
+  { judul: 'OLT GPON 1 PON Fastlink FTB1200', url: 'https://www.youtube.com/watch?v=lvuyiYC37eg', keywords: ['olt 1 pon', 'ftb1200', 'olt anti panas', 'olt compact'] },
+  { judul: 'ONT/ONU CGW 77 Fastlink', url: 'https://www.youtube.com/watch?v=m08yUSjILFc', keywords: ['cgw 77', 'perangkat pelanggan ftth', 'modem gpon'] },
+  { judul: 'New Product Splicer KL-280T', url: 'https://www.youtube.com/watch?v=FfvU4zafeWQ', keywords: ['splicer kl-280t', 'produk baru splicer', 'tools ftth'] },
+  { judul: 'Kelebihan dan Tutorial Setting OLT EPON 2 PON', url: 'https://www.youtube.com/watch?v=adjeLfSioJI', keywords: ['olt epon 2 pon', 'cara setting epon', 'konfigurasi olt epon', 'tutorial olt epon'] },
+  { judul: 'Perbedaan Kabel LAN UTP, STP, FTP', url: 'https://www.youtube.com/watch?v=Io8ufQ-4Huc', keywords: ['kabel lan', 'utp', 'stp', 'ftp', 'perbedaan kabel lan', 'jenis kabel ethernet'] },
+  { judul: 'Perbedaan ODF, ODC, ODP', url: 'https://www.youtube.com/watch?v=lqz-QbbJcTk', keywords: [' odf', ' odc', ' odp', 'perbedaan perangkat distribusi fiber', 'istilah ftth'] },
+  { judul: 'Service Charging Board Splicer Jilong KL-500E', url: 'https://www.youtube.com/watch?v=HxmhbXqm72k', keywords: ['servis splicer', 'charging board kl-500e', 'perbaikan splicer', 'maintenance splicer'] },
+  { judul: 'Kelebihan dan Tutorial Setting OLT 8 Port PON GPON', url: 'https://www.youtube.com/watch?v=9rC_kTOmHyg', keywords: ['olt 8 pon gpon', 'cara setting olt 8 port', 'konfigurasi gpon 8 port'] },
+  { judul: 'Struktur Kabel Fiber Optik Mini ADSS', url: 'https://www.youtube.com/watch?v=IqkxbRSUlw8', keywords: ['kabel adss', 'fiber optik mini adss', 'struktur adss'] },
+];
+
+// Non-technical (event/company news) videos — only surfaced when the question is about Falcom's
+// activities/news, not technical products.
+const YOUTUBE_VIDEOS_NONTEKNIS = [
+  { judul: 'Opening Falcom Cab. Semarang', url: 'https://www.youtube.com/watch?v=H7wHIxKYoXo' },
+  { judul: 'Buka Bersama ISP Sulawesi & Technology', url: 'https://www.youtube.com/watch?v=e4wWvJfMMHM' },
+  { judul: 'Berani Bersaing Bersama Cablelink', url: 'https://www.youtube.com/watch?v=a5IG9BCfeqs' },
+  { judul: 'Roadshow Gresik bersama Alwi Network', url: 'https://www.youtube.com/watch?v=1M-CvvA4Gro' },
+  { judul: 'Roadshow Sampang Madura bersama Alifa Fiber', url: 'https://www.youtube.com/watch?v=enTE1dua6W0' },
+  { judul: 'Falcom di Indonesia Internet Expo & Summit (JIExpo)', url: 'https://www.youtube.com/watch?v=g7bhV5oHcp4' },
+];
+
+function matchVideos(message) {
+  const nMsg = ` ${normText(message)} `;
+  const teknis = YOUTUBE_VIDEOS.filter((v) => v.keywords.some((kw) => nMsg.includes(kw))).slice(0, 3);
+  const wantsEvent = /kegiatan falcom|berita falcom|event falcom|acara falcom|roadshow|opening cabang/.test(nMsg);
+  return { teknis, nonTeknis: wantsEvent ? YOUTUBE_VIDEOS_NONTEKNIS : [] };
+}
+
 const ARTICLE_LINK = { judul: 'Artikel & Berita Teknis', url: 'https://falcom-technology.com/articles/' };
 
 const GENERAL_LINKS = {
@@ -119,12 +167,15 @@ function matchReferences(message) {
   const wantsTutorial = /tutorial|cara pasang|cara install|cara setting|cara konfigurasi|cara pakai|cara menggunakan|troubleshoot|bagaimana cara|video (tutorial|demo)/.test(nMsg);
   const wantsArticle = /\bartikel\b|berita teknis/.test(nMsg);
   const wantsSpec = /\bspek\b|spesifikasi|datasheet/.test(nMsg);
-  const hasAnyMatch = kategoriProduk.length || solusiSistem.length || wantsTutorial || wantsArticle;
+  const video = matchVideos(message);
+  const hasAnyMatch = kategoriProduk.length || solusiSistem.length || wantsTutorial || wantsArticle || video.teknis.length;
   return {
     kategoriProduk,
     solusiSistem,
     tutorialDanDukungan: wantsTutorial ? TUTORIAL_LINKS : [],
     artikel: wantsArticle ? [ARTICLE_LINK] : [],
+    videoTutorialRelevan: video.teknis,
+    videoKegiatanFalcom: video.nonTeknis,
     // Only fall back to generic pages when there's a clear product-spec question with no
     // specific category match — never for unrelated operational questions (sales/stok/piutang).
     fallbackUmum: wantsSpec && !hasAnyMatch ? [GENERAL_LINKS.semuaProduk, GENERAL_LINKS.kontak] : [],
@@ -1330,6 +1381,8 @@ Aturan:
   - Pertanyaan solusi sistem (FTTH, HFC, dll) → sertakan link dari "solusiSistem".
   - Pertanyaan TUTORIAL/cara pasang/cara pakai/troubleshooting → sertakan link dari "tutorialDanDukungan" (Bantuan & Dukungan, Kelas Pelatihan FTTX, Galeri Video, Channel YouTube).
   - Pertanyaan artikel/berita teknis → sertakan link dari "artikel".
+  - Jika "videoTutorialRelevan" berisi entri (video YouTube spesifik yang cocok dengan kata kunci pertanyaan), WAJIB sertakan sebagai "🎥 Tonton tutorialnya:" — ini lebih spesifik/diutamakan daripada link kategori umum. Kalau kosong tapi topiknya masih seputar produk yang sama, arahkan ke kategori produk terkait (JANGAN pilih video acak dari luar daftar).
+  - "videoKegiatanFalcom" hanya untuk pertanyaan soal kegiatan/berita/event Falcom (bukan teknis produk) — pakai kalau ada isinya.
   - Kalau semuanya kosong tapi jelas ini pertanyaan spek produk tanpa kategori yang cocok → pakai "fallbackUmum" (Semua Produk/Kontak).
   - Kalau kamu tidak yakin dengan detail spesifikasi teknis suatu produk (bukan dari data konteks), katakan jujur "[perlu verifikasi lebih lanjut]" lalu arahkan ke link terkait — jangan menebak angka spesifikasi.
   - JANGAN menyalin/merangkai ulang isi halaman secara panjang (hak cipta) — cukup 1-3 kalimat ringkasan, lalu arahkan ke link untuk detail lengkap.
