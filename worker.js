@@ -428,6 +428,34 @@ function findPiutangByCustomer(message, piutangDetail) {
   };
 }
 
+// Per-customer PAYMENT history ("kapan X terakhir bayar/lunas piutang?") — distinct from
+// findPiutangByCustomer (outstanding invoice balances) and from sales transaction lookup
+// (order date). Sorted newest-first so "terakhir bayar" reads the top row.
+function findPaymentsByCustomer(message, paymentDetail) {
+  if (!paymentDetail || !paymentDetail.length) return null;
+  const customerSet = new Set();
+  for (const p of paymentDetail) if (p.customer) customerSet.add(p.customer);
+  const msgWords = nameWordsOf(message);
+  let hit = null;
+  for (const c of customerSet) {
+    if (c.length >= 4 && customerNameFuzzyMatch(msgWords, c)) { hit = c; break; }
+  }
+  if (!hit) return null;
+  const payments = paymentDetail
+    .filter((p) => p.customer === hit)
+    .sort((a, b) => {
+      const da = parseFlexibleDate(a.tanggal);
+      const db = parseFlexibleDate(b.tanggal);
+      return (db ? db.getTime() : 0) - (da ? da.getTime() : 0);
+    });
+  return {
+    customer: hit,
+    jumlahPembayaran: payments.length,
+    totalDibayar: payments.reduce((sum, p) => sum + p.amount, 0),
+    pembayaranTerbaruDulu: payments,
+  };
+}
+
 // PO Gudang item-level lookup ("PO kode X status apa", "PO yang masih ditunggu apa saja") —
 // only the matched subset is sent to Gemini, the full ~250-row list stays out of every request.
 function findPoGudangMatches(message, poItems) {
@@ -514,11 +542,22 @@ function parseEvidence(raw) {
   }
 }
 
-async function fetchAttendanceContext(message, kpiNames) {
+async function fetchAttendanceContext(message, kpiNames, history) {
   const nMsg = normText(message);
   const wantsAttendance = /jam\s*masuk|jam\s*pulang|jam\s*datang|\btelat\b|terlambat|\babsen\b|absensi|kehadiran/.test(nMsg);
-  const wantsIndicator = /indikator|checklist|ceklist|kerjakan|dikerjakan|kegiatan harian|dikerjain/.test(nMsg);
-  const personHit = detectPersonMention(message, kpiNames);
+  const wantsIndicator = /indikator|checklist|ceklist|kerjakan|dikerjakan|kegiatan harian|dikerjain|rincikan|rinciannya|detailnya/.test(nMsg);
+  let personHit = detectPersonMention(message, kpiNames);
+  // Follow-up like "rincikan indikatornya dong" doesn't repeat the name — without this, it fell
+  // back to the team-wide MAKASSAR view instead of staying on the person from the prior turn.
+  // Scan recent history (most recent first) for the last-mentioned person name.
+  if (!personHit && (wantsAttendance || wantsIndicator) && Array.isArray(history)) {
+    for (let i = history.length - 1; i >= 0; i--) {
+      const h = history[i];
+      if (!h || !h.text) continue;
+      const found = detectPersonMention(h.text, kpiNames);
+      if (found) { personHit = found; break; }
+    }
+  }
   if (!wantsAttendance && !wantsIndicator && !personHit) return null;
 
   const dateMention = extractDateMention(message);
@@ -984,6 +1023,7 @@ async function runSync(env) {
     const csv = await (await fetch(csvExportUrl(PERFORMANCE_SHEET_ID, GIDS.revSum))).text();
     const allRows = parseCsv(csv).slice(1);
     const byMonth = {};
+    const detail = []; // per-payment records — needed for "kapan X terakhir BAYAR" (payment != sale)
     for (const r of allRows) {
       if (!r[1]) continue; // No Faktur empty = past the real data block
       const d = parseFlexibleDate(r[0]);
@@ -992,11 +1032,12 @@ async function runSync(env) {
       if (!byMonth[key]) byMonth[key] = { bulan: key, revenue: 0, pembayaran: 0 };
       byMonth[key].revenue += amount;
       byMonth[key].pembayaran += 1;
+      detail.push({ tanggal: r[0], noFaktur: r[1], customer: (r[2] || '').trim().toUpperCase(), amount, company: r[4] });
     }
     const monthly = Object.values(byMonth).sort((a, b) => a.bulan.localeCompare(b.bulan));
     const total2026 = monthly.reduce((s, m) => s + m.revenue, 0);
-    await env.SHEET_CACHE.put('data:revenue', JSON.stringify({ monthly, total2026 }));
-    summary.sources.revenue = { ok: true, bulan: monthly.length };
+    await env.SHEET_CACHE.put('data:revenue', JSON.stringify({ monthly, total2026, detail }));
+    summary.sources.revenue = { ok: true, bulan: monthly.length, pembayaran: detail.length };
   } catch (err) {
     summary.sources.revenue = { ok: false, error: String(err) };
   }
@@ -1171,18 +1212,23 @@ async function handleChat(request, env) {
   const txMatch = findTransactionMatches(message, allTransactions);
   const wilayahMatch = findWilayahMatches(message, allWilayahEkspedisi);
   const piutangMatch = findPiutangByCustomer(message, piutangData?.detail);
+  const revenueData = revenueRaw ? JSON.parse(revenueRaw) : null;
+  const paymentMatch = findPaymentsByCustomer(message, revenueData?.detail);
   const poMatch = findPoGudangMatches(message, poGudangData?.items);
   const zonaMatch = findZonaWilayahMatches(message, zonaWilayahData);
   const customerBucketMatch = findCustomerBucketMatch(message, customerBucketsRaw ? JSON.parse(customerBucketsRaw) : null);
   const referensi = matchReferences(message);
   const kpiNames = Array.isArray(kpiData?.kpi) ? kpiData.kpi.map((p) => p.nama).filter(Boolean) : [];
-  const absensi = await fetchAttendanceContext(message, kpiNames);
+  const absensi = await fetchAttendanceContext(message, kpiNames, history);
 
   const context = {
     // "performa" = SALES (order value from Grand Data 2026). "revenue" = actual cash collected
     // (Rev SUM "Pelunasan") — these are different metrics per the dashboard, don't conflate them.
     performa: perfRaw ? JSON.parse(perfRaw) : null,
-    revenue: revenueRaw ? JSON.parse(revenueRaw) : null,
+    // Only the compact monthly totals go in by default — the full per-payment detail is never
+    // sent wholesale, only the customer-matched subset via pembayaranRelevan.
+    revenue: revenueData ? { monthly: revenueData.monthly, total2026: revenueData.total2026 } : null,
+    pembayaranRelevan: paymentMatch,
     // Only the compact totals go in by default — the 189-row invoice detail is never sent
     // wholesale, only the customer-matched subset via piutangRelevan (keeps every other
     // question's context small, same principle as stock/transactions retrieval).
@@ -1219,14 +1265,18 @@ Aturan:
 - Jika data yang ditanyakan tidak ada di konteks, katakan terus terang tidak tahu / datanya belum tersedia — jangan mengarang angka.
 - User sering salah ketik (typo 1-2 huruf), menyingkat kata, atau menulis kode barang dengan/tanpa spasi/strip (mis. "DKB180", "DKB-180", "DKB 180" adalah kode yang SAMA) — pahami maksudnya, jangan langsung bilang "tidak ditemukan".
 - Jika user bertanya jumlah spesifik (mis. "10 wilayah penjualan terbesar", "5 customer terbanyak"), berikan SEMUA item yang diminta sesuai jumlah tersebut jika datanya tersedia di konteks, jangan dipotong.
-- PENTING: "performa" (Sales) dan "revenue" adalah DUA metrik BERBEDA — Sales = nilai order/invoice (Grand Data), Revenue = uang yang benar-benar sudah masuk/dibayar (Pelunasan). Jangan disamakan. Rasio Sales-ke-Revenue = revenue/sales*100 per bulan, hitung sendiri dari kedua array bulanan itu kalau ditanya.
-- Untuk pertanyaan stok/ketersediaan barang, gunakan "stokRelevan" — sebutkan juga rincian per company (MKI/CFN) DAN "turnoverMKI"/"turnoverCFN"/"turnoverTotal" (perputaran gudang) kalau relevan, bukan cuma total stok. Field "stokCatatan" menjelaskan filter yang dipakai.
+- PENTING — TIGA hal ini BEDA, jangan pernah dicampur:
+  1. **PENJUALAN/SALES** = transaksi ke customer (Grand Data, field "transaksiRelevan"/"performa") — kapan customer ORDER/beli.
+  2. **PEMBAYARAN/PELUNASAN** = uang yang BENAR-BENAR masuk dari customer (Rev SUM, field "pembayaranRelevan"/"revenue") — BEDA dari tanggal order, seorang customer bisa order duluan lalu bayar belakangan (atau sebaliknya bayar dulu untuk order lama). Kalau user tanya "kapan X bayar/lunas/pembayaran terakhir", WAJIB pakai "pembayaranRelevan" — JANGAN jawab pakai tanggal transaksi/order dari "transaksiRelevan", itu beda hal.
+  3. **PO GUDANG** = pembelian stok dari SUPPLIER ke gudang kita (bukan dari customer) — HANYA relevan kalau user secara eksplisit menulis "PO" atau "PO Gudang" dalam pertanyaannya. Kalau user tanya "pembelian"/"pemesanan" TANPA menyebut "PO" secara eksplisit, itu KEMUNGKINAN BESAR maksudnya penjualan ke customer (poin 1), BUKAN PO Gudang — jangan otomatis anggap "pembelian" = PO Gudang.
+  Rasio Sales-ke-Revenue = revenue/sales*100 per bulan, hitung sendiri dari kedua array bulanan itu kalau ditanya.
+- Untuk pertanyaan stok/ketersediaan barang, gunakan "stokRelevan". Jawab SINGKAT: cukup jumlah stok per company (MKI/CFN) + total, TANPA menyebut turnover/perputaran gudang kecuali user SPESIFIK menanyakan turnover/perputaran. Field "stokCatatan" menjelaskan filter yang dipakai (untuk konteksmu sendiri, tidak perlu disebut ke user).
 - Untuk pertanyaan tanggal tertentu, KODE BARANG spesifik ("siapa pembeli terakhir KODE", "kapan KODE terakhir keluar"), atau nama customer spesifik ("kapan si X belanja terakhir, beli apa saja"), gunakan "transaksiRelevan" — field "ekspedisi" dan "company" tiap baris menunjukkan cara pengiriman. Baca "transaksiCatatan": kalau bilang "diurutkan dari yang PALING BARU", maka baris PERTAMA di array = transaksi TERAKHIR/TERBARU — pakai itu untuk jawab pertanyaan "terakhir/kapan".
-- Untuk pertanyaan PIUTANG customer tertentu, WAJIB gunakan "piutangRelevan" (rincian per invoice) — field umum "piutang" cuma total per kategori umur + "ratioARtoSalesPersen" (rasio piutang terhadap total sales 2026), TIDAK punya rincian per customer.
+- Untuk pertanyaan PIUTANG (sisa tagihan yang BELUM dibayar) customer tertentu, WAJIB gunakan "piutangRelevan" (rincian per invoice) — field umum "piutang" cuma total per kategori umur + "ratioARtoSalesPersen", TIDAK punya rincian per customer. Ini beda dari "pembayaranRelevan" (uang yang SUDAH masuk) — piutang = belum bayar, pembayaran = sudah bayar.
 - Untuk pertanyaan "ekspedisi ke wilayah X pakai apa", WAJIB gunakan "wilayahEkspedisiRelevan" (lengkap, terurut dari paling sering) — JANGAN pakai transaksiRelevan untuk ini. Untuk pertanyaan ekspedisi SECARA UMUM (bukan per wilayah, mis. "berapa banyak pakai hand carry", "ekspedisi apa yang paling sering dipakai", "berapa yang same day"), gunakan "deliveryOverview" (sameDayCount, cutOffCount, handCarryCount, pihakKetigaCount, byEkspedisi).
 - Untuk "produk paling laku/terlaris", gunakan "topProduk" (byAmount = berdasarkan nilai rupiah, byQty = berdasarkan jumlah unit, sudah top-20).
 - Untuk "kabel 1 core"/"fiber optic 1 core" secara spesifik sebagai section dashboard, gunakan "fiberOptic1Core" (5 kode resmi: KSFO028, KSFO108, KSFO083, KSFO113, KSFO128, dengan tren bulanan & per kode) — untuk pencarian stok kabel 1-core secara umum tetap pakai "stokRelevan".
-- Untuk pertanyaan PO Gudang (purchase order dari supplier/pusat), gunakan "poGudangRingkasan" (ringkasan per status: ditunggu/diterima/retur/lainnya + tren bulanan) untuk pertanyaan umum, atau "poGudangRelevan" (sudah difilter kode/status, field "poGudangCatatan" menjelaskan filternya) untuk pertanyaan spesifik.
+- Untuk pertanyaan PO Gudang (HANYA kalau user eksplisit tulis "PO"/"PO Gudang" — lihat aturan di atas), gunakan "poGudangRingkasan" (ringkasan per status: ditunggu/diterima/retur/lainnya + tren bulanan) untuk pertanyaan umum, atau "poGudangRelevan" (sudah difilter kode/status, field "poGudangCatatan" menjelaskan filternya) untuk pertanyaan spesifik.
 - Untuk "frekuensi customer", "customer paling sering belanja", atau "customer churn/tidak aktif", gunakan "customerInsights" (totalCustomer, totalChurned = tidak beli >=60 hari, buckets = pengelompokan berdasar jumlah invoice unik, topByFrekuensi, topBySales).
 - Untuk pertanyaan "SIAPA saja" customer di suatu bucket frekuensi (mis. "siapa yang belanja cuma 1x"), gunakan "daftarNamaCustomerPerBucket" — kalau null padahal user tanya "siapa", berarti bucket-nya tidak terdeteksi dari pertanyaan, minta user sebutkan lebih spesifik (1x/2x/3-5x/5-10x/lebih dari 10x). Kalau "ditampilkan" < "totalCustomer", sebutkan bahwa itu sebagian (urut dari nilai belanja terbesar), bukan semuanya.
 - Untuk perbandingan tahun ini vs tahun lalu ("pertumbuhan dibanding 2025", "naik/turun berapa persen dari tahun lalu"), gunakan "perbandinganTahunSebelumnya" (sales2025/sales2026, rev2025/rev2026 per bulan+total, growthSalesPersen, growthRevPersen, achievementSalesPersen/achievementRevPersen terhadap target tahunan).
@@ -1239,6 +1289,7 @@ Aturan:
 - Jika "referensiLink" berisi entri yang relevan dengan pertanyaan (spesifikasi produk atau tutorial), sertakan URL-nya APA ADANYA (utuh, bisa diklik) di jawabanmu — jangan ubah atau potong URL-nya.
 - Untuk pertanyaan jam masuk/pulang karyawan atau isi indikator harian personel, gunakan "absensiDanIndikatorHarian". Jika berisi "jamMasukPulangTim" itu data satu tim untuk satu tanggal (per orang: datang/pulang true-false + jamDatang/jamPulang, dan field ...Ok menandakan apakah role tsb secara keseluruhan tepat waktu). Jika berisi "indikator" (array label + tercapai true/false + detail) — field "detail" berisi BUKTI/RINCIAN NYATA di balik indikator itu (mis. untuk "Follow Up Piutang Customer" detail-nya adalah daftar nama customer yang dihubungi, saldo piutang, dan hasil follow up-nya; untuk indikator delivery/handcarry berisi rincian invoice/barang). WAJIB pakai "detail" ini kalau user bertanya SPESIFIK tentang isi/rincian suatu indikator (mis. "customer siapa saja yang di-follow up", "barang apa yang di-handcarry") — jangan cuma bilang "tercapai (YA)" tanpa rinciannya kalau datanya ada. Jika null/kosong padahal user jelas bertanya soal ini, katakan datanya tidak ditemukan (mungkin nama salah ketik, atau tanggalnya di luar rentang).
 - Jawab singkat, padat, dan langsung ke angka/fakta. Gunakan Bahasa Indonesia sehari-hari yang sopan.
+- FORMAT: JANGAN pakai tanda bintang tunggal (*kata*) untuk penekanan biasa — itu bikin tampilan penuh tanda bintang yang mengganggu. Pakai bintang ganda (**angka penting**) SEPERLUNYA saja, hanya untuk angka kunci atau nama entitas utama dalam jawaban — bukan untuk kata biasa seperti "sales", "revenue", "pending", "catatan", dll. Sisanya tulis sebagai teks polos.
 - Data disinkron terakhir: ${lastSync || 'belum pernah sync'}.
 
 DATA KONTEKS (JSON):

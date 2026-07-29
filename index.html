@@ -128,6 +128,9 @@
   function linkify(text) {
     let out = escapeHtml(text);
     out = out.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+    // Safety net: single-asterisk emphasis rendered as italic instead of showing raw asterisks,
+    // in case the model still uses *word* occasionally despite being told to minimize it.
+    out = out.replace(/\*(\S(?:[^*]*\S)?)\*/g, '<i>$1</i>');
     out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (m, label, url) => {
       return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="underline text-victory">${label}</a>`;
     });
@@ -190,6 +193,7 @@
       .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '$1')
       .replace(/https?:\/\/\S+/g, '')
       .replace(/\*\*(.+?)\*\*/g, '$1')
+      .replace(/\*(\S(?:[^*]*\S)?)\*/g, '$1')
       .replace(/`([^`]+)`/g, '$1');
 
     t = t.replace(/\b(?!Rp\d)([A-Za-z]{2,8})(\d{2,6})\b/g, (m, letters, digits) => `${letters} ${digits.split('').join(' ')}`);
