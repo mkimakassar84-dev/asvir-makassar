@@ -722,13 +722,33 @@ function levenshtein(a, b) {
   return dp[m][n];
 }
 
+// Scans conversation HISTORY (most recent first) for the last product CODE actually mentioned —
+// same pattern as the attendance context's person-carryover fix. Without this, a natural follow-up
+// like "ada stok gak?" or "harganya berapa?" right after discussing a specific code has nothing in
+// the CURRENT message to search by, findStockMatches comes back completely empty, and Gemini — with
+// no real data in context — was observed fabricating a plausible-sounding but entirely made-up
+// stock figure instead of saying the data wasn't found.
+function findLastMentionedStockCode(history, allStock) {
+  if (!Array.isArray(history)) return null;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const h = history[i];
+    if (!h || !h.text) continue;
+    for (const kw of extractKeywords(h.text)) {
+      const ckw = normCode(kw);
+      if (ckw.length < 4) continue;
+      if (allStock.some((p) => normCode(p.kode) === ckw)) return ckw;
+    }
+  }
+  return null;
+}
+
 // Matches stock by product code (typo/format tolerant: "DKB180" == "DKB-180" == "DKB 180",
 // plus up to ~2-char edit-distance) or by description keyword (handles "kabel 1 core yang
 // ready", "odp yang ready", etc.), then optionally narrows to in-stock only for "ready"-style asks.
 // A bare company mention ("stok MKI", "stock CFN") with no product keyword at all used to come
 // back completely empty — the company (MKI/CFN) is a per-item FIELD (stokMKI/stokCFN), never
 // checked against at all — so it now falls through to a company-wide summary instead.
-function findStockMatches(message, allStock) {
+function findStockMatches(message, allStock, history) {
   const nMsgStock = normText(message);
   const company = /\bmki\b/.test(nMsgStock) ? 'MKI' : /\bcfn\b/.test(nMsgStock) ? 'CFN' : null;
   // Generic phrasing words ("stok", "hari ini") aren't product search terms — extractKeywords()
@@ -749,13 +769,19 @@ function findStockMatches(message, allStock) {
     };
   }
 
-  if (keywords.length === 0) return { items: [], note: 'Tidak ada kata kunci spesifik terdeteksi di pertanyaan.' };
+  let usedHistoryCode = null;
+  let effectiveKeywords = keywords;
+  if (keywords.length === 0) {
+    usedHistoryCode = findLastMentionedStockCode(history, allStock);
+    if (!usedHistoryCode) return { items: [], note: 'Tidak ada kata kunci spesifik terdeteksi di pertanyaan.' };
+    effectiveKeywords = [usedHistoryCode];
+  }
   const wantsReady = /ready|tersedia|stok|stock|\bada\b/.test(nMsgStock);
 
   let matched = allStock.filter((p) => {
     const nKode = normCode(p.kode);
     const nNama = normText(p.nama);
-    return keywords.some((kw) => {
+    return effectiveKeywords.some((kw) => {
       const nkw = normText(kw);
       const ckw = normCode(kw);
       if (ckw.length >= 3 && nKode.includes(ckw)) return true;
@@ -765,7 +791,15 @@ function findStockMatches(message, allStock) {
     });
   });
 
-  let note = '';
+  // Keywords existed but matched no real product — likely a follow-up referring back to whatever
+  // was just discussed ("ada stok gak?") rather than a genuinely new, unmatched search. Retry
+  // against the last code mentioned in history before giving up.
+  if (!matched.length && !usedHistoryCode) {
+    usedHistoryCode = findLastMentionedStockCode(history, allStock);
+    if (usedHistoryCode) matched = allStock.filter((p) => normCode(p.kode) === usedHistoryCode);
+  }
+
+  let note = usedHistoryCode ? `Kode tidak disebut ulang di pertanyaan ini — dilanjutkan dari kode ${usedHistoryCode} yang dibahas sebelumnya. ` : '';
   if (company) {
     const field = company === 'MKI' ? 'stokMKI' : 'stokCFN';
     matched = matched.filter((p) => p[field] > 0);
@@ -1834,7 +1868,7 @@ async function handleChat(request, env) {
   const kpiData = kpiRaw ? JSON.parse(kpiRaw) : null;
   const poGudangData = poGudangRaw ? JSON.parse(poGudangRaw) : null;
   const zonaWilayahData = zonaWilayahRaw ? JSON.parse(zonaWilayahRaw) : null;
-  const stokMatch = findStockMatches(message, allStock);
+  const stokMatch = findStockMatches(message, allStock, history);
   const txMatch = findTransactionMatches(message, allTransactions);
   const wilayahMatch = findWilayahMatches(message, allWilayahEkspedisi);
   const piutangMatch = findPiutangByCustomer(message, piutangData?.detail);
@@ -1920,7 +1954,8 @@ Aturan:
      Kalau user tanya riwayat pembayaran secara umum (bukan spesifik "yang lunas"), baru gunakan "pembayaranTerbaruDulu" lengkap dengan statusFaktur masing-masing.
   3. **PO GUDANG** = pembelian stok dari SUPPLIER ke gudang kita (bukan dari customer) — HANYA relevan kalau user secara eksplisit menulis "PO" atau "PO Gudang" dalam pertanyaannya. Kalau user tanya "pembelian"/"pemesanan" TANPA menyebut "PO" secara eksplisit, itu KEMUNGKINAN BESAR maksudnya penjualan ke customer (poin 1), BUKAN PO Gudang — jangan otomatis anggap "pembelian" = PO Gudang.
   Rasio Sales-ke-Revenue = revenue/sales*100 per bulan, hitung sendiri dari kedua array bulanan itu kalau ditanya.
-- Untuk pertanyaan stok/ketersediaan barang, gunakan "stokRelevan". Jawab SINGKAT: cukup jumlah stok per company (MKI/CFN) + total, TANPA menyebut turnover/perputaran gudang kecuali user SPESIFIK menanyakan turnover/perputaran. Field "stokCatatan" menjelaskan filter yang dipakai (untuk konteksmu sendiri, tidak perlu disebut ke user).
+- Untuk pertanyaan stok/ketersediaan barang, gunakan "stokRelevan". Jawab SINGKAT: cukup jumlah stok per company (MKI/CFN) + total, TANPA menyebut turnover/perputaran gudang kecuali user SPESIFIK menanyakan turnover/perputaran. Field "stokCatatan" menjelaskan filter yang dipakai (untuk konteksmu sendiri, tidak perlu disebut ke user) — kalau isinya menyebut "dilanjutkan dari kode X yang dibahas sebelumnya", itu tandanya user tidak sebut ulang kode di pertanyaan ini tapi maksudnya masih produk yang sama dari histori, pakai data itu dengan percaya diri (bukan menebak). WAJIB: kalau "stokRelevan" kosong/tidak ada barang yang cocok, katakan JUJUR datanya tidak ditemukan — JANGAN PERNAH mengarang angka stok, nama gudang, atau satuan (roll/meter/dll) sendiri.
+- Untuk pertanyaan HARGA/nilai barang ("harga X berapa", "nilainya berapa"), tiap item di "stokRelevan" punya field "harga" (harga satuan dalam Rupiah) — pakai itu. Kalau user tanya "total nilai stok" suatu barang, kalikan harga × stokTotal (atau × stokMKI/stokCFN kalau ditanya per company) dan tunjukkan cara hitungnya singkat. Field "harga" TIDAK ADA di "stokTidakBergerakDanKurangLaku"/data lain — kalau butuh harga tapi item itu tidak ada di "stokRelevan", katakan datanya tidak tersedia, jangan menebak angka.
 - Untuk pertanyaan tanggal tertentu, KODE BARANG spesifik ("siapa pembeli terakhir KODE", "kapan KODE terakhir keluar"), atau nama customer spesifik ("kapan si X belanja terakhir, beli apa saja"), gunakan "transaksiRelevan" — field "ekspedisi" dan "company" tiap baris menunjukkan cara pengiriman. Baca "transaksiCatatan": kalau bilang "diurutkan dari yang PALING BARU", maka baris PERTAMA di array = transaksi TERAKHIR/TERBARU — pakai itu untuk jawab pertanyaan "terakhir/kapan".
 - Untuk pertanyaan PIUTANG (sisa tagihan yang BELUM dibayar) customer tertentu, WAJIB gunakan "piutangRelevan" (rincian per invoice) — field umum "piutang" cuma total per kategori umur + "ratioARtoSalesPersen", TIDAK punya rincian per customer. Ini beda dari "pembayaranRelevan" (uang yang SUDAH masuk) — piutang = belum bayar, pembayaran = sudah bayar.
 - Untuk pertanyaan "ekspedisi ke wilayah X pakai apa", WAJIB gunakan "wilayahEkspedisiRelevan" (lengkap, terurut dari paling sering) — JANGAN pakai transaksiRelevan untuk ini. Untuk pertanyaan ekspedisi SECARA UMUM (bukan per wilayah, mis. "berapa banyak pakai hand carry", "ekspedisi apa yang paling sering dipakai", "berapa yang same day"), gunakan "deliveryOverview" (sameDayCount, cutOffCount, handCarryCount, pihakKetigaCount, byEkspedisi).
