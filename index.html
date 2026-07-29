@@ -190,19 +190,47 @@
   //   normally (not spelled) UNLESS it's a bare 3-letter capital acronym (OLT, ONT, ONU, ...).
   // - Rupiah figures are left alone so they're read as a normal nominal amount.
   // - markdown/links stripped so the assistant doesn't read out raw syntax or full URLs.
-  function toSpeakable(text) {
+  //
+  // Splits a reply into speech segments with per-segment prosody so MIRA doesn't read every
+  // sentence in the same flat pitch/rate — a single SpeechSynthesisUtterance has no mid-utterance
+  // pitch contour (no SSML support in the Web Speech API), so natural-sounding intonation has to
+  // come from queuing several utterances back-to-back, each tuned per sentence: rising pitch for
+  // "?", energetic pitch+pace for "!", and a small pitch bump on **bold** phrases so emphasized
+  // words actually sound emphasized instead of being silently stripped like before.
+  function buildSpeechSegments(text) {
     let t = text
       .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '$1')
       .replace(/https?:\/\/\S+/g, '')
-      .replace(/\*\*(.+?)\*\*/g, '$1')
-      .replace(/\*(\S(?:[^*]*\S)?)\*/g, '$1')
       .replace(/`([^`]+)`/g, '$1');
-
     t = t.replace(/\b(?!Rp\d)([A-Za-z]{2,8})(\d{2,6})\b/g, (m, letters, digits) => `${letters} ${digits.split('').join(' ')}`);
-    // Plain spaces (no comma/period) between spelled-out letters — punctuation between each
-    // letter forces a pause per letter which reads as slow/robotic on repeated acronyms.
     t = t.replace(/\b([A-Z]{3})\b(?!\d)/g, (m, letters) => letters.split('').join(' '));
-    return t;
+    // Protect Indonesian thousand-separator periods ("Rp150.000.000") from the sentence splitter
+    // below — otherwise every "." inside a number gets treated as a sentence end, fracturing a
+    // single figure into several unnaturally short, mid-number utterances. Restored per-segment.
+    const PROTECTED_DOT = '@@DOT@@';
+    t = t.replace(/(\d)\.(?=\d)/g, `$1${PROTECTED_DOT}`);
+
+    const sentences = t.match(/[^.!?\n]+[.!?]*|\n+/g) || [t];
+    const segments = [];
+    for (const raw of sentences) {
+      const sentence = raw.trim();
+      if (!sentence) continue;
+      const isExclaim = /!\s*$/.test(sentence);
+      const isQuestion = !isExclaim && /\?\s*$/.test(sentence);
+      // Split further on **bold** spans so emphasized phrases get their own utterance with a
+      // pitch/rate bump — everything else in the sentence stays at the sentence's base tone.
+      const parts = sentence.split(/(\*\*[^*]+\*\*)/g).filter(Boolean);
+      for (const part of parts) {
+        const boldMatch = part.match(/^\*\*([^*]+)\*\*$/);
+        const spoken = (boldMatch ? boldMatch[1] : part)
+          .replace(/\*(\S(?:[^*]*\S)?)\*/g, '$1')
+          .split(PROTECTED_DOT).join('.')
+          .trim();
+        if (!spoken) continue;
+        segments.push({ text: spoken, emphasis: !!boldMatch, isQuestion, isExclaim });
+      }
+    }
+    return segments;
   }
 
   // Auto-pick the best available Indonesian voice (free, browser-native — no extra API calls/
@@ -230,12 +258,33 @@
   function speak(text) {
     if (!('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel();
-    const utter = new SpeechSynthesisUtterance(toSpeakable(text));
-    utter.lang = 'id-ID';
-    utter.rate = 1.2; // faster than default — Indonesian TTS voices default to a noticeably slow pace
-    utter.pitch = 1.05; // slightly higher — reads more natural on most Indonesian TTS voices
-    if (indonesianVoice) utter.voice = indonesianVoice;
-    window.speechSynthesis.speak(utter);
+    const BASE_PITCH = 1.05; // slightly higher — reads more natural on most Indonesian TTS voices
+    const BASE_RATE = 1.2; // faster than default — Indonesian TTS voices default to a noticeably slow pace
+    const segments = buildSpeechSegments(text);
+    for (const seg of segments) {
+      const utter = new SpeechSynthesisUtterance(seg.text);
+      utter.lang = 'id-ID';
+      let pitch = BASE_PITCH;
+      let rate = BASE_RATE;
+      if (seg.isExclaim) {
+        pitch += 0.22; // energetic/emphatic lift for "!"
+        rate *= 1.08;
+      } else if (seg.isQuestion) {
+        pitch += 0.14; // rising, inquisitive tone for "?"
+        rate *= 0.96; // a touch slower so the question actually reads as a question, not a rush
+      }
+      if (seg.emphasis) {
+        pitch += 0.08; // **bold** phrases get a distinct emphasis bump on top of the sentence tone
+        rate *= 0.95;
+      }
+      // Small per-sentence variance so a multi-sentence reply doesn't sound like the exact same
+      // flat tone repeated — this is most of what makes single-utterance TTS sound robotic.
+      pitch += (Math.random() - 0.5) * 0.06;
+      utter.pitch = Math.min(2, Math.max(0.5, pitch));
+      utter.rate = Math.min(2, Math.max(0.5, rate));
+      if (indonesianVoice) utter.voice = indonesianVoice;
+      window.speechSynthesis.speak(utter);
+    }
   }
 
   function stopSpeaking() {
