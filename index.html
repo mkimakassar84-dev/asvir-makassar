@@ -77,9 +77,9 @@
     }[c]));
   }
 
-  // Turns bare URLs inside plain text into clickable <a> tags (text is escaped first).
+  // Turns bare URLs into clickable <a> tags and **bold** into <b> (text is escaped first).
   function linkify(text) {
-    const escaped = escapeHtml(text);
+    const escaped = escapeHtml(text).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
     return escaped.replace(/(https?:\/\/[^\s<]+)/g, (url) => {
       const clean = url.replace(/[),.]+$/, '');
       return `<a href="${clean}" target="_blank" rel="noopener noreferrer" class="underline text-victory break-all">${clean}</a>`;
