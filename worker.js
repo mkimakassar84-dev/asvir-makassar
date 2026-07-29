@@ -253,6 +253,23 @@ function extractDateMention(message) {
   return null;
 }
 
+// Date RANGE mention ("16-29 Juli 2026", "16 sampai 29 Juli", "16 s/d 29 Juli 2026") — tried
+// before extractDateMention, since a range like "16-29 Juli" would otherwise only ever yield the
+// single day 29 (whichever number sits immediately before the month name) and silently drop
+// everything from the 16th-28th.
+function extractDateRangeMention(message) {
+  const t = normText(message);
+  for (const m of t.matchAll(/\b(\d{1,2})\s*(?:-|sampai|s\/d|s\.d\.?|hingga)\s*(\d{1,2})\s+([a-z]+)(?:\s+(\d{4}))?\b/g)) {
+    const d1 = parseInt(m[1], 10);
+    const d2 = parseInt(m[2], 10);
+    const month = MONTHS[m[3]];
+    if (!month || d1 < 1 || d1 > 31 || d2 < 1 || d2 > 31) continue;
+    const year = m[4] ? parseInt(m[4], 10) : new Date().getFullYear();
+    return { startDay: Math.min(d1, d2), endDay: Math.max(d1, d2), month, year };
+  }
+  return null;
+}
+
 // Matches transactions by exact date mention, else by a known customer name appearing in the
 // question — covers "penjualan tanggal 13 Juli" and "Soni Susilo ekspedisinya apa?". Wilayah/
 // ekspedisi questions ("ekspedisi ke Manado pakai apa?") are handled separately by
@@ -283,55 +300,70 @@ function customerNameFuzzyMatch(msgWords, customerName) {
 // partial names). Results are sorted newest-first so "terakhir/last" questions read the top row.
 function findTransactionMatches(message, allTransactions) {
   if (!allTransactions.length) return { items: [], note: '' };
-  const nMsg = normText(message);
-  const dateMention = extractDateMention(message);
+  const rangeMention = extractDateRangeMention(message);
+  const dateMention = !rangeMention ? extractDateMention(message) : null;
 
-  let matched = [];
-  let note = '';
   const byDateDesc = (a, b) => {
     const da = parseFlexibleDate(a.tanggal);
     const db = parseFlexibleDate(b.tanggal);
     return (db ? db.getTime() : 0) - (da ? da.getTime() : 0);
   };
 
-  if (dateMention) {
-    matched = allTransactions.filter((tx) => {
+  // Collect ALL matched product codes (not just the first) — a question can name several codes
+  // at once ("FOTB074 dan FOTB075"), match per keyword TOKEN (not by blobbing the whole message
+  // into one string, which caused false-positive substring hits inside ordinary Indonesian words).
+  const kodeSet = new Set();
+  for (const tx of allTransactions) if (tx.kode) kodeSet.add(tx.kode);
+  const hitKodes = [];
+  for (const kw of extractKeywords(message)) {
+    const ckw = normCode(kw);
+    if (ckw.length < 4) continue;
+    for (const k of kodeSet) {
+      const ck = normCode(k);
+      if (ck.length >= 4 && (ck === ckw || ckw.includes(ck)) && !hitKodes.includes(k)) hitKodes.push(k);
+    }
+  }
+
+  let matched = allTransactions;
+  const noteParts = [];
+
+  if (rangeMention) {
+    matched = matched.filter((tx) => {
+      const d = parseFlexibleDate(tx.tanggal);
+      return d && d.getMonth() + 1 === rangeMention.month && d.getFullYear() === rangeMention.year
+        && d.getDate() >= rangeMention.startDay && d.getDate() <= rangeMention.endDay;
+    });
+    noteParts.push(`tanggal ${rangeMention.startDay}-${rangeMention.endDay} bulan ${rangeMention.month}/${rangeMention.year}`);
+  } else if (dateMention) {
+    matched = matched.filter((tx) => {
       const d = parseFlexibleDate(tx.tanggal);
       return d && d.getDate() === dateMention.day && d.getMonth() + 1 === dateMention.month && d.getFullYear() === dateMention.year;
     });
-    note = `Transaksi tanggal ${dateMention.day}/${dateMention.month}/${dateMention.year}: ${matched.length} baris ditemukan.`;
+    noteParts.push(`tanggal ${dateMention.day}/${dateMention.month}/${dateMention.year}`);
+  }
+
+  if (hitKodes.length) {
+    matched = matched.filter((tx) => hitKodes.includes(tx.kode));
+    noteParts.push(`kode ${hitKodes.join(', ')}`);
+  }
+
+  let note = '';
+  if (noteParts.length) {
+    // Date and/or code filter(s) applied above.
+    matched = [...matched].sort(byDateDesc);
+    note = `Difilter ${noteParts.join(' DAN ')}: ${matched.length} baris ditemukan, diurutkan PALING BARU dulu. Jika kode disebut tapi baris untuk kode itu 0, artinya BENAR-BENAR tidak ada transaksi — bukan berarti pencarian gagal.`;
   } else {
-    const kodeSet = new Set();
-    for (const tx of allTransactions) if (tx.kode) kodeSet.add(tx.kode);
-    // Match per KEYWORD TOKEN, not by blobbing the whole message into one string — blobbing
-    // caused false-positive substring hits inside ordinary Indonesian words (e.g. "barang",
-    // "terakhir") that happened to contain some short code as a substring, and Set iteration
-    // would stop at that wrong match before ever reaching the real intended code.
-    let hitKode = null;
-    for (const kw of extractKeywords(message)) {
-      const ckw = normCode(kw);
-      if (ckw.length < 4) continue;
-      for (const k of kodeSet) {
-        const ck = normCode(k);
-        if (ck.length >= 4 && (ck === ckw || ckw.includes(ck))) { hitKode = k; break; }
-      }
-      if (hitKode) break;
+    // No date/code found — fall back to fuzzy customer-name matching only.
+    const customerSet = new Set();
+    for (const tx of allTransactions) if (tx.customer) customerSet.add(tx.customer);
+    const msgWords = nameWordsOf(message);
+    let hitCustomer = null;
+    for (const c of customerSet) {
+      if (c.length >= 4 && customerNameFuzzyMatch(msgWords, c)) { hitCustomer = c; break; }
     }
-    if (hitKode) {
-      matched = allTransactions.filter((tx) => tx.kode === hitKode).sort(byDateDesc);
-      note = `Transaksi kode "${hitKode}": ${matched.length} baris, diurutkan dari yang PALING BARU (baris pertama = transaksi terakhir).`;
-    } else {
-      const customerSet = new Set();
-      for (const tx of allTransactions) if (tx.customer) customerSet.add(tx.customer);
-      const msgWords = nameWordsOf(message);
-      let hitCustomer = null;
-      for (const c of customerSet) {
-        if (c.length >= 4 && customerNameFuzzyMatch(msgWords, c)) { hitCustomer = c; break; }
-      }
-      if (hitCustomer) {
-        matched = allTransactions.filter((tx) => tx.customer === hitCustomer).sort(byDateDesc);
-        note = `Transaksi customer "${hitCustomer}": ${matched.length} baris, diurutkan dari yang PALING BARU (baris pertama = transaksi terakhir).`;
-      }
+    matched = hitCustomer ? allTransactions.filter((tx) => tx.customer === hitCustomer).sort(byDateDesc) : [];
+    if (hitCustomer) {
+      note = `Transaksi customer "${hitCustomer}": ${matched.length} baris, diurutkan dari yang PALING BARU (baris pertama = transaksi terakhir).`;
     }
   }
 
