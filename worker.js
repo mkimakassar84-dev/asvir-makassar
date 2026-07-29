@@ -489,6 +489,27 @@ function findProductCatalogMatch(message) {
   };
 }
 
+// Confirmed by MKI Makassar directly — stock codes and catalog model numbers can't be reliably
+// bridged by fuzzy text matching alone (see resolveStockCodeToCatalogProduct below), so any
+// mapping actually confirmed by a human takes ABSOLUTE priority over that guesswork. Add more
+// entries here as they get confirmed; key = stock kode (as in the sheet), value = EXACT catalog
+// "nama" string (must match a PRODUCT_CATALOG entry's nama field verbatim).
+const KNOWN_CODE_TO_CATALOG = {
+  KSFO108: 'Kabel fiber optik GJYXCH-1F Super Premium Dropcore 1,2 mm',
+  KSFO028: 'Kabel fiber optik GJYXCH-1F Premium Dropcore 1 Core (1 Messenger)',
+};
+function resolveKnownCodeOverride(message) {
+  const keywords = extractKeywords(message);
+  for (const kw of keywords) {
+    const ckw = normCode(kw);
+    const nama = KNOWN_CODE_TO_CATALOG[ckw];
+    if (!nama) continue;
+    const p = PRODUCT_CATALOG.find((x) => x.nama === nama);
+    if (p) return { jumlahCocok: 1, produk: [{ nama: p.nama, url: p.url, gambar: p.gambar, kategori: p.kategori }] };
+  }
+  return null;
+}
+
 // The product CATALOG (marketing pages) only has full descriptive names/keywords, never SKU-style
 // codes — but users very naturally ask about a product using the CODE they see in stock/invoices
 // ("spek KSFO108"), which never overlaps with any catalog keyword on its own. Bridge the two: look
@@ -568,9 +589,9 @@ function matchReferences(message, allStock) {
   // filtering, see resolveStockCodeToCatalogProduct) instead of the general one — the code itself
   // already pins down one exact physical item, so the noisier free-text matcher's tolerance for
   // several loosely-related options (including flat-out wrong specs) isn't appropriate here.
-  const produkSpesifik = stockDescriptions.length
-    ? resolveStockCodeToCatalogProduct(stockDescriptions.join(' '))
-    : findProductCatalogMatch(augmentedMessage);
+  const produkSpesifik =
+    resolveKnownCodeOverride(message) ||
+    (stockDescriptions.length ? resolveStockCodeToCatalogProduct(stockDescriptions.join(' ')) : findProductCatalogMatch(augmentedMessage));
   const hasAnyMatch = kategoriProduk.length || solusiSistem.length || wantsTutorial || wantsArticle || video.teknis.length || produkSpesifik;
   return {
     produkSpesifikCocok: produkSpesifik,
