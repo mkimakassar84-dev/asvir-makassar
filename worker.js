@@ -903,10 +903,28 @@ function customerNameFuzzyMatch(msgWords, customerName) {
   return hits / nameWords.length >= 0.7;
 }
 
+// Scans conversation HISTORY (most recent first) for the last customer actually mentioned — same
+// carryover pattern used for attendance (person) and stock (product code) follow-ups. Without this,
+// a natural follow-up like "piutangnya udah lunas belum?" or "dia beli apa lagi bulan ini?" with no
+// customer name in the CURRENT message comes back with nothing to search by, and Gemini risks
+// answering from thin air instead of saying the data wasn't found.
+function findLastMentionedCustomer(history, customerSet) {
+  if (!Array.isArray(history)) return null;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const h = history[i];
+    if (!h || !h.text) continue;
+    const words = nameWordsOf(h.text);
+    for (const c of customerSet) {
+      if (c.length >= 4 && customerNameFuzzyMatch(words, c)) return c;
+    }
+  }
+  return null;
+}
+
 // Matches transactions by (in priority order): exact date mention, product code mention (for
 // "siapa pembeli terakhir KODE", "kapan KODE terakhir keluar"), or customer name (fuzzy, handles
 // partial names). Results are sorted newest-first so "terakhir/last" questions read the top row.
-function findTransactionMatches(message, allTransactions) {
+function findTransactionMatches(message, allTransactions, history) {
   if (!allTransactions.length) return { items: [], note: '' };
   const rangeMention = extractDateRangeMention(message);
   const dateMention = !rangeMention ? extractDateMention(message) : null;
@@ -961,7 +979,8 @@ function findTransactionMatches(message, allTransactions) {
     matched = [...matched].sort(byDateDesc);
     note = `Difilter ${noteParts.join(' DAN ')}: ${matched.length} baris ditemukan, diurutkan PALING BARU dulu. Jika kode disebut tapi baris untuk kode itu 0, artinya BENAR-BENAR tidak ada transaksi — bukan berarti pencarian gagal.`;
   } else {
-    // No date/code found — fall back to fuzzy customer-name matching only.
+    // No date/code found — fall back to fuzzy customer-name matching, and if THAT finds nothing
+    // either, to the last customer mentioned in history (follow-up like "dia beli apa lagi?").
     const customerSet = new Set();
     for (const tx of allTransactions) if (tx.customer) customerSet.add(tx.customer);
     const msgWords = nameWordsOf(message);
@@ -969,9 +988,14 @@ function findTransactionMatches(message, allTransactions) {
     for (const c of customerSet) {
       if (c.length >= 4 && customerNameFuzzyMatch(msgWords, c)) { hitCustomer = c; break; }
     }
+    let fromHistory = false;
+    if (!hitCustomer) {
+      hitCustomer = findLastMentionedCustomer(history, customerSet);
+      fromHistory = !!hitCustomer;
+    }
     matched = hitCustomer ? allTransactions.filter((tx) => tx.customer === hitCustomer).sort(byDateDesc) : [];
     if (hitCustomer) {
-      note = `Transaksi customer "${hitCustomer}": ${matched.length} baris, diurutkan dari yang PALING BARU (baris pertama = transaksi terakhir).`;
+      note = `Transaksi customer "${hitCustomer}"${fromHistory ? ' (dilanjutkan dari histori, tidak disebut ulang di pertanyaan ini)' : ''}: ${matched.length} baris, diurutkan dari yang PALING BARU (baris pertama = transaksi terakhir).`;
     }
   }
 
@@ -1017,7 +1041,7 @@ function findZonaWilayahMatches(message, zonaData) {
 // Per-customer piutang lookup ("piutang customer X berapa?") against the full invoice-level
 // detail list (only 189 rows total, cheap to scan) — the category aggregate alone has no
 // per-customer breakdown at all, which is why these questions used to come back empty.
-function findPiutangByCustomer(message, piutangDetail) {
+function findPiutangByCustomer(message, piutangDetail, history) {
   if (!piutangDetail || !piutangDetail.length) return null;
   const customerSet = new Set();
   for (const p of piutangDetail) if (p.customer) customerSet.add(p.customer);
@@ -1026,6 +1050,7 @@ function findPiutangByCustomer(message, piutangDetail) {
   for (const c of customerSet) {
     if (c.length >= 4 && customerNameFuzzyMatch(msgWords, c)) { hit = c; break; }
   }
+  if (!hit) hit = findLastMentionedCustomer(history, customerSet);
   if (!hit) return null;
   const invoices = piutangDetail.filter((p) => p.customer === hit);
   return {
@@ -1045,7 +1070,7 @@ function findPiutangByCustomer(message, piutangDetail) {
 // is annotated with the invoice's CURRENT status (lunas vs masih ada sisa) by cross-checking
 // against piutangDetail, so Gemini never has to infer/guess it — and never mixes a payment's
 // date with a different invoice's remaining-balance figure, the exact bug this was fixed for.
-function findPaymentsByCustomer(message, paymentDetail, piutangDetail) {
+function findPaymentsByCustomer(message, paymentDetail, piutangDetail, history) {
   if (!paymentDetail || !paymentDetail.length) return null;
   const customerSet = new Set();
   for (const p of paymentDetail) if (p.customer) customerSet.add(p.customer);
@@ -1054,6 +1079,7 @@ function findPaymentsByCustomer(message, paymentDetail, piutangDetail) {
   for (const c of customerSet) {
     if (c.length >= 4 && customerNameFuzzyMatch(msgWords, c)) { hit = c; break; }
   }
+  if (!hit) hit = findLastMentionedCustomer(history, customerSet);
   if (!hit) return null;
 
   const openInvoices = new Map();
@@ -1083,6 +1109,18 @@ function findPaymentsByCustomer(message, paymentDetail, piutangDetail) {
 
   return {
     customer: hit,
+    // Sits right next to the data on purpose, not just in the system prompt far away — this field
+    // exists because of an observed failure: asking about piutang, then asking a payment follow-up
+    // in the SAME conversation, made the model anchor on its own prior "masih ada sisa piutang"
+    // answer and claim no payment data existed at all, even though this object was populated
+    // correctly the whole time. A single invoice's remaining balance and a DIFFERENT invoice being
+    // fully paid are independent facts, not a contradiction — this data is current, use it as-is.
+    catatan: 'Data pembayaran ini valid dan ADA (bukan kosong) — pakai langsung. Sisa piutang di satu faktur (kalau dibahas sebelumnya di percakapan ini) tidak berarti customer ini belum pernah bayar; faktur lain darinya bisa saja sudah lunas.',
+    // Handed over as a single, unambiguous object — not just "array[0]" for the model to correctly
+    // pick out of a list that can run 20-30+ entries long, which was observed to sometimes grab an
+    // arbitrary LUNAS entry instead of the truly most recent one despite the array already being
+    // sorted newest-first. This IS the answer to "kapan pembayaran/pelunasan terakhir", period.
+    pembayaranTerakhirYangMelunasi: pembayaranMelunasi[0] || null,
     jumlahPembayaran: payments.length,
     totalDibayar: payments.reduce((sum, p) => sum + p.amount, 0),
     pembayaranTerbaruDulu: payments,
@@ -1869,11 +1907,11 @@ async function handleChat(request, env) {
   const poGudangData = poGudangRaw ? JSON.parse(poGudangRaw) : null;
   const zonaWilayahData = zonaWilayahRaw ? JSON.parse(zonaWilayahRaw) : null;
   const stokMatch = findStockMatches(message, allStock, history);
-  const txMatch = findTransactionMatches(message, allTransactions);
+  const txMatch = findTransactionMatches(message, allTransactions, history);
   const wilayahMatch = findWilayahMatches(message, allWilayahEkspedisi);
-  const piutangMatch = findPiutangByCustomer(message, piutangData?.detail);
+  const piutangMatch = findPiutangByCustomer(message, piutangData?.detail, history);
   const revenueData = revenueRaw ? JSON.parse(revenueRaw) : null;
-  const paymentMatch = findPaymentsByCustomer(message, revenueData?.detail, piutangData?.detail);
+  const paymentMatch = findPaymentsByCustomer(message, revenueData?.detail, piutangData?.detail, history);
   const poMatch = findPoGudangMatches(message, poGudangData?.items);
   const zonaMatch = findZonaWilayahMatches(message, zonaWilayahData);
   const customerBucketMatch = findCustomerBucketMatch(message, customerBucketsRaw ? JSON.parse(customerBucketsRaw) : null);
@@ -1950,8 +1988,9 @@ Aturan:
   1. **PENJUALAN/SALES** = transaksi ke customer (Grand Data, field "transaksiRelevan"/"performa") — kapan customer ORDER/beli.
   2. **PEMBAYARAN/PELUNASAN** = uang yang BENAR-BENAR masuk dari customer (Rev SUM, field "pembayaranRelevan"/"revenue") — BEDA dari tanggal order, seorang customer bisa order duluan lalu bayar belakangan (atau sebaliknya bayar dulu untuk order lama). Kalau user tanya "kapan X bayar/lunas/pembayaran terakhir", WAJIB pakai "pembayaranRelevan" — JANGAN jawab pakai tanggal transaksi/order dari "transaksiRelevan", itu beda hal.
      Satu faktur BISA dibayar beberapa kali (cicilan) sebelum lunas — karena itu tiap baris di "pembayaranRelevan.pembayaranTerbaruDulu" SUDAH punya field "statusFaktur" yang bilang persis apakah faktur itu SEKARANG sudah "LUNAS" atau "BELUM LUNAS" (dan kalau belum lunas, berapa sisanya) — SELALU baca & sebutkan status ini, JANGAN pernah menyimpulkan sendiri, dan JANGAN PERNAH menukar angka "sisa piutang" dari satu baris dengan tanggal/nomor faktur dari baris lain.
-     Kalau user tanya "kapan pembayaran/pelunasan TERAKHIR" secara polos (tanpa minta riwayat cicilan), WAJIB jawab pakai baris PERTAMA dari "pembayaranRelevan.pembayaranYangMelunasiTerbaruDulu" (ini sudah difilter HANYA pembayaran yang benar-benar membuat fakturnya lunas, cicilan yang masih menyisakan piutang TIDAK masuk di sini) — kalau array ini kosong padahal "pembayaranTerbaruDulu" tidak kosong, artinya semua pembayaran yang tercatat masih berupa cicilan (belum ada faktur yang lunas total), sampaikan itu apa adanya beserta status sisa piutangnya, JANGAN sebut salah satunya sebagai "lunas".
+     Kalau user tanya "kapan pembayaran/pelunasan TERAKHIR" secara polos (tanpa minta riwayat cicilan), WAJIB jawab pakai "pembayaranRelevan.pembayaranTerakhirYangMelunasi" LANGSUNG — field ini SUDAH berisi satu jawaban pasti (bukan array untuk kamu cari sendiri), jangan mencari-cari sendiri di "pembayaranYangMelunasiTerbaruDulu" karena isinya bisa puluhan baris dan gampang salah ambil yang bukan paling baru. Kalau "pembayaranTerakhirYangMelunasi" bernilai null padahal "pembayaranTerbaruDulu" tidak kosong, artinya semua pembayaran yang tercatat masih berupa cicilan (belum ada faktur yang lunas total), sampaikan itu apa adanya beserta status sisa piutangnya, JANGAN sebut salah satunya sebagai "lunas".
      Kalau user tanya riwayat pembayaran secara umum (bukan spesifik "yang lunas"), baru gunakan "pembayaranTerbaruDulu" lengkap dengan statusFaktur masing-masing.
+     WAJIB DIPATUHI: kalau field "pembayaranRelevan" TIDAK null (ada isinya) — artinya customernya SUDAH ketemu dan datanya ADA — jangan pernah bilang "data pembayaran belum tersedia"/"belum ada catatan pembayaran". Ini sering muncul di pertanyaan LANJUTAN dalam satu percakapan (mis. baru saja bahas piutang customer X yang masih ada sisa, lalu ditanya "kapan terakhir dia bayar?") — piutang yang MASIH ada sisa di SATU faktur TIDAK BERARTI customer itu belum pernah bayar sama sekali; faktur LAIN darinya bisa saja sudah lunas duluan. Dua fakta ini TIDAK kontradiktif dan BOLEH disebutkan bersamaan. HANYA boleh bilang "belum ada data" kalau field "pembayaranRelevan" itu sendiri bernilai null.
   3. **PO GUDANG** = pembelian stok dari SUPPLIER ke gudang kita (bukan dari customer) — HANYA relevan kalau user secara eksplisit menulis "PO" atau "PO Gudang" dalam pertanyaannya. Kalau user tanya "pembelian"/"pemesanan" TANPA menyebut "PO" secara eksplisit, itu KEMUNGKINAN BESAR maksudnya penjualan ke customer (poin 1), BUKAN PO Gudang — jangan otomatis anggap "pembelian" = PO Gudang.
   Rasio Sales-ke-Revenue = revenue/sales*100 per bulan, hitung sendiri dari kedua array bulanan itu kalau ditanya.
 - Untuk pertanyaan stok/ketersediaan barang, gunakan "stokRelevan". Jawab SINGKAT: cukup jumlah stok per company (MKI/CFN) + total, TANPA menyebut turnover/perputaran gudang kecuali user SPESIFIK menanyakan turnover/perputaran. Field "stokCatatan" menjelaskan filter yang dipakai (untuk konteksmu sendiri, tidak perlu disebut ke user) — kalau isinya menyebut "dilanjutkan dari kode X yang dibahas sebelumnya", itu tandanya user tidak sebut ulang kode di pertanyaan ini tapi maksudnya masih produk yang sama dari histori, pakai data itu dengan percaya diri (bukan menebak). WAJIB: kalau "stokRelevan" kosong/tidak ada barang yang cocok, katakan JUJUR datanya tidak ditemukan — JANGAN PERNAH mengarang angka stok, nama gudang, atau satuan (roll/meter/dll) sendiri.
@@ -1996,11 +2035,21 @@ Aturan:
 DATA KONTEKS (JSON):
 ${JSON.stringify(context)}`;
 
+  // Observed failure: asking about a customer's piutang, then a payment follow-up in the SAME
+  // conversation, made the model anchor on its own prior "masih ada sisa piutang" turn and claim
+  // no payment data existed — even with correct data in context and explicit system-prompt rules
+  // about it. A per-turn reminder attached directly to THIS message (not just the static system
+  // prompt, easy to out-weigh in a long multi-turn conversation) is what actually broke the pattern
+  // in testing. Never shown to the user — only appended to what's sent to Gemini.
+  let finalUserText = message;
+  if (paymentMatch) {
+    finalUserText += '\n\n[Pengingat internal — jangan tampilkan ke user: field "pembayaranRelevan" pada DATA KONTEKS berisi catatan pembayaran NYATA dan VALID untuk customer ini, gunakan langsung. Sisa piutang di satu faktur yang mungkin dibahas sebelumnya di percakapan ini TIDAK berarti belum ada pembayaran sama sekali — JANGAN bilang data pembayaran tidak tersedia.]';
+  }
   const contents = [
     ...history
       .filter((h) => h && h.text)
       .map((h) => ({ role: h.role === 'model' ? 'model' : 'user', parts: [{ text: String(h.text) }] })),
-    { role: 'user', parts: [{ text: message }] },
+    { role: 'user', parts: [{ text: finalUserText }] },
   ];
 
   const model = env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
@@ -2012,7 +2061,7 @@ ${JSON.stringify(context)}`;
     body: JSON.stringify({
       contents,
       systemInstruction: { parts: [{ text: systemPrompt }] },
-      generationConfig: { temperature: 0.3, thinkingConfig: { thinkingLevel: 'minimal' } },
+      generationConfig: { temperature: 0.3, thinkingConfig: { thinkingLevel: 'high' } },
     }),
   });
 
