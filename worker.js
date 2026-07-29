@@ -20,7 +20,44 @@ const GIDS = {
   ar: '1407414424',        // AR 2026 — piutang / aging
   revSum: '1062237088',    // Rev SUM — actual payments collected (REVENUE, different from Sales)
   poGudang: '2047354384',  // PO Gudang — incoming supplier purchase orders (columns A-K only)
+  salesSum: '1234708655',  // Sales SUM — columns AS-BB hold 2025 vs 2026 YoY comparison + monthly target
+  kpiMonitor: '64738765',  // KPI MONITORING — columns M-Z hold per-wilayah monthly invoice counts (zona)
 };
+
+// Same province mapping the live dashboard hardcodes (Kabupaten/Kota -> ISO 3166-2:ID code) —
+// copied verbatim from calc.js so "zona wilayah" answers match what the dashboard shows.
+const WILAYAH_TO_PROVINCE = {
+  MAKASSAR: 'IDSN', BONE: 'IDSN', SIDRAP: 'IDSN', GOWA: 'IDSN', PALOPO: 'IDSN', BULUKUMBA: 'IDSN',
+  JENEPONTO: 'IDSN', SENGKANG: 'IDSN', BELOPA: 'IDSN', PANGKEP: 'IDSN', ENREKANG: 'IDSN', PINRANG: 'IDSN',
+  BARRU: 'IDSN', SOPPENG: 'IDSN', TAKALAR: 'IDSN', MALILI: 'IDSN', SINJAI: 'IDSN', 'PARE-PARE': 'IDSN',
+  'LUWU TIMUR': 'IDSN', MANGKUTANA: 'IDSN', MASAMBA: 'IDSN', LUWU: 'IDSN', BANTAENG: 'IDSN', SUKAMAJU: 'IDSN',
+  'LUWU UTARA': 'IDSN', MAROS: 'IDSN', SOROWAKO: 'IDSN', 'BONE-BONE': 'IDSN', WAJO: 'IDSN', WAWONDULA: 'IDSN',
+  SELAYAR: 'IDSN', TORAJA: 'IDSN', LAROMPONG: 'IDSN', SIWA: 'IDSN', TOMONI: 'IDSN', WASUPONDA: 'IDSN',
+  TANAMONI: 'IDSN', WOWONDULA: 'IDSN', WALENRANG: 'IDSN', RANTEPAO: 'IDSN', 'BELAWA WAJO': 'IDSN',
+  BAEBUNTA: 'IDSN', LAPAI: 'IDSN', TOWUTI: 'IDSN',
+  KENDARI: 'IDSG', 'BAU-BAU': 'IDSG', KOLAKA: 'IDSG', KONAWE: 'IDSG', MUNA: 'IDSG', 'KOLAKA UTARA': 'IDSG',
+  BOMBANA: 'IDSG', RAHA: 'IDSG', BUTON: 'IDSG', LASUSUA: 'IDSG', 'KOLAKA TIMUR': 'IDSG', UNAHA: 'IDSG',
+  'BUTON TENGAH': 'IDSG', WAKATOBI: 'IDSG', 'BAU BAU': 'IDSG',
+  PALU: 'IDST', BANGGAI: 'IDST', 'TOLI-TOLI': 'IDST', MOROWALI: 'IDST', POSO: 'IDST', BETELEME: 'IDST',
+  KOLONEDALLE: 'IDST', PARIGI: 'IDST', 'LUWUK BANGGAI': 'IDST', BURIKO: 'IDST', 'MOROWALI UTARA': 'IDST',
+  TENTENA: 'IDST', LUMBEWE: 'IDST', BUNGKU: 'IDST', 'PARIGI MOUTONG': 'IDST', DONGGALA: 'IDST',
+  'TOJO UNA-UNA': 'IDST', SIGI: 'IDST', PENDOLO: 'IDST', TARAELU: 'IDST', LAMBARESE: 'IDST', BUOL: 'IDST',
+  MAJENE: 'IDSR', PASANGKAYU: 'IDSR', MAMUJU: 'IDSR', MAMASA: 'IDSR', POLEWALI: 'IDSR', POLMAN: 'IDSR', TOPOYO: 'IDSR',
+  MANADO: 'IDSA', KOTAMOBAGU: 'IDSA', MINAHASA: 'IDSA', 'BOLAANG MONGODOW': 'IDSA', 'KEPULAUAN SANGIHE': 'IDSA',
+  'SIAU TAGULANDANG BIARO': 'IDSA', 'KEPULAUAN TALAUD': 'IDSA', BITUNG: 'IDSA', TOMOHON: 'IDSA',
+  GORONTALO: 'IDGO', BOALEMO: 'IDGO', 'BONE BOLANGO': 'IDGO', POHUWATU: 'IDGO',
+  AMBON: 'IDMA', MALUKU: 'IDMA', SAUMLAKI: 'IDMA', BANDA: 'IDMA', NAMLEA: 'IDMA',
+  TERNATE: 'IDMU', HALMAHERA: 'IDMU', 'MALUKU UTARA': 'IDMU',
+  PAPUA: 'IDPA', NABIRE: 'IDPA', JAYAPURA: 'IDPA', WAMENA: 'IDPA',
+  BINTUNI: 'IDPB', MANOKWARI: 'IDPB',
+  JAKARTA: 'IDJK', SURABAYA: 'IDJI', SAMARINDA: 'IDKI', BALIKPAPAN: 'IDKI', BERAU: 'IDKI', BELITUNG: 'IDBB',
+};
+
+function zoneOf(totalInvoice) {
+  if (totalInvoice > 50) return 'hijau';
+  if (totalInvoice >= 20) return 'kuning';
+  return 'merah';
+}
 
 // Same 5 codes the live Kinerja-Cabang-Makassar dashboard hardcodes for its "Fiber Optic 1-Core"
 // section — kept identical here so MIRA's answer matches what the dashboard shows.
@@ -263,6 +300,25 @@ function findWilayahMatches(message, wilayahEkspedisi) {
   return null;
 }
 
+// Zona wilayah lookup ("zona Manado apa", "wilayah merah apa saja") against the KPI Monitoring-
+// derived zone data — separate from findWilayahMatches (that one's for ekspedisi, this one's for
+// invoice-count zoning merah/kuning/hijau which comes from a different sheet entirely).
+function findZonaWilayahMatches(message, zonaData) {
+  if (!zonaData) return null;
+  const nMsg = normText(message);
+  for (const w of zonaData.wilayah || []) {
+    if (w.nama && w.nama.length >= 3 && nMsg.includes(normText(w.nama))) return { tipe: 'satuWilayah', data: w };
+  }
+  if (/merah|kuning|hijau/.test(nMsg)) {
+    const zone = ['merah', 'kuning', 'hijau'].find((z) => nMsg.includes(z));
+    return { tipe: 'perZona', zona: zone, data: (zonaData.wilayah || []).filter((w) => w.zone === zone) };
+  }
+  if (/tanpa pembelanjaan|tidak ada pembelanjaan|belum pernah belanja/.test(nMsg)) {
+    return { tipe: 'tanpaPembelanjaan', data: zonaData.tanpaPembelanjaan };
+  }
+  return null;
+}
+
 // Per-customer piutang lookup ("piutang customer X berapa?") against the full invoice-level
 // detail list (only 189 rows total, cheap to scan) — the category aggregate alone has no
 // per-customer breakdown at all, which is why these questions used to come back empty.
@@ -448,6 +504,7 @@ async function handleSync(request, env) {
     const byEkspedisiGlobal = {};
     const byCustomer = {}; // frekuensi customer
     const fo1core = { byMonth: {}, byKode: {} };
+    const dpStats = {}; // Daily Performance: bulan -> { invoiceAll:Set, invoiceOTD:Set, invoiceNonRetur:Set }
     let sameDayCount = 0;
     let cutOffCount = 0;
     let handCarryCount = 0;
@@ -460,13 +517,26 @@ async function handleSync(request, env) {
       const kode = (r['Kode Barang'] || '').trim();
       const company = (r['Company'] || '').trim().toUpperCase();
       const customer = (r['Customer'] || '').trim();
+      const noInvoice = (r['No Invoice'] || '').trim();
+      const stage = (r['Stage'] || '').trim();
       const statusSameCutOff = (r['Status'] || '').trim(); // col H is actually "Same Day / Cut Off" status
       const ekspedisi = (r['Status (Ekspedisi)'] || '').trim();
       const lokasi = (r['Lokasi'] || '').trim();
+      const isRetur = /^R[-/]/i.test(noInvoice) || amount < 0;
 
       if (!byMonth[key]) byMonth[key] = { bulan: key, sales: 0, transaksi: 0 };
       byMonth[key].sales += amount;
       byMonth[key].transaksi += 1;
+
+      // Daily Performance: OTD Accuracy = invoiceUnik(stage=complete AND Same Day) / invoiceUnik(all,
+      // retur included). Total Invoice metric = invoiceUnik EXCLUDING retur. Both per-month, matching
+      // the live dashboard's exact definitions (see calc.js/render.js renderDpKpiPanel).
+      if (noInvoice) {
+        if (!dpStats[key]) dpStats[key] = { invoiceAll: new Set(), invoiceOTD: new Set(), invoiceNonRetur: new Set() };
+        dpStats[key].invoiceAll.add(noInvoice);
+        if (!isRetur) dpStats[key].invoiceNonRetur.add(noInvoice);
+        if (stage.toLowerCase() === 'complete' && statusSameCutOff === 'Same Day') dpStats[key].invoiceOTD.add(noInvoice);
+      }
 
       if (lokasi) byLokasi[lokasi] = (byLokasi[lokasi] || 0) + 1;
       if (lokasi && ekspedisi) {
@@ -511,12 +581,14 @@ async function handleSync(request, env) {
 
       transactions.push({
         tanggal: r['Order Date'],
-        invoice: r['No Invoice'],
+        invoice: noInvoice,
         customer,
         kode,
         qty,
         amount,
         status: statusSameCutOff,
+        stage,
+        isRetur,
         company,
         ekspedisi,
         lokasi,
@@ -525,6 +597,23 @@ async function handleSync(request, env) {
     }
     const performance = Object.values(byMonth).sort((a, b) => a.bulan.localeCompare(b.bulan));
     const totalSales2026 = performance.reduce((s, m) => s + m.sales, 0);
+    const dailyPerformanceTargets = Object.entries(dpStats)
+      .map(([bulan, s]) => {
+        const invoiceUnik = s.invoiceNonRetur.size;
+        const invoiceUnikTotal = s.invoiceAll.size;
+        const otdPct = invoiceUnikTotal > 0 ? (s.invoiceOTD.size / invoiceUnikTotal) * 100 : 0;
+        return {
+          bulan,
+          invoiceUnik,
+          targetInvoice: 280,
+          pencapaianInvoicePersen: (invoiceUnik / 280) * 100,
+          otdAccuracyPersen: otdPct,
+          targetOtdPersen: 80,
+          invoiceOTD: s.invoiceOTD.size,
+          invoiceUnikTotal,
+        };
+      })
+      .sort((a, b) => a.bulan.localeCompare(b.bulan));
     const topWilayah = Object.entries(byLokasi)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 20)
@@ -590,6 +679,27 @@ async function handleSync(request, env) {
       perKode: Object.values(fo1core.byKode),
     };
 
+    // Stock movement: "tidak bergerak" (in stock, never sold in 2026) and "terjual dibawah 5
+    // unit" (in stock, sold but <5 units) — reuses the stock list this same /sync run already
+    // cached, cross-referenced against byKode (already built above from this same tx pass).
+    let stockMovement = { totalTidakBergerak: 0, tidakBergerak: [], totalTerjualDibawah5: 0, terjualDibawah5: [] };
+    try {
+      const stockRaw2 = await env.SHEET_CACHE.get('data:stock');
+      const stockItems = stockRaw2 ? JSON.parse(stockRaw2) : [];
+      const fullTidakBergerak = stockItems.filter((p) => p.stokTotal > 0 && !byKode[p.kode]);
+      const fullDibawah5 = stockItems.filter((p) => p.stokTotal > 0 && byKode[p.kode] && byKode[p.kode].qty > 0 && byKode[p.kode].qty < 5);
+      stockMovement = {
+        // Explicit true counts — the arrays below are capped at 100 for context size, so Gemini
+        // must cite these totals rather than counting (or guessing) the length of a capped list.
+        totalTidakBergerak: fullTidakBergerak.length,
+        tidakBergerak: fullTidakBergerak.map((p) => ({ kode: p.kode, nama: p.nama, stokTotal: p.stokTotal })).slice(0, 100),
+        totalTerjualDibawah5: fullDibawah5.length,
+        terjualDibawah5: fullDibawah5
+          .map((p) => ({ kode: p.kode, nama: p.nama, stokTotal: p.stokTotal, qtyTerjual2026: byKode[p.kode].qty }))
+          .slice(0, 100),
+      };
+    } catch { /* non-critical, leave empty if this sub-step fails */ }
+
     await env.SHEET_CACHE.put('data:performance', JSON.stringify({ performance, topWilayah, totalSales2026 }));
     await env.SHEET_CACHE.put('data:transactions', JSON.stringify(transactions));
     await env.SHEET_CACHE.put('data:wilayahEkspedisi', JSON.stringify(wilayahEkspedisi));
@@ -597,6 +707,8 @@ async function handleSync(request, env) {
     await env.SHEET_CACHE.put('data:delivery', JSON.stringify(delivery));
     await env.SHEET_CACHE.put('data:customerInsights', JSON.stringify(customerInsights));
     await env.SHEET_CACHE.put('data:fiberOptic1Core', JSON.stringify(fiberOptic1Core));
+    await env.SHEET_CACHE.put('data:dailyPerformanceTargets', JSON.stringify(dailyPerformanceTargets));
+    await env.SHEET_CACHE.put('data:stockMovement', JSON.stringify(stockMovement));
     summary.sources.performance = { ok: true, bulanTersimpan: performance.length, baris: rows.length };
     summary.sources.transactions = { ok: true, baris: transactions.length };
     summary.sources.wilayahEkspedisi = { ok: true, wilayah: wilayahEkspedisi.length };
@@ -604,6 +716,8 @@ async function handleSync(request, env) {
     summary.sources.delivery = { ok: true };
     summary.sources.customerInsights = { ok: true, customer: customerList.length };
     summary.sources.fiberOptic1Core = { ok: true };
+    summary.sources.dailyPerformanceTargets = { ok: true };
+    summary.sources.stockMovement = { ok: true, tidakBergerak: stockMovement.tidakBergerak.length, dibawah5: stockMovement.terjualDibawah5.length };
   } catch (err) {
     summary.sources.performance = { ok: false, error: String(err) };
     summary.sources.transactions = { ok: false, error: String(err) };
@@ -612,9 +726,99 @@ async function handleSync(request, env) {
     summary.sources.delivery = { ok: false, error: String(err) };
     summary.sources.customerInsights = { ok: false, error: String(err) };
     summary.sources.fiberOptic1Core = { ok: false, error: String(err) };
+    summary.sources.dailyPerformanceTargets = { ok: false, error: String(err) };
+    summary.sources.stockMovement = { ok: false, error: String(err) };
   }
 
-  // 2b) Revenue (Rev SUM) — this is DIFFERENT from Sales (Grand Data Amount): Revenue is actual
+  // 2b) YoY comparison (Sales SUM sheet, columns AS-BB / absolute index 44-53). Row 0 is a
+  // section title not January, so each month is matched by its NAME in col AS, not row position.
+  try {
+    const csv = await (await fetch(csvExportUrl(PERFORMANCE_SHEET_ID, GIDS.salesSum))).text();
+    const allRows = parseCsv(csv);
+    const MONTH_NAMES_EN = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const MONTH_NAMES_ID = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+    const IDX = { AS: 44, AT: 45, AV: 47, AX: 49, AZ: 51, BB: 53 };
+    const months = MONTH_NAMES_EN.map((monthName, m) => {
+      const row = allRows.find((r) => (r[IDX.AS] || '').toLowerCase() === monthName.toLowerCase());
+      if (!row) return { monthIdx: m, label: MONTH_NAMES_ID[m], targetSalesRevenue: 0, rev2025: 0, rev2026: 0, sales2025: 0, sales2026: 0 };
+      return {
+        monthIdx: m,
+        label: MONTH_NAMES_ID[m],
+        targetSalesRevenue: toNumber(row[IDX.AT]),
+        rev2025: toNumber(row[IDX.AV]),
+        rev2026: toNumber(row[IDX.AX]),
+        sales2025: toNumber(row[IDX.AZ]),
+        sales2026: toNumber(row[IDX.BB]),
+      };
+    });
+    const totalSales2025 = months.reduce((s, m) => s + m.sales2025, 0);
+    const totalSales2026yoy = months.reduce((s, m) => s + m.sales2026, 0);
+    const totalRev2025 = months.reduce((s, m) => s + m.rev2025, 0);
+    const totalRev2026 = months.reduce((s, m) => s + m.rev2026, 0);
+    const totalTarget = months.reduce((s, m) => s + m.targetSalesRevenue, 0);
+    const growthPct = (curr, prev) => (prev > 0 ? ((curr - prev) / prev) * 100 : null);
+    await env.SHEET_CACHE.put(
+      'data:yoy',
+      JSON.stringify({
+        months,
+        totalSales2025,
+        totalSales2026: totalSales2026yoy,
+        totalRev2025,
+        totalRev2026,
+        totalTarget,
+        growthSalesPersen: growthPct(totalSales2026yoy, totalSales2025),
+        growthRevPersen: growthPct(totalRev2026, totalRev2025),
+        achievementSalesPersen: totalTarget > 0 ? (totalSales2026yoy / totalTarget) * 100 : null,
+        achievementRevPersen: totalTarget > 0 ? (totalRev2026 / totalTarget) * 100 : null,
+      })
+    );
+    summary.sources.yoy = { ok: true, bulan: months.length };
+  } catch (err) {
+    summary.sources.yoy = { ok: false, error: String(err) };
+  }
+
+  // 2c) Zona Wilayah (KPI MONITORING sheet, columns M-Z: NAMA at col M/idx12, Jan..Des at
+  // idx13-24, TOTAL at idx25 — gviz types these numeric so header text never surfaces as object
+  // keys, hence positional access). Zone thresholds + province grouping copied from calc.js.
+  try {
+    const csv = await (await fetch(csvExportUrl(PERFORMANCE_SHEET_ID, GIDS.kpiMonitor))).text();
+    const allRows = parseCsv(csv);
+    const NAMA_IDX = 12;
+    const MONTH_START_IDX = 13;
+    const TOTAL_IDX = 25;
+    const MONTH_NAMES_ID = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+    const wilayahData = [];
+    for (const r of allRows) {
+      const nama = (r[NAMA_IDX] || '').trim();
+      if (!nama || !/^[A-Za-z]/.test(nama)) continue;
+      const total = toNumber(r[TOTAL_IDX]);
+      const monthly = MONTH_NAMES_ID.map((label, i) => ({ label, invoice: toNumber(r[MONTH_START_IDX + i]) }));
+      wilayahData.push({ nama, monthly, total, zone: zoneOf(total) });
+    }
+    const tanpaPembelanjaan = wilayahData.filter((w) => w.total === 0).map((w) => w.nama);
+    const byProvince = {};
+    for (const w of wilayahData) {
+      const code = WILAYAH_TO_PROVINCE[w.nama];
+      if (!code) continue;
+      if (!byProvince[code]) byProvince[code] = { code, total: 0, wilayahCount: 0 };
+      byProvince[code].total += w.total;
+      byProvince[code].wilayahCount += 1;
+    }
+    Object.values(byProvince).forEach((p) => { p.zone = zoneOf(p.total); });
+    await env.SHEET_CACHE.put(
+      'data:zonaWilayah',
+      JSON.stringify({
+        wilayah: wilayahData.sort((a, b) => b.total - a.total),
+        tanpaPembelanjaan,
+        provinsi: Object.values(byProvince).sort((a, b) => b.total - a.total),
+      })
+    );
+    summary.sources.zonaWilayah = { ok: true, wilayah: wilayahData.length };
+  } catch (err) {
+    summary.sources.zonaWilayah = { ok: false, error: String(err) };
+  }
+
+  // 2d) Revenue (Rev SUM) — this is DIFFERENT from Sales (Grand Data Amount): Revenue is actual
   // cash collected ("Pelunasan"), Sales is order value at invoice time. Only columns A-E are
   // real data — later columns repeat the same header names for a recap block (would silently
   // collide if read by name), so this sheet is read by fixed position: 0 Payment Date,
@@ -775,6 +979,7 @@ async function handleChat(request, env) {
   const [
     stockRaw, perfRaw, piutangRaw, kpiRaw, txRaw, wilayahRaw,
     revenueRaw, poGudangRaw, topProductsRaw, deliveryRaw, customerInsightsRaw, fo1coreRaw,
+    yoyRaw, zonaWilayahRaw, dailyPerformanceRaw, stockMovementRaw,
     lastSync,
   ] = await Promise.all([
     env.SHEET_CACHE.get('data:stock'),
@@ -789,6 +994,10 @@ async function handleChat(request, env) {
     env.SHEET_CACHE.get('data:delivery'),
     env.SHEET_CACHE.get('data:customerInsights'),
     env.SHEET_CACHE.get('data:fiberOptic1Core'),
+    env.SHEET_CACHE.get('data:yoy'),
+    env.SHEET_CACHE.get('data:zonaWilayah'),
+    env.SHEET_CACHE.get('data:dailyPerformanceTargets'),
+    env.SHEET_CACHE.get('data:stockMovement'),
     env.SHEET_CACHE.get('lastSync'),
   ]);
 
@@ -798,11 +1007,13 @@ async function handleChat(request, env) {
   const piutangData = piutangRaw ? JSON.parse(piutangRaw) : null;
   const kpiData = kpiRaw ? JSON.parse(kpiRaw) : null;
   const poGudangData = poGudangRaw ? JSON.parse(poGudangRaw) : null;
+  const zonaWilayahData = zonaWilayahRaw ? JSON.parse(zonaWilayahRaw) : null;
   const stokMatch = findStockMatches(message, allStock);
   const txMatch = findTransactionMatches(message, allTransactions);
   const wilayahMatch = findWilayahMatches(message, allWilayahEkspedisi);
   const piutangMatch = findPiutangByCustomer(message, piutangData?.detail);
   const poMatch = findPoGudangMatches(message, poGudangData?.items);
+  const zonaMatch = findZonaWilayahMatches(message, zonaWilayahData);
   const referensi = matchReferences(message);
   const kpiNames = Array.isArray(kpiData?.kpi) ? kpiData.kpi.map((p) => p.nama).filter(Boolean) : [];
   const absensi = await fetchAttendanceContext(message, kpiNames);
@@ -832,6 +1043,10 @@ async function handleChat(request, env) {
     poGudangCatatan: poMatch.note,
     customerInsights: customerInsightsRaw ? JSON.parse(customerInsightsRaw) : null,
     fiberOptic1Core: fo1coreRaw ? JSON.parse(fo1coreRaw) : null,
+    perbandinganTahunSebelumnya: yoyRaw ? JSON.parse(yoyRaw) : null,
+    zonaWilayahRelevan: zonaMatch,
+    targetPerformaHarianBulanan: dailyPerformanceRaw ? JSON.parse(dailyPerformanceRaw) : null,
+    stokTidakBergerakDanKurangLaku: stockMovementRaw ? JSON.parse(stockMovementRaw) : null,
     referensiLink: referensi,
     absensiDanIndikatorHarian: absensi,
   };
@@ -851,6 +1066,10 @@ Aturan:
 - Untuk "kabel 1 core"/"fiber optic 1 core" secara spesifik sebagai section dashboard, gunakan "fiberOptic1Core" (5 kode resmi: KSFO028, KSFO108, KSFO083, KSFO113, KSFO128, dengan tren bulanan & per kode) — untuk pencarian stok kabel 1-core secara umum tetap pakai "stokRelevan".
 - Untuk pertanyaan PO Gudang (purchase order dari supplier/pusat), gunakan "poGudangRingkasan" (ringkasan per status: ditunggu/diterima/retur/lainnya + tren bulanan) untuk pertanyaan umum, atau "poGudangRelevan" (sudah difilter kode/status, field "poGudangCatatan" menjelaskan filternya) untuk pertanyaan spesifik.
 - Untuk "frekuensi customer", "customer paling sering belanja", atau "customer churn/tidak aktif", gunakan "customerInsights" (totalCustomer, totalChurned = tidak beli >=60 hari, buckets = pengelompokan berdasar jumlah invoice unik, topByFrekuensi, topBySales).
+- Untuk perbandingan tahun ini vs tahun lalu ("pertumbuhan dibanding 2025", "naik/turun berapa persen dari tahun lalu"), gunakan "perbandinganTahunSebelumnya" (sales2025/sales2026, rev2025/rev2026 per bulan+total, growthSalesPersen, growthRevPersen, achievementSalesPersen/achievementRevPersen terhadap target tahunan).
+- Untuk "zona wilayah" (merah/kuning/hijau berdasar jumlah invoice, BEDA dari topik ekspedisi), "wilayah tanpa pembelanjaan", atau zona per provinsi, gunakan "zonaWilayahRelevan". Zona: hijau jika total invoice >50, kuning jika 20-50, merah jika <20.
+- Untuk target & pencapaian performa harian/bulanan (target invoice 280/bulan, target OTD/On-Time-Delivery 80%), gunakan "targetPerformaHarianBulanan" per bulan (invoiceUnik, pencapaianInvoicePersen, otdAccuracyPersen).
+- Untuk "stok tidak bergerak/tidak laku" atau "produk terjual di bawah 5 unit", gunakan "stokTidakBergerakDanKurangLaku" (tidakBergerak = stok ada tapi 0 terjual sepanjang 2026, terjualDibawah5 = terjual tapi kurang dari 5 unit).
 - Pahami Bahasa Indonesia informal/sehari-hari dan istilah daerah (mis. "gimana" = "bagaimana", "kemarin" = hari sebelum ini, "pake"/"pakai" = sama). Jangan kaku pada ejaan baku.
 - Gunakan HISTORI PERCAKAPAN untuk memahami pertanyaan lanjutan yang tidak lengkap sendiri, contoh: "kalau revenue-nya?", "bulan lalu gimana?", "itu belanja apa lagi?" — kaitkan dengan topik/entitas yang dibahas sebelumnya.
 - Jika "referensiLink" berisi entri yang relevan dengan pertanyaan (spesifikasi produk atau tutorial), sertakan URL-nya APA ADANYA (utuh, bisa diklik) di jawabanmu — jangan ubah atau potong URL-nya.
