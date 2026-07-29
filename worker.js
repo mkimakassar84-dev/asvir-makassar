@@ -257,6 +257,28 @@ function findWilayahMatches(message, wilayahEkspedisi) {
   return null;
 }
 
+// Per-customer piutang lookup ("piutang customer X berapa?") against the full invoice-level
+// detail list (only 189 rows total, cheap to scan) — the category aggregate alone has no
+// per-customer breakdown at all, which is why these questions used to come back empty.
+function findPiutangByCustomer(message, piutangDetail) {
+  if (!piutangDetail || !piutangDetail.length) return null;
+  const nMsg = normText(message);
+  const customerSet = new Set();
+  for (const p of piutangDetail) if (p.customer) customerSet.add(p.customer);
+  let hit = null;
+  for (const c of customerSet) {
+    if (c.length >= 4 && nMsg.includes(normText(c))) { hit = c; break; }
+  }
+  if (!hit) return null;
+  const invoices = piutangDetail.filter((p) => p.customer === hit);
+  return {
+    customer: hit,
+    jumlahInvoice: invoices.length,
+    totalSisaPiutang: invoices.reduce((sum, p) => sum + p.nilaiSisa, 0),
+    invoices,
+  };
+}
+
 function matchReferences(message) {
   const nMsg = normText(message);
   return REFERENCE_LINKS.filter((r) => r.keywords.some((kw) => nMsg.includes(normText(kw))))
@@ -329,11 +351,18 @@ async function fetchAttendanceContext(message, kpiNames) {
     }
 
     // No specific person — team-wide attendance + indicator status for the target date.
-    const [teamStatus, dayStatus] = await Promise.all([
+    // "config" gives the 10 team indicator LABELS (dayStatus alone only returns bare
+    // true/false values with no names, which made answers unreadable) — pair them up.
+    const [teamStatus, dayStatus, config] = await Promise.all([
       fetch(`${KPI_WEBAPP_URL}?action=teamStatus&tanggal=${isoDay}`).then((r) => r.json()),
       fetch(`${KPI_WEBAPP_URL}?action=dayStatus&nama=MAKASSAR&tanggal=${isoDay}`).then((r) => r.json()),
+      fetch(`${KPI_WEBAPP_URL}?action=config&nama=MAKASSAR`).then((r) => r.json()),
     ]);
-    return { tanggal: isoDay, jamMasukPulangTim: teamStatus, indikatorTim: dayStatus };
+    const teamLabels = config?.labels || [];
+    const indikatorTim = teamLabels.length
+      ? teamLabels.map((label, i) => ({ label, tercapai: !!dayStatus?.values?.[i] }))
+      : dayStatus;
+    return { tanggal: isoDay, jamMasukPulangTim: teamStatus, indikatorTim };
   } catch (err) {
     return { error: `Gagal mengambil data absensi: ${String(err)}` };
   }
@@ -443,6 +472,7 @@ async function handleSync(request, env) {
     const csv = await (await fetch(csvExportUrl(PERFORMANCE_SHEET_ID, GIDS.ar))).text();
     const allRows = parseCsv(csv).slice(1); // drop header row
     const byKategori = {};
+    const detail = []; // per-invoice rows — needed for "piutang customer X" lookups
     let totalPiutang = 0;
     let rowCount = 0;
     for (const r of allRows) {
@@ -450,14 +480,16 @@ async function handleSync(request, env) {
       rowCount++;
       const kategori = (r[17] || r[16] || 'Tidak diketahui').trim();
       const nilai = toNumber(r[15]);
+      const customer = (r[13] || '').trim();
       totalPiutang += nilai;
       if (!byKategori[kategori]) byKategori[kategori] = { kategori, jumlahInvoice: 0, totalNilai: 0 };
       byKategori[kategori].jumlahInvoice += 1;
       byKategori[kategori].totalNilai += nilai;
+      detail.push({ tanggal: r[11], noFaktur: r[12], customer, nilaiSisa: nilai, kategori });
     }
     await env.SHEET_CACHE.put(
       'data:piutang',
-      JSON.stringify({ totalPiutang, byKategori: Object.values(byKategori) })
+      JSON.stringify({ totalPiutang, byKategori: Object.values(byKategori), detail })
     );
     summary.sources.piutang = { ok: true, baris: rowCount };
   } catch (err) {
@@ -512,17 +544,23 @@ async function handleChat(request, env) {
   const allStock = stockRaw ? JSON.parse(stockRaw) : [];
   const allTransactions = txRaw ? JSON.parse(txRaw) : [];
   const allWilayahEkspedisi = wilayahRaw ? JSON.parse(wilayahRaw) : [];
+  const piutangData = piutangRaw ? JSON.parse(piutangRaw) : null;
   const kpiData = kpiRaw ? JSON.parse(kpiRaw) : null;
   const stokMatch = findStockMatches(message, allStock);
   const txMatch = findTransactionMatches(message, allTransactions);
   const wilayahMatch = findWilayahMatches(message, allWilayahEkspedisi);
+  const piutangMatch = findPiutangByCustomer(message, piutangData?.detail);
   const referensi = matchReferences(message);
   const kpiNames = Array.isArray(kpiData?.kpi) ? kpiData.kpi.map((p) => p.nama).filter(Boolean) : [];
   const absensi = await fetchAttendanceContext(message, kpiNames);
 
   const context = {
     performa: perfRaw ? JSON.parse(perfRaw) : null,
-    piutang: piutangRaw ? JSON.parse(piutangRaw) : null,
+    // Only the compact totals go in by default — the 189-row invoice detail is never sent
+    // wholesale, only the customer-matched subset via piutangRelevan (keeps every other
+    // question's context small, same principle as stock/transactions retrieval).
+    piutang: piutangData ? { totalPiutang: piutangData.totalPiutang, byKategori: piutangData.byKategori } : null,
+    piutangRelevan: piutangMatch,
     kpiPersonel: kpiData,
     stokRelevan: stokMatch.items,
     stokCatatan: stokMatch.note,
@@ -541,7 +579,8 @@ Aturan:
 - User sering salah ketik (typo 1-2 huruf), menyingkat kata, atau menulis kode barang dengan/tanpa spasi/strip (mis. "DKB180", "DKB-180", "DKB 180" adalah kode yang SAMA) — pahami maksudnya, jangan langsung bilang "tidak ditemukan".
 - Jika user bertanya jumlah spesifik (mis. "10 wilayah penjualan terbesar", "5 customer terbanyak"), berikan SEMUA item yang diminta sesuai jumlah tersebut jika datanya tersedia di konteks, jangan dipotong.
 - Untuk pertanyaan stok/ketersediaan barang, gunakan "stokRelevan" (hasil pencarian kata kunci otomatis) — sebutkan juga rincian per company (MKI/CFN), bukan cuma total. Field "stokCatatan" menjelaskan bagaimana hasil ini difilter.
-- Untuk pertanyaan tanggal tertentu atau nama customer spesifik, gunakan "transaksiRelevan" (sudah difilter otomatis) — field "ekspedisi" dan "company" tiap baris menunjukkan cara pengiriman.
+- Untuk pertanyaan tanggal tertentu atau nama customer spesifik terkait TRANSAKSI/PENJUALAN, gunakan "transaksiRelevan" (sudah difilter otomatis) — field "ekspedisi" dan "company" tiap baris menunjukkan cara pengiriman.
+- Untuk pertanyaan PIUTANG customer tertentu (mis. "piutang si X berapa"), WAJIB gunakan "piutangRelevan" (sudah difilter per nama customer, berisi jumlah invoice dan rincian tiap invoice) — field umum "piutang" cuma berisi total keseluruhan per kategori umur, TIDAK punya rincian per customer.
 - Untuk pertanyaan "ekspedisi ke wilayah X pakai apa" atau "wilayah X pakai ekspedisi apa", WAJIB gunakan "wilayahEkspedisiRelevan" (data lengkap semua ekspedisi yang pernah dipakai ke wilayah itu, sudah diurutkan dari yang paling sering dipakai) — JANGAN pakai transaksiRelevan untuk pertanyaan jenis ini karena bisa tidak lengkap. Sebutkan ekspedisi yang paling dominan/sering dipakai, boleh sebutkan alternatif lain jika ada.
 - Pahami Bahasa Indonesia informal/sehari-hari dan istilah daerah (mis. "gimana" = "bagaimana", "kemarin" = hari sebelum ini, "pake"/"pakai" = sama). Jangan kaku pada ejaan baku.
 - Gunakan HISTORI PERCAKAPAN untuk memahami pertanyaan lanjutan yang tidak lengkap sendiri, contoh: "kalau revenue-nya?", "bulan lalu gimana?", "itu belanja apa lagi?" — kaitkan dengan topik/entitas yang dibahas sebelumnya.

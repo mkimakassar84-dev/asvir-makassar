@@ -193,9 +193,9 @@
       .replace(/`([^`]+)`/g, '$1');
 
     t = t.replace(/\b(?!Rp\d)([A-Za-z]{2,8})(\d{2,6})\b/g, (m, letters, digits) => `${letters} ${digits.split('').join(' ')}`);
-    // Commas (not periods) between spelled-out letters — periods make most TTS engines drop
-    // pitch and reset like a new sentence per letter, which is what sounded stiff/robotic.
-    t = t.replace(/\b([A-Z]{3})\b(?!\d)/g, (m, letters) => letters.split('').join(', '));
+    // Plain spaces (no comma/period) between spelled-out letters — punctuation between each
+    // letter forces a pause per letter which reads as slow/robotic on repeated acronyms.
+    t = t.replace(/\b([A-Z]{3})\b(?!\d)/g, (m, letters) => letters.split('').join(' '));
     return t;
   }
 
@@ -226,7 +226,7 @@
     window.speechSynthesis.cancel();
     const utter = new SpeechSynthesisUtterance(toSpeakable(text));
     utter.lang = 'id-ID';
-    utter.rate = 0.95; // slightly slower than default — less rushed/robotic
+    utter.rate = 1.2; // faster than default — Indonesian TTS voices default to a noticeably slow pace
     utter.pitch = 1.05; // slightly higher — reads more natural on most Indonesian TTS voices
     if (indonesianVoice) utter.voice = indonesianVoice;
     window.speechSynthesis.speak(utter);
