@@ -239,13 +239,18 @@ const MONTHS = {
 
 function extractDateMention(message) {
   const t = normText(message);
-  const m = t.match(/\b(\d{1,2})\s+([a-z]+)(?:\s+(\d{4}))?\b/);
-  if (!m) return null;
-  const day = parseInt(m[1], 10);
-  const month = MONTHS[m[2]];
-  if (!month || day < 1 || day > 31) return null;
-  const year = m[3] ? parseInt(m[3], 10) : new Date().getFullYear();
-  return { day, month, year };
+  // Scan ALL "number word" candidates, not just the first — messages routinely have an earlier
+  // unrelated number (e.g. "3 customer yang... tanggal 28 Juli 2026") that isn't a date; taking
+  // only the first regex match and bailing out if IT isn't a real month silently discarded any
+  // real date mentioned later in the sentence.
+  for (const m of t.matchAll(/\b(\d{1,2})\s+([a-z]+)(?:\s+(\d{4}))?\b/g)) {
+    const day = parseInt(m[1], 10);
+    const month = MONTHS[m[2]];
+    if (!month || day < 1 || day > 31) continue;
+    const year = m[3] ? parseInt(m[3], 10) : new Date().getFullYear();
+    return { day, month, year };
+  }
+  return null;
 }
 
 // Matches transactions by exact date mention, else by a known customer name appearing in the
@@ -444,6 +449,19 @@ function toIsoDate(d) {
 // Real actions below were discovered by reading the sister app's own source
 // (KPI-Personel-Cabang-Makassar/{rekap-kinerja-tim,input-makassar}.html) — do not guess new
 // action names without checking that source first, this endpoint 400s on unknown actions.
+// The Apps Script's "evidence" field holds the actual substance behind each indicator — for
+// "Follow Up Piutang Customer" it's a JSON array of which customers were contacted and the
+// outcome, for delivery/handcarry indicators it's counts/details, etc. It's usually a JSON
+// string but not guaranteed, so parse defensively and fall back to the raw text.
+function parseEvidence(raw) {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+}
+
 async function fetchAttendanceContext(message, kpiNames) {
   const nMsg = normText(message);
   const wantsAttendance = /jam\s*masuk|jam\s*pulang|jam\s*datang|\btelat\b|terlambat|\babsen\b|absensi|kehadiran/.test(nMsg);
@@ -474,7 +492,11 @@ async function fetchAttendanceContext(message, kpiNames) {
           jamPulang: dayEntry.jamPulang || null,
           submitted: dayEntry.submitted,
           dinas: dayEntry.dinas,
-          indikator: labels.map((label, i) => ({ label, tercapai: !!dayEntry.values?.[i] })),
+          indikator: labels.map((label, i) => ({
+            label,
+            tercapai: !!dayEntry.values?.[i],
+            detail: parseEvidence(dayEntry.evidence?.[i]),
+          })),
         };
       }
       // No specific date — give a recent-days summary instead of the whole month.
@@ -501,7 +523,11 @@ async function fetchAttendanceContext(message, kpiNames) {
     ]);
     const teamLabels = config?.labels || [];
     const indikatorTim = teamLabels.length
-      ? teamLabels.map((label, i) => ({ label, tercapai: !!dayStatus?.values?.[i] }))
+      ? teamLabels.map((label, i) => ({
+          label,
+          tercapai: !!dayStatus?.values?.[i],
+          detail: parseEvidence(dayStatus?.evidence?.[i]),
+        }))
       : dayStatus;
     return { tanggal: isoDay, jamMasukPulangTim: teamStatus, indikatorTim };
   } catch (err) {
@@ -1123,7 +1149,7 @@ Aturan:
 - Pahami Bahasa Indonesia informal/sehari-hari dan istilah daerah (mis. "gimana" = "bagaimana", "kemarin" = hari sebelum ini, "pake"/"pakai" = sama). Jangan kaku pada ejaan baku.
 - Gunakan HISTORI PERCAKAPAN untuk memahami pertanyaan lanjutan yang tidak lengkap sendiri, contoh: "kalau revenue-nya?", "bulan lalu gimana?", "itu belanja apa lagi?" — kaitkan dengan topik/entitas yang dibahas sebelumnya.
 - Jika "referensiLink" berisi entri yang relevan dengan pertanyaan (spesifikasi produk atau tutorial), sertakan URL-nya APA ADANYA (utuh, bisa diklik) di jawabanmu — jangan ubah atau potong URL-nya.
-- Untuk pertanyaan jam masuk/pulang karyawan atau isi indikator harian personel, gunakan "absensiDanIndikatorHarian". Jika berisi "jamMasukPulangTim" itu data satu tim untuk satu tanggal (per orang: datang/pulang true-false + jamDatang/jamPulang, dan field ...Ok menandakan apakah role tsb secara keseluruhan tepat waktu). Jika berisi "indikator" (array label + tercapai true/false) itu daftar indikator kerja harian orang tsb — sebutkan yang tercapai dan yang tidak. Jika null/kosong padahal user jelas bertanya soal ini, katakan datanya tidak ditemukan (mungkin nama salah ketik, atau tanggalnya di luar rentang).
+- Untuk pertanyaan jam masuk/pulang karyawan atau isi indikator harian personel, gunakan "absensiDanIndikatorHarian". Jika berisi "jamMasukPulangTim" itu data satu tim untuk satu tanggal (per orang: datang/pulang true-false + jamDatang/jamPulang, dan field ...Ok menandakan apakah role tsb secara keseluruhan tepat waktu). Jika berisi "indikator" (array label + tercapai true/false + detail) — field "detail" berisi BUKTI/RINCIAN NYATA di balik indikator itu (mis. untuk "Follow Up Piutang Customer" detail-nya adalah daftar nama customer yang dihubungi, saldo piutang, dan hasil follow up-nya; untuk indikator delivery/handcarry berisi rincian invoice/barang). WAJIB pakai "detail" ini kalau user bertanya SPESIFIK tentang isi/rincian suatu indikator (mis. "customer siapa saja yang di-follow up", "barang apa yang di-handcarry") — jangan cuma bilang "tercapai (YA)" tanpa rinciannya kalau datanya ada. Jika null/kosong padahal user jelas bertanya soal ini, katakan datanya tidak ditemukan (mungkin nama salah ketik, atau tanggalnya di luar rentang).
 - Jawab singkat, padat, dan langsung ke angka/fakta. Gunakan Bahasa Indonesia sehari-hari yang sopan.
 - Data disinkron terakhir: ${lastSync || 'belum pernah sync'}.
 
