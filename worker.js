@@ -253,6 +253,23 @@ function extractDateMention(message) {
 // ekspedisi questions ("ekspedisi ke Manado pakai apa?") are handled separately by
 // findWilayahMatches against the full pre-aggregated data, not a capped raw-row scan — a capped
 // scan previously gave incomplete/wrong ekspedisi answers.
+// Fuzzy match: does the message contain most of a customer name's significant words? Handles
+// partial/shortened names (e.g. message "Arsyad Ambo Dalle" vs stored "MUH. ARSYAD AMBO DALLE")
+// which a plain substring check misses since the stored name is LONGER than what the user typed.
+const NAME_STOPWORDS = new Set(['muh', 'tk', 'pt', 'cv', 'toko', 'bpk', 'ibu', 'dan']);
+function customerNameFuzzyMatch(nMsg, customerName) {
+  const words = normText(customerName)
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 3 && !NAME_STOPWORDS.has(w));
+  if (!words.length) return false;
+  const hits = words.filter((w) => nMsg.includes(w)).length;
+  return hits / words.length >= 0.7;
+}
+
+// Matches transactions by (in priority order): exact date mention, product code mention (for
+// "siapa pembeli terakhir KODE", "kapan KODE terakhir keluar"), or customer name (fuzzy, handles
+// partial names). Results are sorted newest-first so "terakhir/last" questions read the top row.
 function findTransactionMatches(message, allTransactions) {
   if (!allTransactions.length) return { items: [], note: '' };
   const nMsg = normText(message);
@@ -260,6 +277,11 @@ function findTransactionMatches(message, allTransactions) {
 
   let matched = [];
   let note = '';
+  const byDateDesc = (a, b) => {
+    const da = parseFlexibleDate(a.tanggal);
+    const db = parseFlexibleDate(b.tanggal);
+    return (db ? db.getTime() : 0) - (da ? da.getTime() : 0);
+  };
 
   if (dateMention) {
     matched = allTransactions.filter((tx) => {
@@ -268,20 +290,41 @@ function findTransactionMatches(message, allTransactions) {
     });
     note = `Transaksi tanggal ${dateMention.day}/${dateMention.month}/${dateMention.year}: ${matched.length} baris ditemukan.`;
   } else {
-    const customerSet = new Set();
-    for (const tx of allTransactions) if (tx.customer) customerSet.add(tx.customer);
-    let hitCustomer = null;
-    for (const c of customerSet) {
-      if (c.length >= 4 && nMsg.includes(normText(c))) { hitCustomer = c; break; }
+    const kodeSet = new Set();
+    for (const tx of allTransactions) if (tx.kode) kodeSet.add(tx.kode);
+    // Match per KEYWORD TOKEN, not by blobbing the whole message into one string — blobbing
+    // caused false-positive substring hits inside ordinary Indonesian words (e.g. "barang",
+    // "terakhir") that happened to contain some short code as a substring, and Set iteration
+    // would stop at that wrong match before ever reaching the real intended code.
+    let hitKode = null;
+    for (const kw of extractKeywords(message)) {
+      const ckw = normCode(kw);
+      if (ckw.length < 4) continue;
+      for (const k of kodeSet) {
+        const ck = normCode(k);
+        if (ck.length >= 4 && (ck === ckw || ckw.includes(ck))) { hitKode = k; break; }
+      }
+      if (hitKode) break;
     }
-    if (hitCustomer) {
-      matched = allTransactions.filter((tx) => tx.customer === hitCustomer);
-      note = `Transaksi customer "${hitCustomer}": ${matched.length} baris.`;
+    if (hitKode) {
+      matched = allTransactions.filter((tx) => tx.kode === hitKode).sort(byDateDesc);
+      note = `Transaksi kode "${hitKode}": ${matched.length} baris, diurutkan dari yang PALING BARU (baris pertama = transaksi terakhir).`;
+    } else {
+      const customerSet = new Set();
+      for (const tx of allTransactions) if (tx.customer) customerSet.add(tx.customer);
+      let hitCustomer = null;
+      for (const c of customerSet) {
+        if (c.length >= 4 && customerNameFuzzyMatch(nMsg, c)) { hitCustomer = c; break; }
+      }
+      if (hitCustomer) {
+        matched = allTransactions.filter((tx) => tx.customer === hitCustomer).sort(byDateDesc);
+        note = `Transaksi customer "${hitCustomer}": ${matched.length} baris, diurutkan dari yang PALING BARU (baris pertama = transaksi terakhir).`;
+      }
     }
   }
 
   if (matched.length > 150) {
-    note += ` (menampilkan 150 dari ${matched.length} baris)`;
+    note += ` (menampilkan 150 TERBARU dari ${matched.length} baris — sisanya lebih lama)`;
     matched = matched.slice(0, 150);
   }
   return { items: matched, note };
@@ -1059,7 +1102,7 @@ Aturan:
 - Jika user bertanya jumlah spesifik (mis. "10 wilayah penjualan terbesar", "5 customer terbanyak"), berikan SEMUA item yang diminta sesuai jumlah tersebut jika datanya tersedia di konteks, jangan dipotong.
 - PENTING: "performa" (Sales) dan "revenue" adalah DUA metrik BERBEDA — Sales = nilai order/invoice (Grand Data), Revenue = uang yang benar-benar sudah masuk/dibayar (Pelunasan). Jangan disamakan. Rasio Sales-ke-Revenue = revenue/sales*100 per bulan, hitung sendiri dari kedua array bulanan itu kalau ditanya.
 - Untuk pertanyaan stok/ketersediaan barang, gunakan "stokRelevan" — sebutkan juga rincian per company (MKI/CFN) DAN "turnoverMKI"/"turnoverCFN"/"turnoverTotal" (perputaran gudang) kalau relevan, bukan cuma total stok. Field "stokCatatan" menjelaskan filter yang dipakai.
-- Untuk pertanyaan tanggal tertentu atau nama customer spesifik terkait TRANSAKSI/PENJUALAN, gunakan "transaksiRelevan" — field "ekspedisi" dan "company" tiap baris menunjukkan cara pengiriman.
+- Untuk pertanyaan tanggal tertentu, KODE BARANG spesifik ("siapa pembeli terakhir KODE", "kapan KODE terakhir keluar"), atau nama customer spesifik ("kapan si X belanja terakhir, beli apa saja"), gunakan "transaksiRelevan" — field "ekspedisi" dan "company" tiap baris menunjukkan cara pengiriman. Baca "transaksiCatatan": kalau bilang "diurutkan dari yang PALING BARU", maka baris PERTAMA di array = transaksi TERAKHIR/TERBARU — pakai itu untuk jawab pertanyaan "terakhir/kapan".
 - Untuk pertanyaan PIUTANG customer tertentu, WAJIB gunakan "piutangRelevan" (rincian per invoice) — field umum "piutang" cuma total per kategori umur + "ratioARtoSalesPersen" (rasio piutang terhadap total sales 2026), TIDAK punya rincian per customer.
 - Untuk pertanyaan "ekspedisi ke wilayah X pakai apa", WAJIB gunakan "wilayahEkspedisiRelevan" (lengkap, terurut dari paling sering) — JANGAN pakai transaksiRelevan untuk ini. Untuk pertanyaan ekspedisi SECARA UMUM (bukan per wilayah, mis. "berapa banyak pakai hand carry", "ekspedisi apa yang paling sering dipakai", "berapa yang same day"), gunakan "deliveryOverview" (sameDayCount, cutOffCount, handCarryCount, pihakKetigaCount, byEkspedisi).
 - Untuk "produk paling laku/terlaris", gunakan "topProduk" (byAmount = berdasarkan nilai rupiah, byQty = berdasarkan jumlah unit, sudah top-20).
