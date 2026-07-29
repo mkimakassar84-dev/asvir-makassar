@@ -70,21 +70,66 @@ const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
 // Curated Falcom Technology product-page / tutorial references. Small and hand-maintained on
 // purpose — matching the whole live catalog would need on-demand scraping (adds latency and
 // fragility); extend this list over time with more {keywords, judul, links} entries.
-const REFERENCE_LINKS = [
-  {
-    keywords: ['dropcore', 'drop core', '1 core', '1core', 'kabel 1 core', 'satu core', 'kabel satu core'],
-    judul: 'Kabel Fiber Optik Dropcore 1 Core (Falcom Technology)',
-    links: [
-      'https://falcom-technology.com/products/kabel-fiber-optik-gjyxch-1f-super-premium-dropcore-12-mm/',
-      'https://falcom-technology.com/products/kabel-fiber-optik-gjyxch-1f-high-quality-dropcore-1-core-1-messenger/',
-    ],
-  },
-  {
-    keywords: ['olt 3 pon', 'olt3pon', 'olt 3pon', 'tutorial olt', 'olt pon', 'cara setting olt'],
-    judul: 'Tutorial OLT 3 PON (Falcom Technology Official)',
-    links: ['https://youtu.be/pEZHy1OrByU?si=UfkKyfpM1n4Mfeob'],
-  },
+// Falcom Technology reference catalog — ONLY these URLs may ever be cited to the user (never
+// invent a URL outside this table). Kept as structured groups (category/solution/tutorial/
+// general) because each group has a different inclusion rule in the system prompt below.
+const PRODUCT_CATEGORIES = [
+  { keywords: ['fiber optik', 'fiber optic', 'kabel fo', 'kabel fiber'], judul: 'Kabel Fiber Optik', url: 'https://falcom-technology.com/category/optical-fiber-cable/' },
+  { keywords: ['kabel lan', 'cat5', 'cat6', 'kabel utp', 'kabel jaringan lan'], judul: 'Kabel LAN (CAT5/CAT6)', url: 'https://falcom-technology.com/category/lan-cable/' },
+  { keywords: ['coaxial', 'coax', 'kabel coax'], judul: 'Kabel Coaxial', url: 'https://falcom-technology.com/category/coaxial-cable/' },
+  { keywords: ['konektor fiber', 'konektor fo', 'adaptor fiber', 'adapter fiber', 'aksesoris fiber', 'pigtail', 'patch cord'], judul: 'Aksesoris Fiber Optik', url: 'https://falcom-technology.com/category/fiberoptic-accesorries/' },
+  { keywords: ['olt epon', 'olt gpon', 'olt 3', 'olt3', 'olt 4', 'olt4', 'olt 8', 'olt8', 'olt 16', 'olt16', ' olt '], judul: 'OLT EPON & GPON', url: 'https://falcom-technology.com/category/epon-gpon/' },
+  { keywords: [' onu', ' ont', 'onu/ont', 'modem gpon', 'modem epon'], judul: 'ONU/ONT', url: 'https://falcom-technology.com/category/onu-ont/' },
+  { keywords: ['transmitter', 'edfa'], judul: 'Transmitter & EDFA', url: 'https://falcom-technology.com/category/transmitter-edfa/' },
+  { keywords: ['analog digital', 'analogue digital'], judul: 'Analog Digital', url: 'https://falcom-technology.com/category/analogue-digital/' },
+  { keywords: ['hfc', 'hybrid fiber coaxial'], judul: 'HFC (Hybrid Fiber Coaxial)', url: 'https://falcom-technology.com/category/hfc/' },
+  { keywords: ['fiber broadband unit', ' fbu '], judul: 'Fiber Broadband Unit', url: 'https://falcom-technology.com/category/fiber-broadband-unit/' },
+  { keywords: ['media converter', 'switch jaringan', 'switch fiber'], judul: 'Media Converter & Switch', url: 'https://falcom-technology.com/category/media-converter-switch/' },
+  { keywords: ['access point', 'wireless ap', 'wifi outdoor', ' ap ', 'akses poin'], judul: 'Wireless Access Point', url: 'https://falcom-technology.com/category/wireless-access-point/' },
+  { keywords: ['tools', 'sparepart', 'spare part', 'alat splicing', 'alat jaringan'], judul: 'Tools & Sparepart', url: 'https://falcom-technology.com/category/tools-spareparts/' },
+  { keywords: [' rack ', 'rak server', 'rak jaringan'], judul: 'Rack', url: 'https://falcom-technology.com/category/rack/' },
 ];
+
+const SOLUTIONS = [
+  { keywords: ['hfc + fttx', 'hfc fttx', 'solusi hfc fttx', 'solusi hfc dan fttx'], judul: 'Solusi HFC + FTTX', url: 'https://falcom-technology.com/solution/hfc-fttx/' },
+  { keywords: ['ftth', 'fiber to the home'], judul: 'Solusi FTTH', url: 'https://falcom-technology.com/solution/ftth/' },
+  { keywords: ['solusi hfc'], judul: 'Solusi HFC', url: 'https://falcom-technology.com/solution/hfc/' },
+  { keywords: ['solusi wireless', 'solusi access point'], judul: 'Solusi Wireless Access Point', url: 'https://falcom-technology.com/solution/wireless-access-point/' },
+];
+
+const TUTORIAL_LINKS = [
+  { judul: 'Bantuan & Dukungan', url: 'https://falcom-technology.com/help-and-support/' },
+  { judul: 'Kelas Pelatihan FTTX', url: 'https://falcom-technology.com/fttx-class/' },
+  { judul: 'Galeri Video Tutorial', url: 'https://falcom-technology.com/category/video-gallery/' },
+  { judul: 'Channel YouTube Falcom Technology (semua video tutorial & demo produk)', url: 'https://www.youtube.com/@falcomtechnologyofficial2262' },
+];
+
+const ARTICLE_LINK = { judul: 'Artikel & Berita Teknis', url: 'https://falcom-technology.com/articles/' };
+
+const GENERAL_LINKS = {
+  semuaProduk: { judul: 'Semua Produk', url: 'https://falcom-technology.com/products/' },
+  tentangKami: { judul: 'Tentang Kami', url: 'https://falcom-technology.com/about-us/' },
+  kontak: { judul: 'Kontak / Jaringan Penjualan', url: 'https://falcom-technology.com/contact/' },
+};
+
+function matchReferences(message) {
+  const nMsg = ` ${normText(message)} `; // padded so ' ap ' / ' rack ' style keywords can match at string edges
+  const kategoriProduk = PRODUCT_CATEGORIES.filter((c) => c.keywords.some((kw) => nMsg.includes(kw)));
+  const solusiSistem = SOLUTIONS.filter((s) => s.keywords.some((kw) => nMsg.includes(kw)));
+  const wantsTutorial = /tutorial|cara pasang|cara install|cara setting|cara konfigurasi|cara pakai|cara menggunakan|troubleshoot|bagaimana cara|video (tutorial|demo)/.test(nMsg);
+  const wantsArticle = /\bartikel\b|berita teknis/.test(nMsg);
+  const wantsSpec = /\bspek\b|spesifikasi|datasheet/.test(nMsg);
+  const hasAnyMatch = kategoriProduk.length || solusiSistem.length || wantsTutorial || wantsArticle;
+  return {
+    kategoriProduk,
+    solusiSistem,
+    tutorialDanDukungan: wantsTutorial ? TUTORIAL_LINKS : [],
+    artikel: wantsArticle ? [ARTICLE_LINK] : [],
+    // Only fall back to generic pages when there's a clear product-spec question with no
+    // specific category match — never for unrelated operational questions (sales/stok/piutang).
+    fallbackUmum: wantsSpec && !hasAnyMatch ? [GENERAL_LINKS.semuaProduk, GENERAL_LINKS.kontak] : [],
+  };
+}
 
 function csvExportUrl(sheetId, gid) {
   return `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
@@ -503,12 +548,6 @@ function findCustomerBucketMatch(message, customerBuckets) {
   const all = customerBuckets[bucket];
   const sample = [...all].sort((a, b) => b.totalSales - a.totalSales).slice(0, 60);
   return { bucket, totalCustomer: all.length, ditampilkan: sample.length, customers: sample };
-}
-
-function matchReferences(message) {
-  const nMsg = normText(message);
-  return REFERENCE_LINKS.filter((r) => r.keywords.some((kw) => nMsg.includes(normText(kw))))
-    .map((r) => ({ judul: r.judul, links: r.links }));
 }
 
 function detectPersonMention(message, knownNames) {
@@ -1259,7 +1298,7 @@ async function handleChat(request, env) {
     absensiDanIndikatorHarian: absensi,
   };
 
-  const systemPrompt = `Kamu adalah "MIRA" (Makassar Intelligent Response Assistant), asisten AI internal untuk cabang Makassar PT. Mitra Kabel Indonesia. Kamu adalah rekan bicara untuk dashboard "Kinerja Cabang Makassar" — kamu harus bisa menjawab apapun yang bisa dilihat di dashboard itu (semua section: performa harian, sales, revenue, rasio sales/revenue, wilayah, turnover gudang, stok & PO, delivery/ekspedisi, piutang, frekuensi customer, fiber optic 1-core, KPI personel), HANYA berdasarkan DATA KONTEKS di bawah ini dan histori percakapan sebelumnya.
+  const systemPrompt = `Kamu adalah "MIRA" (Makassar Intelligent Response Assistant), asisten AI internal untuk cabang Makassar PT. Mitra Kabel Indonesia. Kamu punya dua peran: (1) rekan bicara untuk dashboard "Kinerja Cabang Makassar" — bisa menjawab apapun yang bisa dilihat di dashboard itu (performa harian, sales, revenue, wilayah, stok & PO, delivery, piutang, frekuensi customer, KPI personel, dll); (2) membantu pelanggan/teknisi memahami spesifikasi, tutorial, dan informasi produk jaringan (fiber optik, LAN, coaxial, HFC, OLT/ONU, media converter, access point, dll) dari katalog Falcom Technology. Jawab HANYA berdasarkan DATA KONTEKS di bawah ini dan histori percakapan sebelumnya.
 
 Aturan:
 - Jika data yang ditanyakan tidak ada di konteks, katakan terus terang tidak tahu / datanya belum tersedia — jangan mengarang angka.
@@ -1286,7 +1325,16 @@ Aturan:
 - Untuk pertanyaan "customer/barang yang belum dikirim/belum diantar/belum terkirim", gunakan "transaksiBelumDikirim" (daftar lengkap transaksi tahun 2026 yang statusnya masih pending, belum "Complete" dan belum "Return") — sebutkan nama customer, kode barang, dan tanggal order-nya.
 - Pahami Bahasa Indonesia informal/sehari-hari dan istilah daerah (mis. "gimana" = "bagaimana", "kemarin" = hari sebelum ini, "pake"/"pakai" = sama). Jangan kaku pada ejaan baku.
 - Gunakan HISTORI PERCAKAPAN untuk memahami pertanyaan lanjutan yang tidak lengkap sendiri, contoh: "kalau revenue-nya?", "bulan lalu gimana?", "itu belanja apa lagi?" — kaitkan dengan topik/entitas yang dibahas sebelumnya.
-- Jika "referensiLink" berisi entri yang relevan dengan pertanyaan (spesifikasi produk atau tutorial), sertakan URL-nya APA ADANYA (utuh, bisa diklik) di jawabanmu — jangan ubah atau potong URL-nya.
+- Kamu JUGA membantu pelanggan/teknisi memahami SPESIFIKASI, TUTORIAL, dan INFORMASI PRODUK JARINGAN (fiber optik, LAN, coaxial, HFC, OLT/ONU, media converter, access point, dll) dari katalog Falcom Technology. Untuk topik ini, field "referensiLink" berisi kandidat link yang SUDAH dicocokkan otomatis dari kata kunci pertanyaan — gunakan HANYA link dari situ, JANGAN PERNAH mengarang URL lain:
+  - Pertanyaan SPESIFIKASI produk → sertakan link dari "kategoriProduk" (kategori terkait).
+  - Pertanyaan solusi sistem (FTTH, HFC, dll) → sertakan link dari "solusiSistem".
+  - Pertanyaan TUTORIAL/cara pasang/cara pakai/troubleshooting → sertakan link dari "tutorialDanDukungan" (Bantuan & Dukungan, Kelas Pelatihan FTTX, Galeri Video, Channel YouTube).
+  - Pertanyaan artikel/berita teknis → sertakan link dari "artikel".
+  - Kalau semuanya kosong tapi jelas ini pertanyaan spek produk tanpa kategori yang cocok → pakai "fallbackUmum" (Semua Produk/Kontak).
+  - Kalau kamu tidak yakin dengan detail spesifikasi teknis suatu produk (bukan dari data konteks), katakan jujur "[perlu verifikasi lebih lanjut]" lalu arahkan ke link terkait — jangan menebak angka spesifikasi.
+  - JANGAN menyalin/merangkai ulang isi halaman secara panjang (hak cipta) — cukup 1-3 kalimat ringkasan, lalu arahkan ke link untuk detail lengkap.
+  - Sertakan URL APA ADANYA (utuh, bisa diklik, jangan dipotong). Format baris link di akhir jawaban: "🔗 Info lengkap: [Nama Halaman] — (URL)" — kalau lebih dari satu, buat daftar bullet, MAKSIMAL 3 link per jawaban.
+  - Field ini TIDAK relevan untuk pertanyaan operasional (sales/stok/piutang/dll) — jangan sisipkan link produk ke jawaban yang tidak memintanya.
 - Untuk pertanyaan jam masuk/pulang karyawan atau isi indikator harian personel, gunakan "absensiDanIndikatorHarian". Jika berisi "jamMasukPulangTim" itu data satu tim untuk satu tanggal (per orang: datang/pulang true-false + jamDatang/jamPulang, dan field ...Ok menandakan apakah role tsb secara keseluruhan tepat waktu). Jika berisi "indikator" (array label + tercapai true/false + detail) — field "detail" berisi BUKTI/RINCIAN NYATA di balik indikator itu (mis. untuk "Follow Up Piutang Customer" detail-nya adalah daftar nama customer yang dihubungi, saldo piutang, dan hasil follow up-nya; untuk indikator delivery/handcarry berisi rincian invoice/barang). WAJIB pakai "detail" ini kalau user bertanya SPESIFIK tentang isi/rincian suatu indikator (mis. "customer siapa saja yang di-follow up", "barang apa yang di-handcarry") — jangan cuma bilang "tercapai (YA)" tanpa rinciannya kalau datanya ada. Jika null/kosong padahal user jelas bertanya soal ini, katakan datanya tidak ditemukan (mungkin nama salah ketik, atau tanggalnya di luar rentang).
 - Jawab singkat, padat, dan langsung ke angka/fakta. Gunakan Bahasa Indonesia sehari-hari yang sopan.
 - FORMAT: JANGAN pakai tanda bintang tunggal (*kata*) untuk penekanan biasa — itu bikin tampilan penuh tanda bintang yang mengganggu. Pakai bintang ganda (**angka penting**) SEPERLUNYA saja, hanya untuk angka kunci atau nama entitas utama dalam jawaban — bukan untuk kata biasa seperti "sales", "revenue", "pending", "catatan", dll. Sisanya tulis sebagai teks polos.
