@@ -160,6 +160,329 @@ const GENERAL_LINKS = {
   kontak: { judul: 'Kontak / Jaringan Penjualan', url: 'https://falcom-technology.com/contact/' },
 };
 
+// Full Falcom Technology product catalog (~230 products, no formal SKU — the full product name
+// IS the identity). Transcribed verbatim from the user-supplied grounding data; never add,
+// remove, or invent an entry here without a matching authoritative source.
+const PRODUCT_CATALOG = [
+  // Optical Fiber Cable — Dropcore
+  { nama: 'Kabel fiber optik GJYXCH-4F High Quality Dropcore 4 Core 1 Messenger', url: 'https://falcom-technology.com/products/kabel-fiber-optik-gjyxch-4f-high-quality-dropcore-4-core-1-messenger/', kategori: 'Optical Fiber Cable', keywords: ['kabel dropcore 4 core', 'gjyxch-4f', 'kabel fo drop 4 core', 'kabel drop ftth 4 core', 'kabel figure 8 dropcore'] },
+  { nama: 'Kabel fiber optik GJYXCH-2F High Quality Dropcore 2 Core 1 Messenger', url: 'https://falcom-technology.com/products/kabel-fiber-optik-gjyxch-2f-high-quality-dropcore-2-core-1-messenger/', kategori: 'Optical Fiber Cable', keywords: ['kabel dropcore 2 core', 'gjyxch-2f', 'kabel fo drop 2 core', 'kabel drop ke pelanggan'] },
+  { nama: 'Kabel fiber optik GJYXCH-1F Super Premium Dropcore 1,2 mm', url: 'https://falcom-technology.com/products/kabel-fiber-optik-gjyxch-1f-super-premium-dropcore-12-mm/', kategori: 'Optical Fiber Cable', keywords: ['dropcore 1 core premium', 'kabel fo 1 core 1.2mm', 'gjyxch-1f super premium'] },
+  { nama: 'Kabel fiber optik GJYXCH-1F Premium Dropcore 1 Core (1 Messenger)', url: 'https://falcom-technology.com/products/kabel-fiber-optik-gjyxch-1f-high-quality-dropcore-1-core-1-messenger/', kategori: 'Optical Fiber Cable', keywords: ['dropcore 1 core messenger premium', 'gjyxch-1f high quality'] },
+  { nama: 'Kabel fiber optik GJYXCH-1F Dropcore 1 Core 1 Messenger', url: 'https://falcom-technology.com/products/kabel-fiber-optik-gjyxch-1f-dropcore-1-core-1-messenger/', kategori: 'Optical Fiber Cable', keywords: ['dropcore 1 core standar', 'gjyxch-1f biasa', 'kabel fo drop murah'] },
+  // Optical Fiber Cable — Flat Jelly Tube
+  { nama: 'Kabel fiber optik FLAT JELLY TUBE 6 CORE 2KM', url: 'https://falcom-technology.com/products/kabel-fiber-optik-flat-jelly-tube-6-core-2km/', kategori: 'Optical Fiber Cable', keywords: ['fjt 6 core 2km', 'flat jelly tube 6 core', 'kabel fo flat isi 6'] },
+  { nama: 'kabel fiber optik FLAT JELLY TUBE 6 CORE 1KM', url: 'https://falcom-technology.com/products/kabel-fiber-optik-flat-jelly-tube-6-core-1km/', kategori: 'Optical Fiber Cable', keywords: ['fjt 6 core 1km'] },
+  { nama: 'kabel fiber optik FLAT JELLY TUBE 4 CORE 2KM', url: 'https://falcom-technology.com/products/kabel-fiber-optik-flat-jelly-tube-4-core-2km/', kategori: 'Optical Fiber Cable', keywords: ['fjt 4 core 2km', 'kabel fo flat isi 4'] },
+  { nama: 'kabel fiber optik FLAT JELLY TUBE 4 CORE 1KM', url: 'https://falcom-technology.com/products/kabel-fiber-optik-flat-jelly-tube-4-core-1km/', kategori: 'Optical Fiber Cable', keywords: ['fjt 4 core 1km'] },
+  { nama: 'Kabel fiber optik FLAT JELLY TUBE 2,4 & 6 CORE 2KM', url: 'https://falcom-technology.com/products/kabel-fiber-optik-flat-jelly-tube-24-6-core-2km/', kategori: 'Optical Fiber Cable', keywords: ['fjt 2 4 6 core 2km', 'flat jelly tube opsi core'] },
+  { nama: 'Kabel fiber optik FLAT JELLY TUBE 2, 4 & 6 CORE 1KM', url: 'https://falcom-technology.com/products/kabel-fiber-optik-flat-jelly-tube-2-4-6-core-1km/', kategori: 'Optical Fiber Cable', keywords: ['fjt 2 4 6 core 1km'] },
+  { nama: 'kabel fiber optik FLAT JELLY TUBE 2 CORE 2KM', url: 'https://falcom-technology.com/products/kabel-fiber-optik-flat-jelly-tube-2-core-2km/', kategori: 'Optical Fiber Cable', keywords: ['fjt 2 core 2km'] },
+  { nama: 'Kabel fiber optik FLAT JELLY TUBE 2 CORE 1KM', url: 'https://falcom-technology.com/products/kabel-fiber-optik-flat-jelly-tube-2-core-1km/', kategori: 'Optical Fiber Cable', keywords: ['fjt 2 core 1km'] },
+  // Optical Fiber Cable — FIG-8 MINI GYXTC8Y
+  { nama: 'KABEL FIBER OPTIK FIG-8 MINI 4,6,12 Core 5,6mm×10,7mm', url: 'https://falcom-technology.com/products/kabel-fiber-optik-fig-8-mini-4612-core-56mm107mm/', kategori: 'Optical Fiber Cable', keywords: ['fig 8 mini 4 6 12 core', 'gyxtc8y', 'kabel angka 8 dengan penggantung'] },
+  { nama: 'Kabel Fiber Optik FIG-8 MINI 4,6,12 Core 4,2mm×6,5mm', url: 'https://falcom-technology.com/products/kabel-fiber-optik-fig-8-mini-4612-core-42mm65mm/', kategori: 'Optical Fiber Cable', keywords: ['fig 8 mini kecil', 'gyxtc8y 4.2mm'] },
+  { nama: 'Kabel Fiber Optik FIG-8 MINI 24 CORE 4 TUBE 6,1MM×11,1MM', url: 'https://falcom-technology.com/products/kabel-fiber-optik-fig-8-mini-24-core-4-tube-61mm111mm/', kategori: 'Optical Fiber Cable', keywords: ['fig 8 mini 24 core', 'gyxtc8y 24 core 4 tube'] },
+  { nama: 'Kabel fiber optik FIG-8 MINI 2 Core 3,6mm×6,2mm', url: 'https://falcom-technology.com/products/kabel-fiber-optik-fig-8-mini-2-core-36mm62mm/', kategori: 'Optical Fiber Cable', keywords: ['fig 8 mini 2 core'] },
+  // Optical Fiber Cable — FIG-8 ARMORED GYXTC8S
+  { nama: 'KABEL FIBER OPTIK FIG-8 ARMORED 48 Core 9.3mm×15.5mm GYTC8S', url: 'https://falcom-technology.com/products/kabel-fiber-optik-fig-8-armored-48-core-9-3-mm15-5mm-gytc8s/', kategori: 'Optical Fiber Cable', keywords: ['fig 8 armored 48 core', 'gytc8s besar'] },
+  { nama: 'KABEL FIBER OPTIK FIG-8 ARMORED 4,6,12 Core 7mm×13.1mm', url: 'https://falcom-technology.com/products/kabel-fiber-optik-fig-8-armored-4612-core-7mm13-1mm/', kategori: 'Optical Fiber Cable', keywords: ['fig 8 armored 4 6 12 core', 'anti tikus'] },
+  { nama: 'KABEL FIBER OPTIK FIG-8 ARMORED 4,6,12 Core 5mm×10.4mm', url: 'https://falcom-technology.com/products/kabel-fiber-optik-fig-8-armored-4612-core-5mm10-4mm/', kategori: 'Optical Fiber Cable', keywords: ['fig 8 armored kecil 5mm'] },
+  { nama: 'KABEL FIBER OPTIK FIG-8 ARMORED 24 Core 8.5mm×15mm GYTC8S', url: 'https://falcom-technology.com/products/kabel-fiber-optik-fig-8-armored-24-core-8-5mm15mm-gytc8s/', kategori: 'Optical Fiber Cable', keywords: ['fig 8 armored 24 core'] },
+  // Optical Fiber Cable — ARMORED GYXTW
+  { nama: 'KABEL FIBER OPTIK NON ARMORED 2,4,6 CORE 6,2mm', url: 'https://falcom-technology.com/products/kabel-fiber-optik-non-armored-246-core-62mm/', kategori: 'Optical Fiber Cable', keywords: ['kabel fo non armored', 'kabel fiber tanpa lapis baja', 'gyxtw non armored'] },
+  { nama: 'Kabel fiber optik ARMORED 24 CORE 4000M', url: 'https://falcom-technology.com/products/kabel-fiber-optik-armored-24-core-4000m/', kategori: 'Optical Fiber Cable', keywords: ['kabel armored 24 core', 'gyxtw 24 core 4000m'] },
+  { nama: 'Kabel fiber optik ARMORED 2,4,6,12 Core 6.2mm', url: 'https://falcom-technology.com/products/kabel-fiber-optik-armored-24612-core-6-2mm/', kategori: 'Optical Fiber Cable', keywords: ['kabel armored 2 4 6 12 core', 'lapis besi anti tikus'] },
+  { nama: 'Kabel fiber optik ARMORED 12 CORE 9,5MM, 4000M', url: 'https://falcom-technology.com/products/kabel-fiber-optik-armored-12-core-95mm-4000m/', kategori: 'Optical Fiber Cable', keywords: ['kabel armored 12 core 4000m'] },
+  // Optical Fiber Cable — ADSS
+  { nama: 'Kabel Fiber Optik MINI ADSS 12 CORE – 1 TUBE', url: 'https://falcom-technology.com/products/kabel-fiber-optik-mini-adss-12-core-1-tube/', kategori: 'Optical Fiber Cable', keywords: ['kabel adss 12 core', 'adss mini 1 tube', 'fiber optik aerial 12 core', 'kabel fo tanpa penggantung'] },
+  { nama: 'Kabel fiber optik ADSS 6 CORE – 1 TUBE', url: 'https://falcom-technology.com/products/kabel-fiber-optik-adss-6-core-1-tube/', kategori: 'Optical Fiber Cable', keywords: ['kabel adss 6 core', 'adss 1 tube'] },
+  { nama: 'Kabel Fiber Optik ADSS 48 CORE – 4 TUBE', url: 'https://falcom-technology.com/products/kabel-fiber-optik-adss-48-core-4-tube/', kategori: 'Optical Fiber Cable', keywords: ['kabel adss 48 core backbone'] },
+  { nama: 'Kabel Fiber Optik ADSS 24 CORE – 4 TUBE', url: 'https://falcom-technology.com/products/kabel-fiber-optik-adss-24-core-4-tube/', kategori: 'Optical Fiber Cable', keywords: ['kabel adss 24 core'] },
+  { nama: 'Kabel Fiber Optik ADSS 12 CORE – 2 TUBE', url: 'https://falcom-technology.com/products/kabel-fiber-optik-adss-12-core-2-tube/', kategori: 'Optical Fiber Cable', keywords: ['kabel adss 12 core 2 tube'] },
+  // Optical Fiber Cable — PRECON / DROPCABLE
+  { nama: 'PRECON kabel fiber optik / DROPCABLE 50,75,100,150m SC APC', url: 'https://falcom-technology.com/products/kabel-fiber-optik-precon-dropcable-5075100150m-sc-apc/', kategori: 'Optical Fiber Cable', keywords: ['precon sc apc', 'dropcable konektor apc', 'patchcord precon 50-150m'] },
+  { nama: 'kabel fiber optik PRECON / DROPCABLE 50,75,100,125,150,200m SC UPC', url: 'https://falcom-technology.com/products/kabel-fiber-optik-precon-dropcable-5075100125150200m-sc-upc/', kategori: 'Optical Fiber Cable', keywords: ['precon sc upc', 'dropcable konektor upc', 'patchcord precon 200m'] },
+
+  // LAN Cable — CAT5E
+  { nama: 'Kabel Lan UTP LAN CAT5E INDOOR', url: 'https://falcom-technology.com/products/kabel-lan-utp-lan-cat5e-indoor/', kategori: 'LAN Cable', keywords: ['kabel lan cat5e indoor', 'utp cat5e dalam ruangan'] },
+  { nama: 'Kabel Lan NEW FTP LAN CAT 5E OUTDOOR', url: 'https://falcom-technology.com/products/kabel-lan-new-ftp-lan-cat-5e-outdoor/', kategori: 'LAN Cable', keywords: ['kabel lan cat5e outdoor ftp'] },
+  { nama: 'KABEL LAN FTP CAT5E OUTDOOR FALCOM', url: 'https://falcom-technology.com/products/kabel-lan-ftp-cat5e-outdoor-falcom/', kategori: 'LAN Cable', keywords: ['kabel ftp cat5e outdoor falcom'] },
+  { nama: 'KABEL LAN FTP CAT5E INDOOR FALCOM', url: 'https://falcom-technology.com/products/kabel-lan-ftp-cat5e-indoor-falcom/', kategori: 'LAN Cable', keywords: ['kabel ftp cat5e indoor falcom'] },
+  // LAN Cable — CAT6
+  { nama: 'Kabel UTP LAN CAT6 PREMIUM INDOOR', url: 'https://falcom-technology.com/products/kabel-utp-lan-cat6-premium-indoor/', kategori: 'LAN Cable', keywords: ['kabel lan cat6 premium indoor'] },
+  { nama: 'KABEL LAN UTP CAT6 INDOOR FALCOM', url: 'https://falcom-technology.com/products/kabel-lan-utp-cat6-indoor-falcom/', kategori: 'LAN Cable', keywords: ['kabel lan cat6 utp indoor'] },
+  { nama: 'Kabel Lan FTP LAN CAT6 OUTDOOR', url: 'https://falcom-technology.com/products/kabel-lan-ftp-lan-cat6-outdoor/', kategori: 'LAN Cable', keywords: ['kabel lan cat6 outdoor ftp'] },
+  { nama: 'KABEL LAN FTP CAT 6 OUTDOOR FALCOM', url: 'https://falcom-technology.com/products/kabel-lan-ftp-cat-6-outdoor-falcom/', kategori: 'LAN Cable', keywords: ['kabel ftp cat6 outdoor falcom'] },
+  { nama: 'Kabel FTP LAN CAT6 INDOOR', url: 'https://falcom-technology.com/products/kabel-ftp-lan-cat6-indoor/', kategori: 'LAN Cable', keywords: ['kabel ftp cat6 indoor'] },
+
+  // Coaxial Cable — RG 6
+  { nama: 'Kabel koaksial RG F698 BV', url: 'https://falcom-technology.com/products/kabel-koaksial-rg-f698-bv/', kategori: 'Coaxial Cable', keywords: ['kabel coax rg6 f698 bv', 'kabel antena rg6'] },
+  { nama: 'Kabel koaksial RG F695 BEM', url: 'https://falcom-technology.com/products/kabel-koaksial-rg-f695-bem/', kategori: 'Coaxial Cable', keywords: ['kabel coax rg6 f695 bem'] },
+  { nama: 'Kabel koaksial RG F695 BE', url: 'https://falcom-technology.com/products/kabel-koaksial-rg-f695-be/', kategori: 'Coaxial Cable', keywords: ['kabel coax rg6 f695 be'] },
+  { nama: 'Kabel koaksial RG F675 BE', url: 'https://falcom-technology.com/products/kabel-koaksial-rg-f675-be/', kategori: 'Coaxial Cable', keywords: ['kabel coax rg6 f675 be'] },
+  { nama: 'Kabel koaksial RG 6 PRO', url: 'https://falcom-technology.com/products/kabel-koaksial-rg-6-pro/', kategori: 'Coaxial Cable', keywords: ['kabel coax rg6 pro', 'kabel antena tv pro'] },
+  // Coaxial Cable — RG 11
+  { nama: 'Kabel koaksial RG 1195 BEM FCCS', url: 'https://falcom-technology.com/products/kabel-koaksial-rg-1195-bem-fccs/', kategori: 'Coaxial Cable', keywords: ['kabel coax rg11 fccs'] },
+  { nama: 'Kabel koaksial RG 1195 BEM CCS', url: 'https://falcom-technology.com/products/kabel-koaksial-rg-1195-bem-ccs/', kategori: 'Coaxial Cable', keywords: ['kabel coax rg11 ccs', 'kabel backbone catv'] },
+
+  // Fiberoptic Accessories — ODF/OTB
+  { nama: 'ODF/OTB 24 CORE SC UPC, 1U + 24 PIGTAIL', url: 'https://falcom-technology.com/products/odf-otb-24-core-sc-upc-1u-24-pigtail/', kategori: 'Fiberoptic Accessories', keywords: ['odf 24 core upc', 'otb 24 port', 'terminal box fiber 24 core'] },
+  { nama: 'ODF/OTB 24CORE SC APC 1U+24 PIGTAIL', url: 'https://falcom-technology.com/products/odf-24-core/', kategori: 'Fiberoptic Accessories', keywords: ['odf 24 core apc'] },
+  { nama: 'ODF/OTB 48CORE SC APC 2U+48 PIGTAIL', url: 'https://falcom-technology.com/products/odc-48-core/', kategori: 'Fiberoptic Accessories', keywords: ['odf 48 core apc'] },
+  { nama: 'ODF/OTB 96 CORE 4U 8 TRAY X 12 CORE SC APC+96 PIGTAIL', url: 'https://falcom-technology.com/products/odf-96-core/', kategori: 'Fiberoptic Accessories', keywords: ['odf 96 core apc'] },
+  { nama: 'ODF/OTB 96 CORE,4U 8 TRAY x 12 CORE SC UPC + 96 PIGTAIL', url: 'https://falcom-technology.com/products/odf-otb-96-core4u-8-tray-x-12-core-sc-upc-96-pigtail/', kategori: 'Fiberoptic Accessories', keywords: ['odf 96 core upc'] },
+  // Fiberoptic Accessories — ODP
+  { nama: 'ODP Kapsul 16 port 2 in 1', url: 'https://falcom-technology.com/products/odp-kapsul-16-port-2-in-1/', kategori: 'Fiberoptic Accessories', keywords: ['odp kapsul 16 port', 'kotak pembagi fiber kapsul'] },
+  { nama: 'ODP KAPSUL', url: 'https://falcom-technology.com/products/odp-kapsul/', kategori: 'Fiberoptic Accessories', keywords: ['odp kapsul polos'] },
+  { nama: 'ODP 8 PORT ADAPTER WHITE', url: 'https://falcom-technology.com/products/odp-8-port-adapter-white/', kategori: 'Fiberoptic Accessories', keywords: ['odp 8 port putih'] },
+  { nama: 'ODP 8 PORT ADAPTER', url: 'https://falcom-technology.com/products/odp-8-port-adapter/', kategori: 'Fiberoptic Accessories', keywords: ['odp 8 port adapter'] },
+  { nama: 'ODP 8 CORE TYPE BOX PLC PUTIH', url: 'https://falcom-technology.com/products/odp-8-core-type-box-plc-putih/', kategori: 'Fiberoptic Accessories', keywords: ['odp 8 core box plc putih'] },
+  { nama: 'ODP 8 CORE TYPE ADAPTER PUTIH', url: 'https://falcom-technology.com/products/odp-8-core-type-adapter-putih/', kategori: 'Fiberoptic Accessories', keywords: ['odp 8 core adapter putih'] },
+  { nama: 'ODP 8 CORE TYPE 2 IN 1 PUTIH', url: 'https://falcom-technology.com/products/odp-8-core-type-2-in-1-putih/', kategori: 'Fiberoptic Accessories', keywords: ['odp 8 core 2in1 putih'] },
+  { nama: 'ODP 8 CORE TYPE 2 IN 1 HITAM', url: 'https://falcom-technology.com/products/odp-8-core-type-2-in-1-hitam/', kategori: 'Fiberoptic Accessories', keywords: ['odp 8 core 2in1 hitam'] },
+  { nama: 'ODP 24 CORE TYPE ADAPTER PUTIH', url: 'https://falcom-technology.com/products/odp-24-core-type-adapter-putih/', kategori: 'Fiberoptic Accessories', keywords: ['odp 24 core adapter putih'] },
+  { nama: 'ODP 2 in 1 Cassette Adapter 24 Port', url: 'https://falcom-technology.com/products/odp-2-in-1-cassette-adapter-24-port/', kategori: 'Fiberoptic Accessories', keywords: ['odp cassette 24 port'] },
+  { nama: 'ODP 16 PORT ADAPTER – GRAY', url: 'https://falcom-technology.com/products/odp-16-port-adapter-gray/', kategori: 'Fiberoptic Accessories', keywords: ['odp 16 port abu-abu'] },
+  { nama: 'ODP 16 CORE TYPE 2 IN 1 PUTIH', url: 'https://falcom-technology.com/products/odp-16-core-type-2-in-1-putih/', kategori: 'Fiberoptic Accessories', keywords: ['odp 16 core 2in1 putih'] },
+  { nama: 'ODP 16 CORE DOUBLE LOCK TIPE BOX PLC PUTIH', url: 'https://falcom-technology.com/products/odp-16-core-double-lock-tipe-box-plc-putih/', kategori: 'Fiberoptic Accessories', keywords: ['odp 16 core double lock putih'] },
+  { nama: 'ODP 16 CORE DOUBLE LOCK TIPE BOX PLC HITAM', url: 'https://falcom-technology.com/products/odp-16-core-double-lock-tipe-box-plc-hitam/', kategori: 'Fiberoptic Accessories', keywords: ['odp 16 core double lock hitam'] },
+  // Fiberoptic Accessories — ODC
+  { nama: 'ODC 96 CORE 24XPLC 1*4 SC APC, PLAT BESI+KLEM TIANG', url: 'https://falcom-technology.com/products/odc-96-core-plc-1x4x24-set/', kategori: 'Fiberoptic Accessories', keywords: ['odc 96 core tiang', 'odc plc 1x4 24 set'] },
+  { nama: 'ODC 96 CORE', url: 'https://falcom-technology.com/products/odc-96-core/', kategori: 'Fiberoptic Accessories', keywords: ['odc 96 core polos'] },
+  { nama: 'ODC 32K, 4x SC/UPC PLC 3x (1*2) + 2x STAINLESS PLATE', url: 'https://falcom-technology.com/products/odc-32k-4x-sc-upc-plc-3x-12-2x-stainless-plate/', kategori: 'Fiberoptic Accessories', keywords: ['odc 32 core upc stainless'] },
+  { nama: 'ODC 32K, 4x SC/APC PLC 3x (1*2) + 2x STAINLESS PLATE', url: 'https://falcom-technology.com/products/odc-32k-4x-sc-apc-plc-3x-12-2x-stainless-plate/', kategori: 'Fiberoptic Accessories', keywords: ['odc 32 core apc stainless'] },
+  // Fiberoptic Accessories — Splitter Optic Rasio APC & UPC
+  { nama: 'SPLITTER OPTIK 2 WAY R SC/UPC', url: 'https://falcom-technology.com/products/splitter-optik-2-way-r-sc-upc/', kategori: 'Fiberoptic Accessories', keywords: ['splitter optik 2 way upc'] },
+  { nama: 'SPLITTER OPTIK 2 WAY R SC/APC', url: 'https://falcom-technology.com/products/splitter-optik-2-way-r-sc-apc/', kategori: 'Fiberoptic Accessories', keywords: ['splitter optik 2 way apc'] },
+  { nama: 'SPLITTER OPTIC PLC 1*2, 1*4, 1*8 SC/UPC', url: 'https://falcom-technology.com/products/splitter-optic-plc-sc-upc/', kategori: 'Fiberoptic Accessories', keywords: ['splitter plc 1x2 1x4 1x8 upc'] },
+  // Fiberoptic Accessories — Splitter Optic PLC
+  { nama: 'Splitter Optic PLC 1*8 Steeltube type UPC', url: 'https://falcom-technology.com/products/splitter-optic-plc-1-8-steel-tube-type-upc/', kategori: 'Fiberoptic Accessories', keywords: ['splitter plc 1x8 steeltube upc'] },
+  { nama: 'Splitter Optic PLC 1*8 Cassette (Box) Type SC UPC', url: 'https://falcom-technology.com/products/splitter-optic-plc-1-8-cassette-type-sc-upc/', kategori: 'Fiberoptic Accessories', keywords: ['splitter plc 1x8 cassette upc'] },
+  { nama: 'Splitter Optic PLC 1*8 Cassette (Box) type SC APC', url: 'https://falcom-technology.com/products/splitter-optic-plc-18-cassette-box-type-sc-apc/', kategori: 'Fiberoptic Accessories', keywords: ['splitter plc 1x8 cassette apc'] },
+  { nama: 'Splitter Optic PLC 1*4 Steeltube type UPC', url: 'https://falcom-technology.com/products/splitter-optic-plc-1-4-steel-tube-type-upc/', kategori: 'Fiberoptic Accessories', keywords: ['splitter plc 1x4 steeltube upc'] },
+  { nama: 'Splitter Optic PLC 1*2 Steeltube type UPC', url: 'https://falcom-technology.com/products/splitter-optic-plc-12-steel-tube-type-upc/', kategori: 'Fiberoptic Accessories', keywords: ['splitter plc 1x2 steeltube upc'] },
+  { nama: 'Splitter Optic PLC 1*16 Cassette (Box) Type SC UPC', url: 'https://falcom-technology.com/products/splitter-optic-plc-116-cassette-box-type-sc-upc/', kategori: 'Fiberoptic Accessories', keywords: ['splitter plc 1x16 cassette upc'] },
+  { nama: 'Splitter Optic PLC 1*16 Cassette (Box) type SC APC', url: 'https://falcom-technology.com/products/splitter-optic-plc-116-cassette-box-type-sc-apc/', kategori: 'Fiberoptic Accessories', keywords: ['splitter plc 1x16 cassette apc'] },
+  { nama: 'PLC SPLITTER CASSETTE BOX SC/UPC 1X4', url: 'https://falcom-technology.com/products/plc-splitter-cassette-box-sc-upc-1x4/', kategori: 'Fiberoptic Accessories', keywords: ['plc splitter box 1x4 upc'] },
+  { nama: 'PLC SPLITTER CASSETTE BOX SC/UPC 1X2', url: 'https://falcom-technology.com/products/plc-splitter-cassette-box-sc-upc-1x2/', kategori: 'Fiberoptic Accessories', keywords: ['plc splitter box 1x2 upc'] },
+  { nama: 'PLC SPLITTER CASSETTE BOX SC/UPC 1X16', url: 'https://falcom-technology.com/products/plc-splitter-cassette-box-sc-upc-1x16/', kategori: 'Fiberoptic Accessories', keywords: ['plc splitter box 1x16 upc'] },
+  // Fiberoptic Accessories — Joint Closure
+  { nama: 'Vertical Mini Joint closure 12 / 24 / 48 Core', url: 'https://falcom-technology.com/products/vertical-mini-joint-closure-12-core/', kategori: 'Fiberoptic Accessories', keywords: ['joint closure vertical mini', 'jc 12 24 48 core'] },
+  { nama: 'JOINT CLOSURE HORIZONTAL 4 TRAY 48 Core', url: 'https://falcom-technology.com/products/joint-closure-horizontal-4-tray-48-core/', kategori: 'Fiberoptic Accessories', keywords: ['jc horizontal 48 core 4 tray'] },
+  { nama: 'JOINT CLOSURE HORIZONTAL 2 TRAY 24 CORE', url: 'https://falcom-technology.com/products/joint-closure-horizontal-2-tray-24-core/', kategori: 'Fiberoptic Accessories', keywords: ['jc horizontal 24 core 2 tray'] },
+  { nama: 'Joint Closure GPG-G Horizontal', url: 'https://falcom-technology.com/products/joint-closure-gpg-g-horizontal/', kategori: 'Fiberoptic Accessories', keywords: ['joint closure gpg-g'] },
+  { nama: 'JOINT CLOSURE DOME 6 TRAY 96 – 144 CORE', url: 'https://falcom-technology.com/products/joint-closure-dome-6-tray-96-144-core/', kategori: 'Fiberoptic Accessories', keywords: ['jc dome 96-144 core besar'] },
+  { nama: 'JOINT CLOSURE DOME 4 TRAY 96 CORE', url: 'https://falcom-technology.com/products/joint-closure-dome-4-tray-96-core/', kategori: 'Fiberoptic Accessories', keywords: ['jc dome 96 core 4 tray'] },
+  { nama: 'JOINT CLOSURE DOME 2 TRAY 24 CORE', url: 'https://falcom-technology.com/products/joint-closure-dome-2-tray-24-core/', kategori: 'Fiberoptic Accessories', keywords: ['jc dome 24 core kecil'] },
+  { nama: 'JOINT CLOSURE 1 CORE TYPE SLEEVE', url: 'https://falcom-technology.com/products/joint-closure-1-core-type-sleeve/', kategori: 'Fiberoptic Accessories', keywords: ['jc 1 core sleeve'] },
+  { nama: 'JOINT CLOSURE 1 CORE TYPE ADAPTER', url: 'https://falcom-technology.com/products/joint-closure-1-core-type-adapter/', kategori: 'Fiberoptic Accessories', keywords: ['jc 1 core adapter'] },
+  { nama: 'Horizontal Mini Joint closure 12 Core B', url: 'https://falcom-technology.com/products/horizontal-mini-joint-closure-12-core-b/', kategori: 'Fiberoptic Accessories', keywords: ['jc horizontal mini 12 core'] },
+
+  // EPON/GPON (OLT) — OLT EPON
+  { nama: 'OLT EPON 4 PON FASTLINK + SFP PX20+++++', url: 'https://falcom-technology.com/products/olt-epon-4-pon-fastlink-sfp-px20/', kategori: 'EPON/GPON', keywords: ['olt epon 4 pon fastlink', 'olt epon sfp px20'] },
+  { nama: 'OLT EPON 4 PON AC/DC FASTLINK + SFP PX20+++++', url: 'https://falcom-technology.com/products/olt-epon-4-pon-ac-dc-fastlink-sfp-px20/', kategori: 'EPON/GPON', keywords: ['olt epon 4 pon dual power ac dc'] },
+  { nama: 'OLT EPON 2 PON FASTLINK + SFP PX20+++++ 9DB', url: 'https://falcom-technology.com/products/olt-epon-2-pon-fastlink-sfp-px20-9db/', kategori: 'EPON/GPON', keywords: ['olt epon 2 pon 9db'] },
+  { nama: 'OLT EPON 2 PON FASTLINK', url: 'https://falcom-technology.com/products/olt-epon-2-pon-fastlink/', kategori: 'EPON/GPON', keywords: ['olt epon 2 pon fastlink polos'] },
+  // EPON/GPON (OLT) — OLT GPON
+  { nama: 'OLT OUTDOOR GPON 8 PON GPT-F88I FASTLINK', url: 'https://falcom-technology.com/products/olt-outdoor-gpon-8-pon-gpt-f88i-fastlink/', kategori: 'EPON/GPON', keywords: ['olt gpon outdoor 8 pon', 'olt tahan cuaca'] },
+  { nama: 'OLT GPON 8 PON FASTLINK + SPF C+++', url: 'https://falcom-technology.com/products/olt-gpon-8-pon-fastlink-spf-c/', kategori: 'EPON/GPON', keywords: ['olt gpon 8 pon sfp'] },
+  { nama: 'OLT GPON 8 PON FASTLINK + 8X SFP C+++', url: 'https://falcom-technology.com/products/olt-gpon-8-pon-fastlink-8x-sfp-c/', kategori: 'EPON/GPON', keywords: ['olt gpon 8 pon 8 sfp'] },
+  { nama: 'OLT GPON 8 PON FASTLINK', url: 'https://falcom-technology.com/products/olt-gpon-8-pon-fastlink/', kategori: 'EPON/GPON', keywords: ['olt gpon 8 pon polos'] },
+  { nama: 'OLT GPON 4 PON FASTLINK Dual power supply', url: 'https://falcom-technology.com/products/olt-gpon-4-pon-fastlink-dual-power-supply/', kategori: 'EPON/GPON', keywords: ['olt gpon 4 pon dual power'] },
+  { nama: 'OLT GPON 3 PON FASTLINK', url: 'https://falcom-technology.com/products/olt-gpon-3-pon-fastlink/', kategori: 'EPON/GPON', keywords: ['olt gpon 3 pon'] },
+  { nama: 'OLT GPON 2 PON FASTLINK', url: 'https://falcom-technology.com/products/olt-gpon-2-pon-fastlink/', kategori: 'EPON/GPON', keywords: ['olt gpon 2 pon'] },
+  { nama: 'OLT GPON 1 PON FASTLINK', url: 'https://falcom-technology.com/products/olt-gpon-1-pon-fastlink/', kategori: 'EPON/GPON', keywords: ['olt gpon 1 pon kecil'] },
+  { nama: 'OLT GPON 1 PON AC/DC FTB-1200 FASTLINK', url: 'https://falcom-technology.com/products/olt-gpon-1-pon-ac-dc-ftb-1200-fastlink/', kategori: 'EPON/GPON', keywords: ['olt gpon 1 pon ftb-1200'] },
+
+  // ONU/ONT — XPON
+  { nama: 'ONU XPON HG8546M', url: 'https://falcom-technology.com/products/hg8546m-xpon-terminal/', kategori: 'ONU/ONT', keywords: ['onu hg8546m', 'ont xpon', 'modem gpon hg8546'] },
+  { nama: 'ONU XPON GPNFOC', url: 'https://falcom-technology.com/products/onu-xpon-dkb-180-fastlink/', kategori: 'ONU/ONT', keywords: ['onu gpnfoc', 'ont dual epon gpon', 'onu 1fe 1ge wifi'] },
+  { nama: 'ONU XPON FASTLINK DKB 180', url: 'https://falcom-technology.com/products/onu-xpon-fastlink-dkb-180/', kategori: 'ONU/ONT', keywords: ['onu fastlink dkb 180', 'ont xpon dkb-180'] },
+  { nama: 'ONU XPON CGW-77', url: 'https://falcom-technology.com/products/onu-cgw77/', kategori: 'ONU/ONT', keywords: ['onu cgw-77', 'ont xpon cgw77'] },
+  { nama: 'ONU FASTLINK FL327D WIFI 6 – 4 Antena', url: 'https://falcom-technology.com/products/onu-fastlink-fl327d-wifi-6-4-antena/', kategori: 'ONU/ONT', keywords: ['onu fl327d wifi6 4 antena', 'ont wifi 6 4 antena'] },
+  { nama: 'ONU FASTLINK FL327D WIFI 6 – 2 Antena', url: 'https://falcom-technology.com/products/onu-fastlink-fl327d-wifi-6-2-antena/', kategori: 'ONU/ONT', keywords: ['onu fl327d wifi6 2 antena'] },
+  { nama: 'ONU FASTLINK FL327D WIFI 5', url: 'https://falcom-technology.com/products/onu-fastlink-fl327d-wifi-5/', kategori: 'ONU/ONT', keywords: ['onu fl327d wifi5'] },
+
+  // Transmitter & EDFA — EDFA
+  { nama: 'EYDFA WDM 8 23DBM FASTLINK', url: 'https://falcom-technology.com/products/eydfa-wdm-8-23dbm-fastlink/', kategori: 'Transmitter & EDFA', keywords: ['edfa 8 output 23dbm', 'eydfa wdm 8'] },
+  { nama: 'EYDFA WDM 4 23dBM FASTLINK', url: 'https://falcom-technology.com/products/eydfa-wdm-4-23dbm-fastlink/', kategori: 'Transmitter & EDFA', keywords: ['edfa 4 output 23dbm'] },
+  { nama: 'EYDFA WDM 32 23dBm FASTLINK', url: 'https://falcom-technology.com/products/eydfa-wdm-32-23dbm-fastlink/', kategori: 'Transmitter & EDFA', keywords: ['edfa 32 output', 'eydfa besar'] },
+  { nama: 'EYDFA WDM 16 23DBM FASTLINK', url: 'https://falcom-technology.com/products/eydfa-wdm-16-23dbm-fastlink/', kategori: 'Transmitter & EDFA', keywords: ['edfa 16 output 23dbm'] },
+  // Transmitter & EDFA — Transmitter
+  { nama: 'TRANSMITTER 1550 nm', url: 'https://falcom-technology.com/products/transmitter-1550-nm/', kategori: 'Transmitter & EDFA', keywords: ['transmitter optik 1550nm'] },
+  { nama: 'TRANSMITTER 1550', url: 'https://falcom-technology.com/products/transmitter-1550/', kategori: 'Transmitter & EDFA', keywords: ['transmitter 1550 varian lain'] },
+  { nama: 'MINI OPTICAL TRANSMITTER 1310nm – 1550nm', url: 'https://falcom-technology.com/products/mini-optical-transmitter-1310nm-1550nm/', kategori: 'Transmitter & EDFA', keywords: ['mini transmitter optik 1310 1550nm'] },
+
+  // Analog Digital — Analog Headend
+  { nama: 'CATV Modulator FC 963B', url: 'https://falcom-technology.com/products/catv-modulator-fc-963b/', kategori: 'Analog Digital', keywords: ['modulator catv fc963b'] },
+  { nama: 'CATV MODULATOR E-204', url: 'https://falcom-technology.com/products/catv-modulator-e-204/', kategori: 'Analog Digital', keywords: ['modulator catv e204'] },
+  { nama: 'CATV Modulator E-203', url: 'https://falcom-technology.com/products/catv-modulator-e-203/', kategori: 'Analog Digital', keywords: ['modulator catv e203'] },
+  { nama: 'CATV Agile Modulator E-990H', url: 'https://falcom-technology.com/products/catv-agile-modulator-e-990h/', kategori: 'Analog Digital', keywords: ['modulator agile catv e990h'] },
+  // Analog Digital — Digital Headend
+  { nama: 'IPQAM 16 Channel', url: 'https://falcom-technology.com/products/ipqam-edge-qam-16-channel/', kategori: 'Analog Digital', keywords: ['ipqam 16 channel', 'edge qam'] },
+  { nama: 'Digital CMP100 16 slot', url: 'https://falcom-technology.com/products/digital-cmp100-16-slot/', kategori: 'Analog Digital', keywords: ['digital headend cmp100 16 slot'] },
+  { nama: 'Digital CMP 203 6 SLOT', url: 'https://falcom-technology.com/products/digital-cmp-203/', kategori: 'Analog Digital', keywords: ['digital headend cmp203 6 slot'] },
+  // Analog Digital — STB
+  { nama: 'Set Top Box Falcom', url: 'https://falcom-technology.com/products/set-top-box-falcom/', kategori: 'Analog Digital', keywords: ['stb falcom', 'set top box tv kabel'] },
+
+  // HFC — CATV Amplifier
+  { nama: 'Amplifier S50', url: 'https://falcom-technology.com/products/amplifier-s50/', kategori: 'HFC', keywords: ['amplifier catv s50'] },
+  { nama: 'Amplifier S400', url: 'https://falcom-technology.com/products/amplifier-s400/', kategori: 'HFC', keywords: ['amplifier catv s400'] },
+  { nama: 'Amplifier S300', url: 'https://falcom-technology.com/products/amplifier-s300/', kategori: 'HFC', keywords: ['amplifier catv s300'] },
+  { nama: 'Amplifier RSUZ', url: 'https://falcom-technology.com/products/amplifier-rsuz/', kategori: 'HFC', keywords: ['amplifier rsuz'] },
+  { nama: 'Amplifier G400A', url: 'https://falcom-technology.com/products/amplifier-g400a/', kategori: 'HFC', keywords: ['amplifier g400a'] },
+  { nama: 'Amplifier G300A', url: 'https://falcom-technology.com/products/amplifier-g300a/', kategori: 'HFC', keywords: ['amplifier g300a'] },
+  { nama: 'Amplifier FSA H500A', url: 'https://falcom-technology.com/products/amplifier-fsa-h500a/', kategori: 'HFC', keywords: ['amplifier fsa h500a'] },
+  { nama: 'Amplifier D500', url: 'https://falcom-technology.com/products/amplifier-d500/', kategori: 'HFC', keywords: ['amplifier d500'] },
+  { nama: 'Amplifier CLS3', url: 'https://falcom-technology.com/products/amplifier-cls3/', kategori: 'HFC', keywords: ['amplifier cls3'] },
+  { nama: 'Amplifier CLS1', url: 'https://falcom-technology.com/products/amplifier-cls1/', kategori: 'HFC', keywords: ['amplifier cls1'] },
+  // HFC — CATV Node
+  { nama: 'Node 860JL', url: 'https://falcom-technology.com/products/node-860jl/', kategori: 'HFC', keywords: ['catv node 860jl'] },
+  { nama: 'Node 800M', url: 'https://falcom-technology.com/products/node-800m/', kategori: 'HFC', keywords: ['catv node 800m'] },
+  { nama: 'Node 409A', url: 'https://falcom-technology.com/products/node-409a/', kategori: 'HFC', keywords: ['catv node 409a'] },
+  { nama: 'Node 303A', url: 'https://falcom-technology.com/products/node-303a/', kategori: 'HFC', keywords: ['catv node 303a'] },
+  // HFC — CATV Power Supply
+  { nama: 'Power Supply 5A 90VAC', url: 'https://falcom-technology.com/products/power-supply-5a-90-vac/', kategori: 'HFC', keywords: ['power supply catv 5a', 'adaptor catv 90vac'] },
+  { nama: 'Power Supply 15A 90VAC', url: 'https://falcom-technology.com/products/power-supply-15a-90vac/', kategori: 'HFC', keywords: ['power supply catv 15a'] },
+  // HFC — Connectors
+  { nama: 'Connector Entry to Entry', url: 'https://falcom-technology.com/products/connector-entry-to-entry/', kategori: 'HFC', keywords: ['konektor entry to entry coax'] },
+  { nama: 'Connector Feedthru', url: 'https://falcom-technology.com/products/connector-feedthru/', kategori: 'HFC', keywords: ['konektor feedthru coax'] },
+  { nama: 'Connector TV 1', url: 'https://falcom-technology.com/products/connector-tv-1/', kategori: 'HFC', keywords: ['konektor tv tipe 1'] },
+  { nama: 'Connector TV 2', url: 'https://falcom-technology.com/products/connector-tv-2/', kategori: 'HFC', keywords: ['konektor tv tipe 2'] },
+  { nama: 'Connector RG11 Drat Jarum', url: 'https://falcom-technology.com/products/connector-rg11-drat-jarum/', kategori: 'HFC', keywords: ['konektor rg11 drat jarum'] },
+  { nama: 'Connector RG6 Drat', url: 'https://falcom-technology.com/products/connector-rg6-drat/', kategori: 'HFC', keywords: ['konektor rg6 drat'] },
+  // HFC — Tap Indoor
+  { nama: 'Tap FIT 410', url: 'https://falcom-technology.com/products/tap-fit-410/', kategori: 'HFC', keywords: ['tap indoor fit410'] },
+  { nama: 'Splitter sinyal CATV FIT 420', url: 'https://falcom-technology.com/products/splitter-sinyal-catv-fit-420/', kategori: 'HFC', keywords: ['splitter catv fit420'] },
+  { nama: 'Splitter kabel koaksial Tap FIT 416', url: 'https://falcom-technology.com/products/splitter-kabel-koaksial-tap-fit-416/', kategori: 'HFC', keywords: ['tap splitter fit416'] },
+  { nama: 'Splitter kabel koaksial Tap FIT 414', url: 'https://falcom-technology.com/products/splitter-kabel-koaksial-tap-fit-414/', kategori: 'HFC', keywords: ['tap splitter fit414'] },
+  { nama: 'Splitter kabel koaksial Tap FIT 412', url: 'https://falcom-technology.com/products/splitter-kabel-koaksial-tap-fit-412/', kategori: 'HFC', keywords: ['tap splitter fit412'] },
+  { nama: 'RF Tap FIT 418', url: 'https://falcom-technology.com/products/rf-tap-fit-418/', kategori: 'HFC', keywords: ['rf tap fit418'] },
+  // HFC — Tap Outdoor
+  { nama: 'TAP OUTDOOR FOT 416 A', url: 'https://falcom-technology.com/products/tap-outdoor-fot-416-a/', kategori: 'HFC', keywords: ['tap outdoor fot416a'] },
+  { nama: 'Tap FOT 823 A', url: 'https://falcom-technology.com/products/tap-fot-823-a/', kategori: 'HFC', keywords: ['tap outdoor fot823a'] },
+  { nama: 'Tap FOT 820 A', url: 'https://falcom-technology.com/products/tap-fot-820-a/', kategori: 'HFC', keywords: ['tap outdoor fot820a'] },
+  { nama: 'Tap FOT 818 A', url: 'https://falcom-technology.com/products/tap-fot-818-a/', kategori: 'HFC', keywords: ['tap outdoor fot818a'] },
+  { nama: 'Tap FOT 817 A', url: 'https://falcom-technology.com/products/tap-fot-817-a/', kategori: 'HFC', keywords: ['tap outdoor fot817a'] },
+  { nama: 'Tap FOT 814 A', url: 'https://falcom-technology.com/products/tap-fot-814-a/', kategori: 'HFC', keywords: ['tap outdoor fot814a'] },
+  { nama: 'Tap FOT 812 A', url: 'https://falcom-technology.com/products/tap-fot-812-a/', kategori: 'HFC', keywords: ['tap outdoor fot812a'] },
+  { nama: 'Tap FOT 811 A', url: 'https://falcom-technology.com/products/tap-fot-811-a/', kategori: 'HFC', keywords: ['tap outdoor fot811a'] },
+  { nama: 'Tap FOT 414 A', url: 'https://falcom-technology.com/products/tap-fot-414-a/', kategori: 'HFC', keywords: ['tap outdoor fot414a'] },
+  { nama: 'Tap FOT 412 A', url: 'https://falcom-technology.com/products/tap-fot-412-a/', kategori: 'HFC', keywords: ['tap outdoor fot412a'] },
+  { nama: 'Splitter TAP OUDOOR FOT 810 A', url: 'https://falcom-technology.com/products/splitter-tap-oudoor-fot-810-a/', kategori: 'HFC', keywords: ['splitter tap outdoor fot810a'] },
+  { nama: 'Splitter TAP OUDOOR FOT 416 A', url: 'https://falcom-technology.com/products/splitter-tap-oudoor-fot-416-a/', kategori: 'HFC', keywords: ['splitter tap outdoor fot416a'] },
+  { nama: 'Splitter TAP OUDOOR FOT 220 A', url: 'https://falcom-technology.com/products/splitter-tap-oudoor-fot-220-a/', kategori: 'HFC', keywords: ['splitter tap outdoor fot220a'] },
+  { nama: 'Splitter TAP OUDOOR FOT 218 A', url: 'https://falcom-technology.com/products/splitter-tap-oudoor-fot-218-a/', kategori: 'HFC', keywords: ['splitter tap outdoor fot218a'] },
+  { nama: 'Splitter TAP OUDOOR FOT 216 A', url: 'https://falcom-technology.com/products/splitter-tap-oudoor-fot-216-a/', kategori: 'HFC', keywords: ['splitter tap outdoor fot216a'] },
+  { nama: 'Splitter TAP OUDOOR FOT 214 A', url: 'https://falcom-technology.com/products/splitter-tap-oudoor-fot-214-a/', kategori: 'HFC', keywords: ['splitter tap outdoor fot214a'] },
+  { nama: 'Splitter TAP OUDOOR FOT 212 A', url: 'https://falcom-technology.com/products/splitter-tap-oudoor-fot-212-a/', kategori: 'HFC', keywords: ['splitter tap outdoor fot212a'] },
+  { nama: 'Splitter TAP OUDOOR FOT 211 A', url: 'https://falcom-technology.com/products/splitter-tap-oudoor-fot-211-a/', kategori: 'HFC', keywords: ['splitter tap outdoor fot211a'] },
+  { nama: 'Splitter TAP OUDOOR FOT 210 A', url: 'https://falcom-technology.com/products/splitter-tap-oudoor-fot-210-a/', kategori: 'HFC', keywords: ['splitter tap outdoor fot210a'] },
+  { nama: 'Splitter TAP FOT 410 A', url: 'https://falcom-technology.com/products/splitter-tap-fot-410-a/', kategori: 'HFC', keywords: ['splitter tap fot410a'] },
+  // HFC — Splitter Indoor
+  { nama: 'Splitter FIS 408', url: 'https://falcom-technology.com/products/splitter-fis-408/', kategori: 'HFC', keywords: ['splitter indoor fis408'] },
+  { nama: 'Splitter FIS 306', url: 'https://falcom-technology.com/products/splitter-fis-306/', kategori: 'HFC', keywords: ['splitter indoor fis306'] },
+  { nama: 'Splitter FIS 204', url: 'https://falcom-technology.com/products/splitter-fis-204/', kategori: 'HFC', keywords: ['splitter indoor fis204'] },
+  // HFC — Splitter Outdoor
+  { nama: 'Tap FOS 204', url: 'https://falcom-technology.com/products/tap-fos-204/', kategori: 'HFC', keywords: ['tap outdoor fos204'] },
+  { nama: 'Splitter FOS 408', url: 'https://falcom-technology.com/products/splitter-fos-408/', kategori: 'HFC', keywords: ['splitter outdoor fos408'] },
+  { nama: 'Splitter FOS 306', url: 'https://falcom-technology.com/products/splitter-fos-306/', kategori: 'HFC', keywords: ['splitter outdoor fos306'] },
+
+  // Fiber Broadband Unit — FBE
+  { nama: 'ONB Optical Network Base 22', url: 'https://falcom-technology.com/products/onb-optical-network-base-22/', kategori: 'Fiber Broadband Unit', keywords: ['onb optical network base 22', 'fbe 22'] },
+  { nama: 'ONB Optical Network Base 20', url: 'https://falcom-technology.com/products/onb-optical-network-base-20/', kategori: 'Fiber Broadband Unit', keywords: ['onb optical network base 20', 'fbe 20'] },
+  // Fiber Broadband Unit — FBM
+  { nama: 'FBM-1501', url: 'https://falcom-technology.com/products/fbm-1501/', kategori: 'Fiber Broadband Unit', keywords: ['fbm-1501', 'fiber broadband master 1501'] },
+  { nama: 'FBM-1301', url: 'https://falcom-technology.com/products/fbm-1301/', kategori: 'Fiber Broadband Unit', keywords: ['fbm-1301', 'fiber broadband master 1301'] },
+  // Fiber Broadband Unit — Modem
+  { nama: 'MODEM ES 27 + WiFi', url: 'https://falcom-technology.com/products/modem-es-27-wifi/', kategori: 'Fiber Broadband Unit', keywords: ['modem es27 wifi', 'modem catv wifi'] },
+  { nama: 'MODEM BROADBAND 1 RF+1 ETH', url: 'https://falcom-technology.com/products/modem-broadband-1-rf1-eth/', kategori: 'Fiber Broadband Unit', keywords: ['modem broadband 1 rf 1 ethernet'] },
+
+  // Media Converter & Switch — Media Converter
+  { nama: 'Media Converter Netlink HTB-3100-AB', url: 'https://falcom-technology.com/products/media-converter-netlink-htb-3100-ab/', kategori: 'Media Converter & Switch', keywords: ['media converter netlink htb3100'] },
+  { nama: 'Media Converter FX-LINK', url: 'https://falcom-technology.com/products/media-converter-fx-link/', kategori: 'Media Converter & Switch', keywords: ['media converter fx-link'] },
+  { nama: 'MEDIA CONVERTER 10/100/1000 MBPS WOR-942ASS20-SC', url: 'https://falcom-technology.com/products/media-converter-10-100-1000-mbps-wor-942ass20-sc/', kategori: 'Media Converter & Switch', keywords: ['media converter gigabit wor942', 'media converter fiber ke ethernet gigabit'] },
+  { nama: 'MEDIA CONVERTER 10/100/1000 MBPS WOR-922ASS20-SC', url: 'https://falcom-technology.com/products/media-converter-10-100-1000-mbps-wor-922ass20-sc/', kategori: 'Media Converter & Switch', keywords: ['media converter gigabit wor922'] },
+  { nama: 'Media Converter 10/100 Mbps WOR-840ASS20-SC', url: 'https://falcom-technology.com/products/media-converter-10-100-mbps-wor-840ass20-sc/', kategori: 'Media Converter & Switch', keywords: ['media converter fast ethernet wor840'] },
+  { nama: 'Media Converter 10/100 Mbps WOR-810ASS20-SC', url: 'https://falcom-technology.com/products/media-converter-10100-mbps-wor-810ass20-sc/', kategori: 'Media Converter & Switch', keywords: ['media converter fast ethernet wor810'] },
+  // Media Converter & Switch — Switch
+  { nama: 'Switch 10/100 Mbps, WOR-SYF-08M, 8x RJ45', url: 'https://falcom-technology.com/products/switch-10-100-mbps-wor-syf-08m-8x-rj45/', kategori: 'Media Converter & Switch', keywords: ['switch 8 port fast ethernet', 'switch hub 8 port'] },
+  { nama: 'Switch 10/100 Mbps, WOR-SYF-05M, 5x RJ45', url: 'https://falcom-technology.com/products/fast-ethernet-switch/', kategori: 'Media Converter & Switch', keywords: ['switch 5 port fast ethernet'] },
+  { nama: 'Gigabit Ethernet Fiber Switch', url: 'https://falcom-technology.com/products/gigabit-ethernet-fiber-switch/', kategori: 'Media Converter & Switch', keywords: ['switch fiber gigabit', 'switch fiber optik'] },
+
+  // Wireless Access Point
+  { nama: 'Wireless-N WiFi Repeater Black', url: 'https://falcom-technology.com/products/wireless-n-wifi-repeater-black/', kategori: 'Wireless Access Point', keywords: ['wifi repeater hitam', 'penguat sinyal wifi wireless-n'] },
+  { nama: 'Wireless-N WiFi Repeater White', url: 'https://falcom-technology.com/products/wireless-repeater/', kategori: 'Wireless Access Point', keywords: ['wifi repeater putih'] },
+  { nama: 'Wireless Range Extender', url: 'https://falcom-technology.com/products/wireless-range-extender/', kategori: 'Wireless Access Point', keywords: ['wifi range extender', 'penguat jangkauan wifi'] },
+  { nama: 'Wireless Range Extender – White', url: 'https://falcom-technology.com/products/wireless-range-extender-white/', kategori: 'Wireless Access Point', keywords: ['wifi range extender putih'] },
+  { nama: 'Wireless Access Point Outdoor', url: 'https://falcom-technology.com/products/wireless-access-point-outdoor/', kategori: 'Wireless Access Point', keywords: ['access point outdoor', 'wap luar ruangan tahan cuaca'] },
+
+  // Tools & Spareparts — Spareparts
+  { nama: 'TUNER AGILE', url: 'https://falcom-technology.com/products/tuner-agile/', kategori: 'Tools & Spareparts', keywords: ['tuner agile catv'] },
+  { nama: 'TRAVO H500', url: 'https://falcom-technology.com/products/travo-h500/', kategori: 'Tools & Spareparts', keywords: ['travo trafo h500'] },
+  { nama: 'REGULATOR OLT', url: 'https://falcom-technology.com/products/regulator-olt/', kategori: 'Tools & Spareparts', keywords: ['regulator olt'] },
+  { nama: 'REGULATOR E203', url: 'https://falcom-technology.com/products/regulator-e203/', kategori: 'Tools & Spareparts', keywords: ['regulator e203'] },
+  { nama: 'REGULATOR D500', url: 'https://falcom-technology.com/products/regulator-d500/', kategori: 'Tools & Spareparts', keywords: ['regulator d500'] },
+  { nama: 'REGULATOR 963MW', url: 'https://falcom-technology.com/products/regulator-963mw/', kategori: 'Tools & Spareparts', keywords: ['regulator 963mw'] },
+  // Tools & Spareparts — Tools FTTH
+  { nama: 'TANGGA TELESKOPIK SILVER ROVER', url: 'https://falcom-technology.com/products/tangga-teleskopik-silver-rover/', kategori: 'Tools & Spareparts', keywords: ['tangga teleskopik silver', 'tangga lipat teknisi'] },
+  { nama: 'TANGGA TELESKOPIK DOUBLE LADDER BLACK EDITION ROVER', url: 'https://falcom-technology.com/products/tangga-teleskopik-double-ladder-black-edition-rover/', kategori: 'Tools & Spareparts', keywords: ['tangga double ladder hitam'] },
+  { nama: 'TANGGA TELESKOPIK BLACK EDITION ROVER', url: 'https://falcom-technology.com/products/tangga-teleskopik-black-edition-rover/', kategori: 'Tools & Spareparts', keywords: ['tangga teleskopik hitam'] },
+  { nama: 'TANG STRIPPER', url: 'https://falcom-technology.com/products/tang-stripper/', kategori: 'Tools & Spareparts', keywords: ['tang stripper kabel fo', 'alat kupas kabel fiber'] },
+  { nama: 'Tang Crimping Lan RJ11, RJ45 OW-TOOLS', url: 'https://falcom-technology.com/products/tang-crimping-lan-rj11-rj45-ow-tools/', kategori: 'Tools & Spareparts', keywords: ['tang crimping rj45 rj11'] },
+  { nama: 'Tang Crimping Lan RJ-45, RJ12, RJ11 OW-HT315', url: 'https://falcom-technology.com/products/tang-crimping-lan-rj-45-rj12-rj11-ow-ht315/', kategori: 'Tools & Spareparts', keywords: ['tang crimping rj45 rj12 ht315'] },
+  { nama: 'SPLICER OPTIC DVP 740D', url: 'https://falcom-technology.com/products/splicer-optic-dvp-740d/', kategori: 'Tools & Spareparts', keywords: ['fusion splicer dvp740d', 'alat sambung fiber'] },
+  { nama: 'SPLICER OPTIC AI-9', url: 'https://falcom-technology.com/products/splicer-optic-ai-9/', kategori: 'Tools & Spareparts', keywords: ['fusion splicer ai-9'] },
+  { nama: 'Optical Fusion Splicer KL-360T Backbone Jilong', url: 'https://falcom-technology.com/products/optical-fusion-splicer-kl-360e-backbone-jilong/', kategori: 'Tools & Spareparts', keywords: ['fusion splicer kl-360t jilong', 'splicer backbone'] },
+  { nama: 'Optical Fusion Splicer KL-280T FALCOM', url: 'https://falcom-technology.com/products/optical-fusion-splicer-kl-280t-falcom/', kategori: 'Tools & Spareparts', keywords: ['fusion splicer kl-280t falcom'] },
+  { nama: 'Optical Fusion Splicer 500E Compact FTTx', url: 'https://falcom-technology.com/products/fiber-fusion-splicer-500e-compact-fttx/', kategori: 'Tools & Spareparts', keywords: ['fusion splicer 500e compact fttx'] },
+  { nama: 'Optical Fusion Splicer 300T', url: 'https://falcom-technology.com/products/optical-fusion-splicer-300t/', kategori: 'Tools & Spareparts', keywords: ['fusion splicer 300t'] },
+  { nama: 'Optical Fusion Splicer 260t', url: 'https://falcom-technology.com/products/optical-fusion-splicer-260t/', kategori: 'Tools & Spareparts', keywords: ['fusion splicer 260t'] },
+  { nama: 'OPTIC POWER METER', url: 'https://falcom-technology.com/products/optic-power-meter/', kategori: 'Tools & Spareparts', keywords: ['power meter fiber optik', 'alat ukur redaman'] },
+  { nama: 'FUSION SPLICER TEKCN SUPER X', url: 'https://falcom-technology.com/products/fusion-splicer-tekcn-super-x/', kategori: 'Tools & Spareparts', keywords: ['fusion splicer tekcn super x'] },
+  { nama: 'Fiber Cleaver KL-23F', url: 'https://falcom-technology.com/products/fiber-cleaver-kl-23f/', kategori: 'Tools & Spareparts', keywords: ['cleaver kl-23f', 'alat potong fiber'] },
+  { nama: 'FIBER CLEAVER KL-21B', url: 'https://falcom-technology.com/products/fiber-cleaver-kl-21b/', kategori: 'Tools & Spareparts', keywords: ['cleaver kl-21b'] },
+  { nama: 'FIBER CLEAVER FC6S', url: 'https://falcom-technology.com/products/fiber-cleaver-fc6s/', kategori: 'Tools & Spareparts', keywords: ['cleaver fc6s'] },
+  { nama: 'DB METER FC1001', url: 'https://falcom-technology.com/products/db-meter-fc1001/', kategori: 'Tools & Spareparts', keywords: ['db meter fc1001', 'alat ukur db fiber'] },
+
+  // Rack
+  { nama: 'CLOSE RACK', url: 'https://falcom-technology.com/products/close-rack/', kategori: 'Rack', keywords: ['rack tertutup', 'close rack server'] },
+  { nama: 'OPEN RACK', url: 'https://falcom-technology.com/products/open-rack/', kategori: 'Rack', keywords: ['rack terbuka', 'open rack server'] },
+];
+
+// Loose match: what fraction of a keyword PHRASE's words appear anywhere in the message —
+// tolerates reordering, extra words, and partial phrasing (per user's matching rules), unlike a
+// strict substring check.
+function phraseMatchScore(phrase, nMsg) {
+  const words = phrase.toLowerCase().split(/\s+/).filter((w) => w.length >= 2);
+  if (!words.length) return 0;
+  const hits = words.filter((w) => nMsg.includes(w)).length;
+  return hits / words.length;
+}
+
+// Product catalog lookup — returns up to 5 best-matching products (ranked), or null if nothing
+// scores high enough. Kept separate from PRODUCT_CATEGORIES: this is for SPECIFIC product
+// questions ("ODP 16 port hitam"), categories handle broader ones ("kabel fiber optik apa saja").
+function findProductCatalogMatch(message) {
+  const nMsg = normText(message);
+  const scored = [];
+  for (const p of PRODUCT_CATALOG) {
+    let best = 0;
+    for (const kw of p.keywords) {
+      const s = phraseMatchScore(kw, nMsg);
+      if (s > best) best = s;
+    }
+    if (best >= 0.6) scored.push({ p, score: best });
+  }
+  if (!scored.length) return null;
+  scored.sort((a, b) => b.score - a.score);
+  return {
+    jumlahCocok: scored.length,
+    produk: scored.slice(0, 5).map((x) => ({ nama: x.p.nama, url: x.p.url, kategori: x.p.kategori })),
+  };
+}
+
 function matchReferences(message) {
   const nMsg = ` ${normText(message)} `; // padded so ' ap ' / ' rack ' style keywords can match at string edges
   const kategoriProduk = PRODUCT_CATEGORIES.filter((c) => c.keywords.some((kw) => nMsg.includes(kw)));
@@ -168,8 +491,10 @@ function matchReferences(message) {
   const wantsArticle = /\bartikel\b|berita teknis/.test(nMsg);
   const wantsSpec = /\bspek\b|spesifikasi|datasheet/.test(nMsg);
   const video = matchVideos(message);
-  const hasAnyMatch = kategoriProduk.length || solusiSistem.length || wantsTutorial || wantsArticle || video.teknis.length;
+  const produkSpesifik = findProductCatalogMatch(message);
+  const hasAnyMatch = kategoriProduk.length || solusiSistem.length || wantsTutorial || wantsArticle || video.teknis.length || produkSpesifik;
   return {
+    produkSpesifikCocok: produkSpesifik,
     kategoriProduk,
     solusiSistem,
     tutorialDanDukungan: wantsTutorial ? TUTORIAL_LINKS : [],
@@ -1377,7 +1702,8 @@ Aturan:
 - Pahami Bahasa Indonesia informal/sehari-hari dan istilah daerah (mis. "gimana" = "bagaimana", "kemarin" = hari sebelum ini, "pake"/"pakai" = sama). Jangan kaku pada ejaan baku.
 - Gunakan HISTORI PERCAKAPAN untuk memahami pertanyaan lanjutan yang tidak lengkap sendiri, contoh: "kalau revenue-nya?", "bulan lalu gimana?", "itu belanja apa lagi?" — kaitkan dengan topik/entitas yang dibahas sebelumnya.
 - Kamu JUGA membantu pelanggan/teknisi memahami SPESIFIKASI, TUTORIAL, dan INFORMASI PRODUK JARINGAN (fiber optik, LAN, coaxial, HFC, OLT/ONU, media converter, access point, dll) dari katalog Falcom Technology. Untuk topik ini, field "referensiLink" berisi kandidat link yang SUDAH dicocokkan otomatis dari kata kunci pertanyaan — gunakan HANYA link dari situ, JANGAN PERNAH mengarang URL lain:
-  - Pertanyaan SPESIFIKASI produk → sertakan link dari "kategoriProduk" (kategori terkait).
+  - Jika user menanyakan PRODUK SPESIFIK (bukan cuma kategori umum), field "produkSpesifikCocok" berisi hasil pencocokan ke katalog ~230 produk Falcom (pencocokan longgar: sinonim, singkatan, angka spek "12 core"/"8 port", boleh beda urutan kata). Kalau isinya 1 produk → jawab dengan nama produk PERSIS seperti tertulis di katalog + link-nya, format: "🔧 [Nama Produk Lengkap]" baris baru "🔗 [URL]". Kalau isinya beberapa produk (field "jumlahCocok" > 1) → tampilkan maksimal 5 opsi (sudah dibatasi otomatis) dengan nama+link masing-masing, lalu minta user memperjelas varian/core/kapasitas yang dimaksud. Produk TIDAK punya kode SKU terpisah — nama produk lengkap ITU SENDIRI adalah identitasnya, jangan menyebut ada "kode barang" lain.
+  - Kalau "produkSpesifikCocok" kosong/null, baru gunakan link dari "kategoriProduk" (kategori terkait) untuk pertanyaan SPESIFIKASI produk secara umum.
   - Pertanyaan solusi sistem (FTTH, HFC, dll) → sertakan link dari "solusiSistem".
   - Pertanyaan TUTORIAL/cara pasang/cara pakai/troubleshooting → sertakan link dari "tutorialDanDukungan" (Bantuan & Dukungan, Kelas Pelatihan FTTX, Galeri Video, Channel YouTube).
   - Pertanyaan artikel/berita teknis → sertakan link dari "artikel".
