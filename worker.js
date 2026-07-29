@@ -576,22 +576,27 @@ function resolveStockCodeToCatalogProduct(stockDescription) {
 }
 
 function matchReferences(message, allStock) {
+  // The resolved stock-code description (see resolveStockCodeDescriptions) is ONLY for bridging a
+  // code to its catalog product photo/link below — it must never leak into video/tutorial/category
+  // matching, which should only ever reflect what the user actually typed. It used to be mixed
+  // into one shared "augmented message" used everywhere, which caused a real bug: asking about a
+  // product's spec by code alone would pull in an unrelated tutorial video, just because the
+  // product's technical description happened to loosely overlap with that video's keywords.
   const stockDescriptions = resolveStockCodeDescriptions(message, allStock);
-  const augmentedMessage = stockDescriptions.length ? `${message} ${stockDescriptions.join(' ')}` : message;
-  const nMsg = ` ${normText(augmentedMessage)} `; // padded so ' ap ' / ' rack ' style keywords can match at string edges
+  const nMsg = ` ${normText(message)} `; // padded so ' ap ' / ' rack ' style keywords can match at string edges
   const kategoriProduk = PRODUCT_CATEGORIES.filter((c) => c.keywords.some((kw) => nMsg.includes(kw)));
   const solusiSistem = SOLUTIONS.filter((s) => s.keywords.some((kw) => nMsg.includes(kw)));
   const wantsTutorial = /tutorial|cara pasang|cara install|cara setting|cara konfigurasi|cara pakai|cara menggunakan|troubleshoot|bagaimana cara|video (tutorial|demo)/.test(nMsg);
   const wantsArticle = /\bartikel\b|berita teknis/.test(nMsg);
   const wantsSpec = /\bspek\b|spesifikasi|datasheet/.test(nMsg);
-  const video = matchVideos(augmentedMessage);
+  const video = matchVideos(message);
   // A resolved stock CODE goes through the stricter dedicated matcher (core-count + category
   // filtering, see resolveStockCodeToCatalogProduct) instead of the general one — the code itself
   // already pins down one exact physical item, so the noisier free-text matcher's tolerance for
   // several loosely-related options (including flat-out wrong specs) isn't appropriate here.
   const produkSpesifik =
     resolveKnownCodeOverride(message) ||
-    (stockDescriptions.length ? resolveStockCodeToCatalogProduct(stockDescriptions.join(' ')) : findProductCatalogMatch(augmentedMessage));
+    (stockDescriptions.length ? resolveStockCodeToCatalogProduct(stockDescriptions.join(' ')) : findProductCatalogMatch(message));
   const hasAnyMatch = kategoriProduk.length || solusiSistem.length || wantsTutorial || wantsArticle || video.teknis.length || produkSpesifik;
   return {
     produkSpesifikCocok: produkSpesifik,
