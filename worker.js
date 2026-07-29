@@ -1010,10 +1010,29 @@ function parseEvidence(raw) {
   }
 }
 
+// "hari ini"/"kemarin" are far more common in real questions than a spelled-out date, and a plain
+// "kinerja [nama]" with NO date word at all should still resolve to a real day (today) rather than
+// silently falling through to a shallow multi-day summary. Only an explicit trend/rekap phrasing
+// ("kinerja bulan ini", "rekap seminggu terakhir") should skip the single-day detail view.
+function resolveAttendanceDate(message) {
+  const nMsg = normText(message);
+  const explicit = extractDateMention(message);
+  if (explicit) return { date: new Date(explicit.year, explicit.month - 1, explicit.day), explicit: true };
+  const today = new Date();
+  if (/\bkemarin lusa\b/.test(nMsg)) { const d = new Date(today); d.setDate(d.getDate() - 2); return { date: d, explicit: true }; }
+  if (/\bkemarin\b/.test(nMsg)) { const d = new Date(today); d.setDate(d.getDate() - 1); return { date: d, explicit: true }; }
+  if (/\bhari ini\b|\bsekarang\b|\bskrg\b|\bhari ni\b/.test(nMsg)) return { date: today, explicit: true };
+  return { date: today, explicit: false };
+}
+
 async function fetchAttendanceContext(message, kpiNames, history) {
   const nMsg = normText(message);
   const wantsAttendance = /jam\s*masuk|jam\s*pulang|jam\s*datang|\btelat\b|terlambat|\babsen\b|absensi|kehadiran/.test(nMsg);
-  const wantsIndicator = /indikator|checklist|ceklist|kerjakan|dikerjakan|kegiatan harian|dikerjain|rincikan|rinciannya|detailnya/.test(nMsg);
+  const wantsIndicator = /indikator|checklist|ceklist|kerjakan|dikerjakan|kegiatan harian|dikerjain|rincikan|rinciannya|detailnya|\bkinerja\b/.test(nMsg);
+  // A plain trend/recap ask ("kinerja bulan ini", "rekap seminggu terakhir", "progress bulan lalu")
+  // wants the multi-day overview, NOT one day's full indicator breakdown — everything else
+  // (including a bare "kinerja [nama]" with no date/scope word) defaults to today's full detail.
+  const wantsTrend = /\bminggu\b|\bmingguan\b|\bbulan ini\b|\bbulan lalu\b|\brekap\b|\bringkasan\b|\btren\b|\btrend\b|belakangan ini|beberapa hari|sebulan/.test(nMsg);
   let personHit = detectPersonMention(message, kpiNames);
   // Follow-up like "rincikan indikatornya dong" doesn't repeat the name — without this, it fell
   // back to the team-wide MAKASSAR view instead of staying on the person from the prior turn.
@@ -1028,8 +1047,7 @@ async function fetchAttendanceContext(message, kpiNames, history) {
   }
   if (!wantsAttendance && !wantsIndicator && !personHit) return null;
 
-  const dateMention = extractDateMention(message);
-  const targetDate = dateMention ? new Date(dateMention.year, dateMention.month - 1, dateMention.day) : new Date();
+  const { date: targetDate, explicit: dateExplicit } = resolveAttendanceDate(message);
   const isoDay = toIsoDate(targetDate);
   const yearMonth = isoDay.slice(0, 7);
 
@@ -1041,33 +1059,47 @@ async function fetchAttendanceContext(message, kpiNames, history) {
       const data = await res.json();
       const labels = data?.detail?.labels || [];
       const days = data?.detail?.days || [];
-      if (dateMention) {
-        const dayEntry = days.find((d) => d.tanggal === isoDay);
-        if (!dayEntry) return { nama: personHit, tanggal: isoDay, catatan: 'Tidak ada data untuk tanggal ini (mungkin hari libur atau belum lewat).' };
+
+      if (wantsTrend && !dateExplicit) {
+        // Explicit trend/recap ask with no specific day — multi-day overview, not full detail.
         return {
           nama: personHit,
-          tanggal: isoDay,
-          jamDatang: dayEntry.jamDatang || null,
-          jamPulang: dayEntry.jamPulang || null,
-          submitted: dayEntry.submitted,
-          dinas: dayEntry.dinas,
-          indikator: labels.map((label, i) => ({
-            label,
-            tercapai: !!dayEntry.values?.[i],
-            detail: parseEvidence(dayEntry.evidence?.[i]),
+          bulan: yearMonth,
+          ringkasan10HariTerakhir: days.slice(-10).map((d) => ({
+            tanggal: d.tanggal,
+            jamDatang: d.jamDatang || null,
+            jamPulang: d.jamPulang || null,
+            indikatorTercapai: (d.values || []).filter(Boolean).length,
+            totalIndikator: labels.length,
           })),
         };
       }
-      // No specific date — give a recent-days summary instead of the whole month.
+
+      // Default path — full single-day breakdown (attendance + EVERY indicator + its evidence
+      // detail), same depth as the "Cek Indikator per Tanggal" view on the dashboard. If the exact
+      // target day has no data and the user didn't ask for that day specifically (e.g. plain
+      // "kinerja Bahrul" defaulted to today, but today isn't submitted yet), fall back to the most
+      // recent day that DOES have data instead of returning an empty answer.
+      let dayEntry = days.find((d) => d.tanggal === isoDay);
+      if (!dayEntry && !dateExplicit) {
+        const past = days.filter((d) => d.tanggal <= isoDay).sort((a, b) => (a.tanggal < b.tanggal ? 1 : -1));
+        dayEntry = past[0] || null;
+      }
+      if (!dayEntry) {
+        return { nama: personHit, tanggal: isoDay, catatan: 'Tidak ada data untuk tanggal ini (mungkin hari libur, belum lewat, atau belum submit).' };
+      }
       return {
         nama: personHit,
-        bulan: yearMonth,
-        ringkasan10HariTerakhir: days.slice(-10).map((d) => ({
-          tanggal: d.tanggal,
-          jamDatang: d.jamDatang || null,
-          jamPulang: d.jamPulang || null,
-          indikatorTercapai: (d.values || []).filter(Boolean).length,
-          totalIndikator: labels.length,
+        tanggal: dayEntry.tanggal,
+        catatan: dateExplicit || dayEntry.tanggal === isoDay ? undefined : `Tanggal ${isoDay} belum ada data, ini data hari kerja terakhir yang tersedia.`,
+        jamDatang: dayEntry.jamDatang || null,
+        jamPulang: dayEntry.jamPulang || null,
+        submitted: dayEntry.submitted,
+        dinas: dayEntry.dinas,
+        indikator: labels.map((label, i) => ({
+          label,
+          tercapai: !!dayEntry.values?.[i],
+          detail: parseEvidence(dayEntry.evidence?.[i]),
         })),
       };
     }
@@ -1776,7 +1808,11 @@ Aturan:
   - JANGAN menyalin/merangkai ulang isi halaman secara panjang (hak cipta) — cukup 1-3 kalimat ringkasan, lalu arahkan ke link untuk detail lengkap.
   - Sertakan URL APA ADANYA (utuh, bisa diklik, jangan dipotong). Format baris link di akhir jawaban: "🔗 Info lengkap: [Nama Halaman] — (URL)" — kalau lebih dari satu, buat daftar bullet, MAKSIMAL 3 link per jawaban.
   - Field ini TIDAK relevan untuk pertanyaan operasional (sales/stok/piutang/dll) — jangan sisipkan link produk ke jawaban yang tidak memintanya.
-- Untuk pertanyaan jam masuk/pulang karyawan atau isi indikator harian personel, gunakan "absensiDanIndikatorHarian". Jika berisi "jamMasukPulangTim" itu data satu tim untuk satu tanggal (per orang: datang/pulang true-false + jamDatang/jamPulang, dan field ...Ok menandakan apakah role tsb secara keseluruhan tepat waktu). Jika berisi "indikator" (array label + tercapai true/false + detail) — field "detail" berisi BUKTI/RINCIAN NYATA di balik indikator itu (mis. untuk "Follow Up Piutang Customer" detail-nya adalah daftar nama customer yang dihubungi, saldo piutang, dan hasil follow up-nya; untuk indikator delivery/handcarry berisi rincian invoice/barang). WAJIB pakai "detail" ini kalau user bertanya SPESIFIK tentang isi/rincian suatu indikator (mis. "customer siapa saja yang di-follow up", "barang apa yang di-handcarry") — jangan cuma bilang "tercapai (YA)" tanpa rinciannya kalau datanya ada. Jika null/kosong padahal user jelas bertanya soal ini, katakan datanya tidak ditemukan (mungkin nama salah ketik, atau tanggalnya di luar rentang).
+- Untuk pertanyaan jam masuk/pulang karyawan, "kinerja"/"kinerja personil"/"kinerja harian" seseorang, atau isi indikator harian personel, gunakan "absensiDanIndikatorHarian". Jika berisi "jamMasukPulangTim" itu data satu tim untuk satu tanggal (per orang: datang/pulang true-false + jamDatang/jamPulang, dan field ...Ok menandakan apakah role tsb secara keseluruhan tepat waktu).
+  - Kalau berisi field "indikator" untuk SATU orang di SATU tanggal (field "tanggal" ada, bukan "ringkasan10HariTerakhir") — ini setara tampilan "Cek Indikator per Tanggal" di dashboard. WAJIB tampilkan LENGKAP dan SELALU, BUKAN cuma kalau ditanya spesifik: jam datang/pulang, lalu SEMUA indikator satu per satu (label + status tercapai YA/TIDAK) BESERTA isi field "detail"-nya kalau ada (mis. untuk "Follow Up Piutang Customer" sebutkan nama tiap customer, hari menunggak, saldo piutang, keterangan evaluasinya; untuk "Membuat Laporan Piutang" sebutkan no invoice/customer/jumlah piutangnya; dst — apapun isi "detail" itu, jabarkan semuanya). Jangan diringkas jadi "X dari 10 tercapai" saja kalau datanya lengkap tersedia — user secara eksplisit minta detail seutuhnya seperti tampilan dashboard, bukan ringkasan angka.
+  - Kalau field "catatan" terisi (mis. tanggal yang diminta belum ada data sehingga dipakai hari kerja terakhir yang tersedia), sebutkan catatan ini ke user supaya jelas data yang ditampilkan itu untuk tanggal berapa.
+  - Kalau berisi "ringkasan10HariTerakhir" (untuk pertanyaan tren/rekap mingguan/bulanan), itu memang ringkasan angka per hari (jumlah indikator tercapai dari total) — BUKAN rincian, cukup sajikan apa adanya per hari.
+  - Jika null/kosong padahal user jelas bertanya soal ini, katakan datanya tidak ditemukan (mungkin nama salah ketik, atau tanggalnya di luar rentang).
 - Jawab singkat, padat, dan langsung ke angka/fakta. Gunakan Bahasa Indonesia sehari-hari yang sopan.
 - FORMAT: JANGAN pakai tanda bintang tunggal (*kata*) untuk penekanan biasa — itu bikin tampilan penuh tanda bintang yang mengganggu. Pakai bintang ganda (**angka penting**) SEPERLUNYA saja, hanya untuk angka kunci atau nama entitas utama dalam jawaban — bukan untuk kata biasa seperti "sales", "revenue", "pending", "catatan", dll. Sisanya tulis sebagai teks polos.
 - Data disinkron terakhir: ${lastSync || 'belum pernah sync'}.
