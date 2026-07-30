@@ -1347,46 +1347,74 @@ function findPoGudangMatches(message, poItems) {
 // that bucket's actual customer name list. Kept as a separate on-demand lookup (not folded into
 // the always-included customerInsights) since a bucket can have 100s of names — only worth
 // sending when the question is actually asking "who/siapa", not on every unrelated question.
-function findCustomerBucketMatch(message, customerBuckets) {
+function detectBucketFromText(nMsg) {
+  if (/\b1x\b|\bsatu kali\b|\bsekali\b/.test(nMsg)) return '1x';
+  if (/\b2x\b|\bdua kali\b/.test(nMsg)) return '2x';
+  if (/\b(3|tiga)\s*-?\s*(sampai\s*)?(5|lima)\s*x?\b/.test(nMsg)) return '3-5x';
+  if (/\b(5|lima)\s*-?\s*(sampai\s*)?(10|sepuluh)\s*x?\b/.test(nMsg)) return '5-10x';
+  if (/>\s*10x?|\blebih dari 10\b|\bdiatas 10\b/.test(nMsg)) return '>10x';
+  return null;
+}
+
+function findCustomerBucketMatch(message, customerBuckets, history) {
   if (!customerBuckets) return null;
-  const nMsg = normText(message);
   // A specific frequency mention ("1x belanja", "yang 2x", ">10x") is specific/intentional enough
   // on its own — requiring "siapa"/"nama"/"daftar"/"list" on top of that missed real phrasings like
   // "kasih customer yang 1x belanja dan belum belanja lagi" (a real reported case), which mentions
   // the bucket clearly but never those exact trigger words.
-  let bucket = null;
-  if (/\b1x\b|\bsatu kali\b|\bsekali\b/.test(nMsg)) bucket = '1x';
-  else if (/\b2x\b|\bdua kali\b/.test(nMsg)) bucket = '2x';
-  else if (/\b(3|tiga)\s*-?\s*(sampai\s*)?(5|lima)\s*x?\b/.test(nMsg)) bucket = '3-5x';
-  else if (/\b(5|lima)\s*-?\s*(sampai\s*)?(10|sepuluh)\s*x?\b/.test(nMsg)) bucket = '5-10x';
-  else if (/>\s*10x?|\blebih dari 10\b|\bdiatas 10\b/.test(nMsg)) bucket = '>10x';
+  let bucket = detectBucketFromText(normText(message));
+  let fromHistory = false;
+  // Follow-up like "nama customernya?" right after MIRA HERSELF proposed a bucket as a sales
+  // suggestion (e.g. "customer 1x belanja adalah kandidat follow-up") doesn't repeat the bucket —
+  // a real reported case where this returned "data tidak tersedia" despite the data existing.
+  if (!bucket && Array.isArray(history)) {
+    for (let i = history.length - 1; i >= 0; i--) {
+      const h = history[i];
+      if (!h || !h.text) continue;
+      bucket = detectBucketFromText(normText(h.text));
+      if (bucket) { fromHistory = true; break; }
+    }
+  }
   if (!bucket || !customerBuckets[bucket]) return null;
   const all = customerBuckets[bucket];
   const sample = [...all].sort((a, b) => b.totalSales - a.totalSales).slice(0, 60);
+  const catatanParts = [];
+  if (bucket === '1x') catatanParts.push('Bucket "1x" berarti customer ini baru belanja SATU KALI sepanjang 2026 dan belum pernah order lagi sejak itu — ini sudah otomatis berarti "belum belanja lagi", bukan filter terpisah yang perlu dicari lagi.');
+  if (fromHistory) catatanParts.push('Kategori bucket ini dilanjutkan dari yang baru dibahas sebelumnya di percakapan ini (tidak disebut ulang di pertanyaan ini) — pakai dengan percaya diri, bukan berarti datanya tidak ada.');
   return {
     bucket,
     totalCustomer: all.length,
     ditampilkan: sample.length,
     customers: sample,
-    catatan: bucket === '1x' ? 'Bucket "1x" berarti customer ini baru belanja SATU KALI sepanjang 2026 dan belum pernah order lagi sejak itu — ini sudah otomatis berarti "belum belanja lagi", bukan filter terpisah yang perlu dicari lagi.' : undefined,
+    catatan: catatanParts.length ? catatanParts.join(' ') : undefined,
   };
 }
 
 // Parses a "days since last purchase" range from phrasings like "30-60 hari", "30 sampai 60 hari",
-// "lebih dari 30 hari", "diatas 60 hari" — used by findInactiveCustomers below.
-function extractInactivityDayRange(message) {
-  const nMsg = normText(message);
+// "lebih dari 30 hari", "diatas 60 hari", "≥60 hari" — used by findInactiveCustomers below.
+// "churn"/"churned" is treated as its own alias for ">=60 hari" since that's the exact threshold
+// customerInsights.totalChurned itself uses — MIRA's own replies use that wording.
+function extractInactivityDayRange(text) {
+  const nMsg = normText(text);
   const rangeMatch = nMsg.match(/(\d{1,3})\s*(?:-|sampai|s\/d|hingga)\s*(\d{1,3})\s*hari/);
   if (rangeMatch) {
     const a = parseInt(rangeMatch[1], 10);
     const b = parseInt(rangeMatch[2], 10);
     return { min: Math.min(a, b), max: Math.max(a, b) };
   }
-  const gtMatch = nMsg.match(/(?:lebih dari|diatas|di atas|>\s*)(\d{1,3})\s*hari/);
+  const gtMatch = nMsg.match(/(?:lebih dari|diatas|di atas|>=?|≥)\s*(\d{1,3})\s*hari/);
   if (gtMatch) return { min: parseInt(gtMatch[1], 10), max: Infinity };
-  const ltMatch = nMsg.match(/(?:kurang dari|dibawah|di bawah|<\s*)(\d{1,3})\s*hari/);
+  const ltMatch = nMsg.match(/(?:kurang dari|dibawah|di bawah|<=?|≤)\s*(\d{1,3})\s*hari/);
   if (ltMatch) return { min: 0, max: parseInt(ltMatch[1], 10) };
+  if (/\bchurn(ed)?\b/.test(nMsg)) return { min: 60, max: Infinity };
   return null;
+}
+
+// Also checks if a bare day-range mention alone (without one of the explicit inactivity phrases)
+// still counts as "wants this topic" — split out so both the current message AND history scanning
+// below can reuse the exact same rule.
+function wantsInactivityTopicText(text) {
+  return !!extractInactivityDayRange(text) || /lama\s*tidak\s*belanja|tidak\s*aktif|belum\s*belanja\s*lagi|tidak\s*order\s*lagi|sudah\s*berapa\s*hari|\bchurn(ed)?\b/.test(normText(text));
 }
 
 // "Customer yang sudah lama tidak belanja, 30-60 hari terakhir" / "sudah berapa hari X tidak
@@ -1395,16 +1423,31 @@ function extractInactivityDayRange(message) {
 // separately-cached full list (data:customerActivity). Also supports filtering by a specific
 // customer NAME (checked first) so "apakah [nama] termasuk yang lama tidak belanja?" works even
 // without a day range — a bare day range with nothing else returns null (nothing concrete to show).
-function findInactiveCustomers(message, customerActivity) {
+function findInactiveCustomers(message, customerActivity, history) {
   if (!customerActivity || !customerActivity.length) return null;
-  const nMsg = normText(message);
-  const dayRange = extractInactivityDayRange(message);
-  const wantsInactivityTopic = dayRange || /lama\s*tidak\s*belanja|tidak\s*aktif|belum\s*belanja\s*lagi|tidak\s*order\s*lagi|sudah\s*berapa\s*hari/.test(nMsg);
-  if (!wantsInactivityTopic) return null;
 
+  // Named-customer check always uses the CURRENT message — asking about one person doesn't need
+  // topic carryover from history.
   const msgWords = nameWordsOf(message);
   const namedCustomer = customerActivity.find((c) => c.customer && c.customer.length >= 4 && customerNameFuzzyMatch(msgWords, c.customer));
   if (namedCustomer) return { modeCustomerSpesifik: true, customer: namedCustomer };
+
+  let dayRange = extractInactivityDayRange(message);
+  let fromHistory = false;
+  if (!dayRange && !wantsInactivityTopicText(message) && Array.isArray(history)) {
+    // Follow-up like "nama customernya?" right after MIRA HERSELF proposed a churned/inactive
+    // segment as a sales-follow-up suggestion — a real reported case where this incorrectly said
+    // the data wasn't available, when it was just never re-mentioned in THIS specific message.
+    for (let i = history.length - 1; i >= 0; i--) {
+      const h = history[i];
+      if (!h || !h.text) continue;
+      if (wantsInactivityTopicText(h.text)) {
+        dayRange = extractInactivityDayRange(h.text) || { min: 60, max: Infinity };
+        fromHistory = true;
+        break;
+      }
+    }
+  }
   if (!dayRange) return null;
 
   const items = customerActivity.filter(
@@ -1416,7 +1459,9 @@ function findInactiveCustomers(message, customerActivity) {
     rentangHari: dayRange,
     totalCustomer: sorted.length,
     daftar: sorted.slice(0, 80),
-    catatan: sorted.length > 80 ? `Ditampilkan 80 dari ${sorted.length} customer (urut paling lama tidak belanja duluan).` : `Semua ${sorted.length} customer ditampilkan.`,
+    catatan:
+      (fromHistory ? 'Rentang hari ini dilanjutkan dari topik "tidak aktif/churn" yang baru dibahas sebelumnya di percakapan ini (tidak disebut ulang di pertanyaan ini) — pakai dengan percaya diri, bukan berarti datanya tidak ada. ' : '') +
+      (sorted.length > 80 ? `Ditampilkan 80 dari ${sorted.length} customer (urut paling lama tidak belanja duluan).` : `Semua ${sorted.length} customer ditampilkan.`),
   };
 }
 
@@ -2184,8 +2229,8 @@ async function handleChat(request, env) {
   const paymentMatch = findPaymentsByCustomer(message, revenueData?.detail, piutangData?.detail);
   const poMatch = findPoGudangMatches(message, poGudangData?.items);
   const zonaMatch = findZonaWilayahMatches(message, zonaWilayahData);
-  const customerBucketMatch = findCustomerBucketMatch(message, customerBucketsRaw ? JSON.parse(customerBucketsRaw) : null);
-  const inactiveCustomerMatch = findInactiveCustomers(message, customerActivityRaw ? JSON.parse(customerActivityRaw) : null);
+  const customerBucketMatch = findCustomerBucketMatch(message, customerBucketsRaw ? JSON.parse(customerBucketsRaw) : null, history);
+  const inactiveCustomerMatch = findInactiveCustomers(message, customerActivityRaw ? JSON.parse(customerActivityRaw) : null, history);
   const referensi = matchReferences(message, allStock);
   const kpiNames = Array.isArray(kpiData?.kpi) ? kpiData.kpi.map((p) => p.nama).filter(Boolean) : [];
   const absensi = await fetchAttendanceContext(message, kpiNames, history);
