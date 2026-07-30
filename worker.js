@@ -845,6 +845,40 @@ function findStockMatches(message, allStock, history) {
   return { items: matched, note };
 }
 
+// "Total nilai stok kita berapa?" / "Nilai stok rupiah MKI?" — Rupiah VALUE of on-hand stock
+// (harga x quantity summed across every item), distinct from findStockMatches's quantity-only
+// summary above. Company-aware: sums stokMKI/stokCFN x harga when a company is named, else
+// stokTotal x harga for the combined figure. Items without a harga are skipped (can't value them),
+// not silently treated as zero, so the total isn't understated without saying so.
+function findStockValueSummary(message, allStock) {
+  const nMsg = normText(message);
+  if (!(/\bnilai\b/.test(nMsg) && /\bstok\b/.test(nMsg))) return null;
+  const company = /\bmki\b/.test(nMsg) ? 'MKI' : /\bcfn\b/.test(nMsg) ? 'CFN' : null;
+  const field = company === 'MKI' ? 'stokMKI' : company === 'CFN' ? 'stokCFN' : 'stokTotal';
+  let totalNilaiRupiah = 0;
+  let totalUnit = 0;
+  let jumlahKodeBarang = 0;
+  let jumlahKodeTanpaHarga = 0;
+  for (const p of allStock) {
+    const qty = p[field] || 0;
+    if (qty <= 0) continue;
+    if (p.harga > 0) {
+      totalNilaiRupiah += qty * p.harga;
+      totalUnit += qty;
+      jumlahKodeBarang++;
+    } else {
+      jumlahKodeTanpaHarga++;
+    }
+  }
+  return {
+    company: company || 'MKI+CFN (gabungan)',
+    jumlahKodeBarang,
+    totalUnit,
+    totalNilaiRupiah,
+    catatan: jumlahKodeTanpaHarga > 0 ? `${jumlahKodeTanpaHarga} kode barang punya stok tapi tidak punya data harga, TIDAK ikut terhitung di totalNilaiRupiah — sebutkan ini kalau relevan supaya user tahu totalnya bisa jadi lebih tinggi dari angka ini.` : 'Semua kode barang yang punya stok juga punya data harga, total ini sudah mencakup semuanya.',
+  };
+}
+
 const MONTHS = {
   januari: 1, jan: 1, februari: 2, feb: 2, maret: 3, mar: 3, april: 4, apr: 4, mei: 5,
   juni: 6, jun: 6, juli: 7, jul: 7, agustus: 8, agu: 8, ags: 8, september: 9, sep: 9, sept: 9,
@@ -1006,6 +1040,49 @@ function findTransactionMatches(message, allTransactions) {
   return { items: matched, note };
 }
 
+// "Retur apa saja bulan ini?" / "berapa banyak retur customer X?" — every transaction row already
+// carries "isRetur" from sync (true when noInvoice starts with "R-"/"R/", or amount is negative),
+// but there was no dedicated way to ask FOR returns specifically — an ordinary customer/code/date
+// search would only surface a retur row if it happened to also match those filters. Optionally
+// narrows further by customer (fuzzy) or date/date-range if also mentioned in the same question.
+function findReturTransactions(message, allTransactions) {
+  if (!allTransactions.length) return null;
+  const nMsg = normText(message);
+  if (!/\bretur\b|\breturn\b|\bdikembalikan\b|\bpengembalian barang\b/.test(nMsg)) return null;
+  let matched = allTransactions.filter((tx) => tx.isRetur);
+  const rangeMention = extractDateRangeMention(message);
+  const dateMention = !rangeMention ? extractDateMention(message) : null;
+  if (rangeMention) {
+    matched = matched.filter((tx) => {
+      const d = parseFlexibleDate(tx.tanggal);
+      return d && d.getMonth() + 1 === rangeMention.month && d.getFullYear() === rangeMention.year
+        && d.getDate() >= rangeMention.startDay && d.getDate() <= rangeMention.endDay;
+    });
+  } else if (dateMention) {
+    matched = matched.filter((tx) => {
+      const d = parseFlexibleDate(tx.tanggal);
+      return d && d.getDate() === dateMention.day && d.getMonth() + 1 === dateMention.month && d.getFullYear() === dateMention.year;
+    });
+  }
+  const customerSet = new Set();
+  for (const tx of matched) if (tx.customer) customerSet.add(tx.customer);
+  const msgWords = nameWordsOf(message);
+  const hitCustomer = [...customerSet].find((c) => c.length >= 4 && customerNameFuzzyMatch(msgWords, c));
+  if (hitCustomer) matched = matched.filter((tx) => tx.customer === hitCustomer);
+  matched = [...matched].sort((a, b) => {
+    const da = parseFlexibleDate(a.tanggal);
+    const db = parseFlexibleDate(b.tanggal);
+    return (db ? db.getTime() : 0) - (da ? da.getTime() : 0);
+  });
+  const total = matched.length;
+  const capped = matched.slice(0, 100);
+  return {
+    jumlahRetur: total,
+    items: capped,
+    catatan: `Retur dikenali dari nomor invoice berawalan "R-"/"R/" atau nilai transaksi negatif.${total > 100 ? ` Ditampilkan 100 TERBARU dari ${total}.` : ''}`,
+  };
+}
+
 // Wilayah/ekspedisi lookup against the FULL pre-aggregated per-lokasi breakdown (all ~100+
 // locations, every ekspedisi they've ever used, ranked by frequency) — this is what makes
 // "ekspedisi ke Manado pakai apa?" answer completely and correctly (e.g. MEGA MAS as the
@@ -1036,6 +1113,49 @@ function findZonaWilayahMatches(message, zonaData) {
     return { tipe: 'tanpaPembelanjaan', data: zonaData.tanpaPembelanjaan };
   }
   return null;
+}
+
+// "Siapa customer dengan piutang terbesar?" — aggregates the SAME invoice-level detail by
+// customer (sum of nilaiSisa across all their open invoices) instead of by single invoice, since
+// one customer can have several open invoices and the ranking should be by their TOTAL exposure,
+// not any one invoice's size. Only triggers on an explicit ranking/superlative phrasing so it
+// doesn't fire on every ordinary named-customer piutang question (that's findPiutangByCustomer).
+function findTopPiutangCustomers(message, piutangDetail) {
+  if (!piutangDetail || !piutangDetail.length) return null;
+  const nMsg = normText(message);
+  const wantsTop = /piutang.*(tertinggi|terbesar|paling besar|paling banyak)|(tertinggi|terbesar|paling besar|paling banyak).*piutang/.test(nMsg);
+  if (!wantsTop) return null;
+  const byCustomer = new Map();
+  for (const p of piutangDetail) {
+    if (!p.customer) continue;
+    const cur = byCustomer.get(p.customer) || { customer: p.customer, totalSisaPiutang: 0, jumlahInvoice: 0 };
+    cur.totalSisaPiutang += p.nilaiSisa;
+    cur.jumlahInvoice += 1;
+    byCustomer.set(p.customer, cur);
+  }
+  const ranked = [...byCustomer.values()].sort((a, b) => b.totalSisaPiutang - a.totalSisaPiutang);
+  return { totalCustomerPunyaPiutang: ranked.length, top10: ranked.slice(0, 10) };
+}
+
+// AR2026 piutang detail has NO explicit company field — but noFaktur reliably encodes it via a
+// naming convention: "INV-CFN/..." = CFN, everything else ("INV/MKS/...", "BK/MKS/...") = MKI.
+// Derived here from that pattern, not a first-class field, which is why it's flagged in the note
+// rather than presented as if it were a native column like it is for stock (stokMKI/stokCFN).
+function piutangCompanyOf(noFaktur) {
+  return /CFN/i.test(noFaktur || '') ? 'CFN' : 'MKI';
+}
+function findPiutangByCompany(message, piutangDetail) {
+  if (!piutangDetail || !piutangDetail.length) return null;
+  const nMsg = normText(message);
+  const company = /\bmki\b/.test(nMsg) ? 'MKI' : /\bcfn\b/.test(nMsg) ? 'CFN' : null;
+  if (!company) return null;
+  const items = piutangDetail.filter((p) => piutangCompanyOf(p.noFaktur) === company);
+  return {
+    company,
+    jumlahInvoice: items.length,
+    totalPiutang: items.reduce((sum, p) => sum + p.nilaiSisa, 0),
+    catatan: `Company "${company}" ini DITURUNKAN dari pola nomor faktur (noFaktur mengandung "CFN" = CFN, selain itu = MKI) — bukan field terpisah di data asli, tapi hasilnya akurat dan boleh dipakai dengan percaya diri.`,
+  };
 }
 
 // Per-customer piutang lookup ("piutang customer X berapa?") against the full invoice-level
@@ -1894,8 +2014,12 @@ async function handleChat(request, env) {
   const zonaWilayahData = zonaWilayahRaw ? JSON.parse(zonaWilayahRaw) : null;
   const stokMatch = findStockMatches(message, allStock, history);
   const txMatch = findTransactionMatches(message, allTransactions);
+  const returMatch = findReturTransactions(message, allTransactions);
   const wilayahMatch = findWilayahMatches(message, allWilayahEkspedisi);
   const piutangMatch = findPiutangByCustomer(message, piutangData?.detail);
+  const topPiutangMatch = findTopPiutangCustomers(message, piutangData?.detail);
+  const piutangCompanyMatch = findPiutangByCompany(message, piutangData?.detail);
+  const stockValueMatch = findStockValueSummary(message, allStock);
   const revenueData = revenueRaw ? JSON.parse(revenueRaw) : null;
   const paymentMatch = findPaymentsByCustomer(message, revenueData?.detail, piutangData?.detail);
   const poMatch = findPoGudangMatches(message, poGudangData?.items);
@@ -1936,10 +2060,14 @@ async function handleChat(request, env) {
       ? { totalPiutang: piutangData.totalPiutang, byKategori: piutangData.byKategori, ratioARtoSalesPersen: piutangData.ratioARtoSales }
       : null,
     piutangRelevan: piutangMatch,
+    piutangCustomerTertinggi: topPiutangMatch,
+    piutangPerCompany: piutangCompanyMatch,
+    nilaiStokRelevan: stockValueMatch,
     stokRelevan: stokMatch.items,
     stokCatatan: stokMatch.note,
     transaksiRelevan: txMatch.items,
     transaksiCatatan: txMatch.note,
+    returRelevan: returMatch,
     wilayahEkspedisiRelevan: wilayahMatch,
     topProduk: wantsTopProduk && topProductsRaw ? JSON.parse(topProductsRaw) : null,
     deliveryOverview: wantsDeliveryOverview && deliveryRaw ? JSON.parse(deliveryRaw) : null,
@@ -1982,8 +2110,12 @@ Aturan:
   Rasio Sales-ke-Revenue = revenue/sales*100 per bulan, hitung sendiri dari kedua array bulanan itu kalau ditanya.
 - Untuk pertanyaan stok/ketersediaan barang, gunakan "stokRelevan". Jawab SINGKAT: cukup jumlah stok per company (MKI/CFN) + total, TANPA menyebut turnover/perputaran gudang kecuali user SPESIFIK menanyakan turnover/perputaran. Field "stokCatatan" menjelaskan filter yang dipakai (untuk konteksmu sendiri, tidak perlu disebut ke user) — kalau isinya menyebut "dilanjutkan dari kode X yang dibahas sebelumnya", itu tandanya user tidak sebut ulang kode di pertanyaan ini tapi maksudnya masih produk yang sama dari histori, pakai data itu dengan percaya diri (bukan menebak). WAJIB: kalau "stokRelevan" kosong/tidak ada barang yang cocok, katakan JUJUR datanya tidak ditemukan — JANGAN PERNAH mengarang angka stok, nama gudang, atau satuan (roll/meter/dll) sendiri.
 - Untuk pertanyaan HARGA/nilai barang ("harga X berapa", "nilainya berapa"), tiap item di "stokRelevan" punya field "harga" (harga satuan dalam Rupiah) — pakai itu. Kalau user tanya "total nilai stok" suatu barang, kalikan harga × stokTotal (atau × stokMKI/stokCFN kalau ditanya per company) dan tunjukkan cara hitungnya singkat. Field "harga" TIDAK ADA di "stokTidakBergerakDanKurangLaku"/data lain — kalau butuh harga tapi item itu tidak ada di "stokRelevan", katakan datanya tidak tersedia, jangan menebak angka.
-- Untuk pertanyaan tanggal tertentu, KODE BARANG spesifik ("siapa pembeli terakhir KODE", "kapan KODE terakhir keluar"), atau nama customer spesifik ("kapan si X belanja terakhir, beli apa saja"), gunakan "transaksiRelevan" — field "ekspedisi" dan "company" tiap baris menunjukkan cara pengiriman. Baca "transaksiCatatan": kalau bilang "diurutkan dari yang PALING BARU", maka baris PERTAMA di array = transaksi TERAKHIR/TERBARU — pakai itu untuk jawab pertanyaan "terakhir/kapan".
+- Untuk pertanyaan tanggal tertentu, KODE BARANG spesifik ("siapa pembeli terakhir KODE", "kapan KODE terakhir keluar"), atau nama customer spesifik ("kapan si X belanja terakhir, beli apa saja"), gunakan "transaksiRelevan" — field "ekspedisi" dan "company" tiap baris menunjukkan cara pengiriman. Baca "transaksiCatatan": kalau bilang "diurutkan dari yang PALING BARU", maka baris PERTAMA di array = transaksi TERAKHIR/TERBARU — pakai itu untuk jawab pertanyaan "terakhir/kapan". Field "isRetur" (true/false) tiap baris menandakan transaksi itu retur (nomor invoice berawalan "R-"/"R/" atau nilainya negatif) — kalau muncul di hasil pencarian biasa, sebutkan statusnya sebagai retur, jangan dianggap penjualan normal.
+- Untuk pertanyaan RETUR/RETURN secara khusus ("retur apa saja bulan ini", "berapa banyak retur customer X"), gunakan "returRelevan" (sudah difilter khusus baris retur, boleh dipersempit lagi dengan tanggal/customer di pertanyaan yang sama) — field "catatan" menjelaskan kriteria deteksinya.
 - Untuk pertanyaan PIUTANG (sisa tagihan yang BELUM dibayar) customer tertentu, WAJIB gunakan "piutangRelevan" (rincian per invoice) — field umum "piutang" cuma total per kategori umur + "ratioARtoSalesPersen", TIDAK punya rincian per customer. Ini beda dari "pembayaranRelevan" (uang yang SUDAH masuk) — piutang = belum bayar, pembayaran = sudah bayar.
+- Untuk "customer dengan piutang tertinggi/terbesar", gunakan "piutangCustomerTertinggi" (sudah diurutkan, field "top10"). Kalau field ini null padahal user jelas menanyakan hal ini, berarti kata kuncinya tidak terdeteksi (bukan berarti datanya tidak ada) — minta user menegaskan pertanyaannya.
+- Untuk piutang per company MKI/CFN, gunakan "piutangPerCompany" — WAJIB sebutkan ke user bahwa company ini diturunkan dari pola nomor faktur (bukan field asli terpisah), sesuai catatan di field itu, supaya user paham asalnya. JANGAN PERNAH menjawab pertanyaan "piutang MKI/CFN" dengan angka TOTAL GABUNGAN dari field "piutang" — itu bukan jawaban yang sesuai konteks pertanyaannya.
+- Untuk "nilai stok"/"nilai rupiah stok" (total ATAU per company MKI/CFN), gunakan "nilaiStokRelevan" (field "totalNilaiRupiah" = harga x jumlah unit, sudah company-aware kalau MKI/CFN disebut). Kalau field "catatan" di dalamnya bilang ada kode tanpa data harga, sebutkan itu supaya user tahu totalnya belum 100% lengkap. Field ini null kalau pertanyaan tidak menyebut kata "nilai" DAN "stok" bersamaan.
 - Untuk pertanyaan "ekspedisi ke wilayah X pakai apa", WAJIB gunakan "wilayahEkspedisiRelevan" (lengkap, terurut dari paling sering) — JANGAN pakai transaksiRelevan untuk ini. Untuk pertanyaan ekspedisi SECARA UMUM (bukan per wilayah, mis. "berapa banyak pakai hand carry", "ekspedisi apa yang paling sering dipakai", "berapa yang same day"), gunakan "deliveryOverview" (sameDayCount, cutOffCount, handCarryCount, pihakKetigaCount, byEkspedisi).
 - Untuk "produk paling laku/terlaris", gunakan "topProduk" (byAmount = berdasarkan nilai rupiah, byQty = berdasarkan jumlah unit, sudah top-20).
 - Untuk "kabel 1 core"/"fiber optic 1 core" secara spesifik sebagai section dashboard, gunakan "fiberOptic1Core" (5 kode resmi: KSFO028, KSFO108, KSFO083, KSFO113, KSFO128, dengan tren bulanan & per kode) — untuk pencarian stok kabel 1-core secara umum tetap pakai "stokRelevan".
