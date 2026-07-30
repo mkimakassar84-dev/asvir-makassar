@@ -2306,6 +2306,12 @@ ${JSON.stringify(context)}`;
 
   if (!geminiRes.ok || !geminiRes.body) {
     const errText = await geminiRes.text().catch(() => '');
+    // 429 = free-tier daily/rate quota exhausted — a real, expected condition on a free API key,
+    // not a bug. Surfaced as a friendly Indonesian message instead of a raw JSON error dump so the
+    // team can tell "MIRA hit its usage limit, try later" apart from an actual malfunction.
+    if (geminiRes.status === 429) {
+      return json({ error: 'MIRA sudah mencapai batas pemakaian gratis harian untuk saat ini. Coba lagi dalam beberapa menit, atau lanjutkan nanti — ini bukan error/bug, cuma kuota gratis Gemini API yang sedang penuh.' }, 429);
+    }
     return json({ error: `Gemini API error (${geminiRes.status}): ${errText}` }, 502);
   }
 

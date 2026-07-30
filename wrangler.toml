@@ -10,7 +10,9 @@ id = "b167303e78c54c6792d1fc6bb94d9b79"
 
 [vars]
 ALLOWED_ORIGIN = "https://mkimakassar84-dev.github.io"
-# Model default sudah diarahkan ke yang terbukti stabil di free tier.
+# Sempat dicoba naik ke "gemini-3.5-flash" (full) untuk kurangi kasus model mengarang, tapi model
+# itu balik error 503 "high demand" terus-menerus saat dicoba (30/7/2026) — dikembalikan ke
+# flash-lite yang terbukti stabil supaya MIRA tidak mati total. Coba lagi lain waktu kalau mau.
 GEMINI_MODEL = "gemini-3.5-flash-lite"
 
 # Auto-sync setiap 10 menit — supaya KV tidak pernah basi terlalu lama tanpa perlu trigger manual.
