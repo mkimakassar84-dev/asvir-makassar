@@ -1174,12 +1174,15 @@ function findPiutangByCompany(message, piutangDetail) {
   const nMsg = normText(message);
   const company = /\bmki\b/.test(nMsg) ? 'MKI' : /\bcfn\b/.test(nMsg) ? 'CFN' : null;
   if (!company) return null;
-  const items = piutangDetail.filter((p) => piutangCompanyOf(p.noFaktur) === company);
+  const items = [...piutangDetail.filter((p) => piutangCompanyOf(p.noFaktur) === company)].sort((a, b) => b.nilaiSisa - a.nilaiSisa);
   return {
     company,
     jumlahInvoice: items.length,
     totalPiutang: items.reduce((sum, p) => sum + p.nilaiSisa, 0),
-    catatan: `Company "${company}" ini DITURUNKAN dari pola nomor faktur (noFaktur mengandung "CFN" = CFN, selain itu = MKI) — bukan field terpisah di data asli, tapi hasilnya akurat dan boleh dipakai dengan percaya diri.`,
+    // Full per-invoice list (customer, noFaktur, nilaiSisa, tanggal, kategori) so "list piutang
+    // MKI/CFN" can be answered with actual names, not just the aggregate total above.
+    daftar: items.slice(0, 60),
+    catatan: `Company "${company}" ini DITURUNKAN dari pola nomor faktur (noFaktur mengandung "CFN" = CFN, selain itu = MKI) — bukan field terpisah di data asli, tapi hasilnya akurat dan boleh dipakai dengan percaya diri.${items.length > 60 ? ` Ditampilkan 60 dari ${items.length} invoice (urut nilai terbesar).` : ''}`,
   };
 }
 
@@ -2142,7 +2145,7 @@ Aturan:
 - Untuk pertanyaan PIUTANG (sisa tagihan yang BELUM dibayar) customer tertentu, WAJIB gunakan "piutangRelevan" (rincian per invoice) — field umum "piutang" cuma total per kategori umur + "ratioARtoSalesPersen", TIDAK punya rincian per customer. Ini beda dari "pembayaranRelevan" (uang yang SUDAH masuk) — piutang = belum bayar, pembayaran = sudah bayar.
 - Untuk "customer dengan piutang tertinggi/terbesar", gunakan "piutangCustomerTertinggi" (sudah diurutkan, field "top10"). Kalau field ini null padahal user jelas menanyakan hal ini, berarti kata kuncinya tidak terdeteksi (bukan berarti datanya tidak ada) — minta user menegaskan pertanyaannya.
 - Untuk "siapa saja customer piutang di atas 30/60 hari" atau kategori umur piutang tertentu lainnya (14-30 hari, 0-13 hari), gunakan "piutangPerKategoriUmur" (field "daftar" berisi customer+noFaktur+nilaiSisa+tanggal per invoice dalam kategori itu) — ini beda dari "piutang.byKategori" yang cuma total angka tanpa nama. Sebutkan nama-nama customernya, bukan cuma totalnya, karena itu yang diminta.
-- Untuk piutang per company MKI/CFN, gunakan "piutangPerCompany" — WAJIB sebutkan ke user bahwa company ini diturunkan dari pola nomor faktur (bukan field asli terpisah), sesuai catatan di field itu, supaya user paham asalnya. JANGAN PERNAH menjawab pertanyaan "piutang MKI/CFN" dengan angka TOTAL GABUNGAN dari field "piutang" — itu bukan jawaban yang sesuai konteks pertanyaannya.
+- Untuk piutang per company MKI/CFN, gunakan "piutangPerCompany" — WAJIB sebutkan ke user bahwa company ini diturunkan dari pola nomor faktur (bukan field asli terpisah), sesuai catatan di field itu, supaya user paham asalnya. JANGAN PERNAH menjawab pertanyaan "piutang MKI/CFN" dengan angka TOTAL GABUNGAN dari field "piutang" — itu bukan jawaban yang sesuai konteks pertanyaannya. Kalau user minta LIST/daftar (bukan cuma total), field "daftar" di dalamnya berisi rincian per invoice (customer, noFaktur, nilaiSisa, tanggal, kategori) — sebutkan nama-namanya, jangan cuma angka total.
 - Untuk "nilai stok"/"nilai rupiah stok" (total ATAU per company MKI/CFN), gunakan "nilaiStokRelevan" (field "totalNilaiRupiah" = harga x jumlah unit, sudah company-aware kalau MKI/CFN disebut). Kalau field "catatan" di dalamnya bilang ada kode tanpa data harga, sebutkan itu supaya user tahu totalnya belum 100% lengkap. Field ini null kalau pertanyaan tidak menyebut kata "nilai" DAN "stok" bersamaan.
 - Untuk pertanyaan "ekspedisi ke wilayah X pakai apa", WAJIB gunakan "wilayahEkspedisiRelevan" (lengkap, terurut dari paling sering) — JANGAN pakai transaksiRelevan untuk ini. Untuk pertanyaan ekspedisi SECARA UMUM (bukan per wilayah, mis. "berapa banyak pakai hand carry", "ekspedisi apa yang paling sering dipakai", "berapa yang same day"), gunakan "deliveryOverview" (sameDayCount, cutOffCount, handCarryCount, pihakKetigaCount, byEkspedisi).
 - Untuk "produk paling laku/terlaris", gunakan "topProduk" (byAmount = berdasarkan nilai rupiah, byQty = berdasarkan jumlah unit, sudah top-20).
