@@ -879,6 +879,46 @@ function findStockValueSummary(message, allStock) {
   };
 }
 
+// "Produk terlaris tapi stoknya menipis" — saran restock: cross-references the top-20-by-unit
+// best sellers (topProducts.byQty, already has "qty" sold this year) against CURRENT stock, and
+// estimates how many months of runway remain at the current sales pace ("stokTotal" divided by
+// average monthly qty sold in 2026 so far). Flags anything with <=1.5 months of runway left as
+// urgent — a low absolute stock number alone doesn't mean much without knowing how fast it sells.
+function findRestockCandidates(message, topProductsByQty, allStock) {
+  if (!topProductsByQty || !topProductsByQty.length || !allStock || !allStock.length) return null;
+  const nMsg = normText(message);
+  const wantsRestock = /terlaris.*(stok|stock).*(tipis|menipis|habis|kurang|sedikit)|(stok|stock).*(tipis|menipis|habis|kurang|sedikit).*terlaris|restock|pesan.*ulang|isi.*(stok|gudang)|saran.*pemesanan|saran.*(po|pesan)/.test(nMsg);
+  if (!wantsRestock) return null;
+
+  const stockByKode = {};
+  for (const p of allStock) stockByKode[p.kode] = p;
+  const monthsElapsed = new Date().getMonth() + 1;
+
+  const candidates = topProductsByQty
+    .map((tp) => {
+      const stockItem = stockByKode[tp.kode];
+      if (!stockItem || !tp.qty) return null;
+      const avgMonthlyQty = tp.qty / monthsElapsed;
+      const bulanStokTersisa = avgMonthlyQty > 0 ? stockItem.stokTotal / avgMonthlyQty : null;
+      return {
+        kode: tp.kode,
+        nama: stockItem.nama,
+        qtyTerjual2026: tp.qty,
+        stokSaatIni: stockItem.stokTotal,
+        rataRataTerjualPerBulan: Math.round(avgMonthlyQty * 10) / 10,
+        perkiraanBulanStokHabis: bulanStokTersisa === null ? null : Math.round(bulanStokTersisa * 10) / 10,
+      };
+    })
+    .filter((c) => c && c.perkiraanBulanStokHabis !== null && c.perkiraanBulanStokHabis <= 1.5)
+    .sort((a, b) => a.perkiraanBulanStokHabis - b.perkiraanBulanStokHabis);
+
+  return {
+    totalKandidat: candidates.length,
+    daftar: candidates.slice(0, 40),
+    catatan: 'Kandidat = produk terlaris (top-20 unit terjual 2026) yang perkiraan stoknya habis dalam <=1,5 bulan lagi berdasarkan kecepatan jual rata-rata — urut dari yang PALING mendesak. "perkiraanBulanStokHabis" = stokSaatIni / rataRataTerjualPerBulan. Kalau kosong, berarti tidak ada produk terlaris yang stoknya mendesak saat ini (bukan berarti datanya gagal).',
+  };
+}
+
 const MONTHS = {
   januari: 1, jan: 1, februari: 2, feb: 2, maret: 3, mar: 3, april: 4, apr: 4, mei: 5,
   juni: 6, jun: 6, juli: 7, jul: 7, agustus: 8, agu: 8, ags: 8, september: 9, sep: 9, sept: 9,
@@ -2139,6 +2179,7 @@ async function handleChat(request, env) {
   const piutangKategoriMatch = findPiutangByKategoriUmur(message, piutangData?.detail);
   const piutangCompanyMatch = findPiutangByCompany(message, piutangData?.detail);
   const stockValueMatch = findStockValueSummary(message, allStock);
+  const restockMatch = findRestockCandidates(message, topProductsRaw ? JSON.parse(topProductsRaw).byQty : null, allStock);
   const revenueData = revenueRaw ? JSON.parse(revenueRaw) : null;
   const paymentMatch = findPaymentsByCustomer(message, revenueData?.detail, piutangData?.detail);
   const poMatch = findPoGudangMatches(message, poGudangData?.items);
@@ -2184,6 +2225,7 @@ async function handleChat(request, env) {
     piutangPerKategoriUmur: piutangKategoriMatch,
     piutangPerCompany: piutangCompanyMatch,
     nilaiStokRelevan: stockValueMatch,
+    saranRestockProdukTerlaris: restockMatch,
     stokRelevan: stokMatch.items,
     stokCatatan: stokMatch.note,
     transaksiRelevan: txMatch.items,
@@ -2241,6 +2283,7 @@ Aturan:
 - Untuk "siapa saja customer piutang di atas 30/60 hari" atau kategori umur piutang tertentu lainnya (14-30 hari, 0-13 hari), gunakan "piutangPerKategoriUmur" (field "daftar" berisi customer+noFaktur+nilaiSisa+tanggal per invoice dalam kategori itu) — ini beda dari "piutang.byKategori" yang cuma total angka tanpa nama. Sebutkan nama-nama customernya, bukan cuma totalnya, karena itu yang diminta.
 - Untuk piutang per company MKI/CFN, gunakan "piutangPerCompany" — WAJIB sebutkan ke user bahwa company ini diturunkan dari pola nomor faktur (bukan field asli terpisah), sesuai catatan di field itu, supaya user paham asalnya. JANGAN PERNAH menjawab pertanyaan "piutang MKI/CFN" dengan angka TOTAL GABUNGAN dari field "piutang" — itu bukan jawaban yang sesuai konteks pertanyaannya. Kalau user minta LIST/daftar (bukan cuma total), field "daftar" di dalamnya berisi rincian per invoice (customer, noFaktur, nilaiSisa, tanggal, kategori) — sebutkan nama-namanya, jangan cuma angka total.
 - Untuk "nilai stok"/"nilai rupiah stok" (total ATAU per company MKI/CFN), gunakan "nilaiStokRelevan" (field "totalNilaiRupiah" = harga x jumlah unit, sudah company-aware kalau MKI/CFN disebut). Kalau field "catatan" di dalamnya bilang ada kode tanpa data harga, sebutkan itu supaya user tahu totalnya belum 100% lengkap. Field ini null kalau pertanyaan tidak menyebut kata "nilai" DAN "stok" bersamaan.
+- Untuk "produk terlaris tapi stoknya menipis" atau "saran pemesanan/restock/isi stok gudang", gunakan "saranRestockProdukTerlaris" — ini SUDAH dihitung (kode, nama, qty terjual 2026, stok saat ini, rata-rata terjual per bulan, perkiraan berapa bulan lagi stoknya habis), urut dari yang PALING mendesak. Sampaikan sebagai SARAN konkret ("kode X sebaiknya di-PO sekarang, stok cuma cukup untuk Y bulan lagi berdasarkan kecepatan jualnya"), bukan cuma tabel angka. Kalau field "daftar" kosong tapi bukan null, artinya memang TIDAK ADA produk terlaris yang stoknya mendesak saat ini — sampaikan itu sebagai kabar baik, JANGAN dikira gagal ambil data.
 - Untuk pertanyaan "ekspedisi ke wilayah X pakai apa", WAJIB gunakan "wilayahEkspedisiRelevan" (lengkap, terurut dari paling sering) — JANGAN pakai transaksiRelevan untuk ini. Untuk pertanyaan ekspedisi SECARA UMUM (bukan per wilayah, mis. "berapa banyak pakai hand carry", "ekspedisi apa yang paling sering dipakai", "berapa yang same day"), gunakan "deliveryOverview" (sameDayCount, cutOffCount, handCarryCount, pihakKetigaCount, byEkspedisi).
 - Untuk "produk paling laku/terlaris", gunakan "topProduk" (byAmount = berdasarkan nilai rupiah, byQty = berdasarkan jumlah unit, sudah top-20).
 - Untuk "kabel 1 core"/"fiber optic 1 core" secara spesifik sebagai section dashboard, gunakan "fiberOptic1Core" (5 kode resmi: KSFO028, KSFO108, KSFO083, KSFO113, KSFO128, dengan tren bulanan & per kode) — untuk pencarian stok kabel 1-core secara umum tetap pakai "stokRelevan".
