@@ -2286,7 +2286,12 @@ async function handleChat(request, env) {
     daftarNamaCustomerPerBucket: customerBucketMatch,
     customerTidakAktif: inactiveCustomerMatch,
     fiberOptic1Core: wantsFo1Core && fo1coreRaw ? JSON.parse(fo1coreRaw) : null,
-    perbandinganTahunSebelumnya: wantsYoy && yoyRaw ? JSON.parse(yoyRaw) : null,
+    // Also unlocked by wantsTarget (not just wantsYoy) because this is the ONLY field holding
+    // the actual monthly/yearly SALES REVENUE target (targetSalesRevenue, totalTarget) — a plain
+    // "berapa target bulan ini/tahun ini" question matches wantsTarget's "target" keyword but not
+    // any YoY-specific word ("tahun lalu"/"2025"/growth), so without this it silently had no
+    // target data to answer with even though "target" was the whole point of the question.
+    perbandinganTahunSebelumnya: (wantsYoy || wantsTarget) && yoyRaw ? JSON.parse(yoyRaw) : null,
     zonaWilayahRelevan: zonaMatch,
     targetPerformaHarianBulanan: wantsTarget && dailyPerformanceRaw ? JSON.parse(dailyPerformanceRaw) : null,
     stokTidakBergerakDanKurangLaku: wantsStockMovement && stockMovementRaw ? JSON.parse(stockMovementRaw) : null,
@@ -2339,7 +2344,9 @@ Aturan:
 - Kamu JUGA boleh dan SEBAIKNYA memberi SARAN/REKOMENDASI operasional & penjualan yang proaktif kalau diminta (mis. "kasih saran customer yang perlu di-follow up", "gimana caranya tingkatkan penjualan bulan ini") — bukan cuma menjawab fakta pasif. Dasarkan saran itu PADA DATA yang ada di konteks (jangan mengarang taktik di luar apa yang datanya dukung): customer bucket "1x" atau "customerInsights.totalChurned" (tidak beli ≥60 hari) = kandidat prioritas untuk di-follow up supaya belanja lagi; "stokTidakBergerakDanKurangLaku" = kandidat untuk promo/diskon supaya stok bergerak; "piutangPerKategoriUmur"/"piutangCustomerTertinggi" = kandidat prioritas penagihan; "topProduk" = acuan untuk fokus stok/promosi. Sebutkan NAMA/DATA KONKRET dari konteks sebagai dasar saran, bukan saran generik tanpa angka.
 - Untuk perbandingan tahun ini vs tahun lalu ("pertumbuhan dibanding 2025", "naik/turun berapa persen dari tahun lalu"), gunakan "perbandinganTahunSebelumnya" (sales2025/sales2026, rev2025/rev2026 per bulan+total, growthSalesPersen, growthRevPersen, achievementSalesPersen/achievementRevPersen terhadap target tahunan).
 - Untuk "zona wilayah" (merah/kuning/hijau berdasar jumlah invoice, BEDA dari topik ekspedisi), "wilayah tanpa pembelanjaan", atau zona per provinsi, gunakan "zonaWilayahRelevan". Zona: hijau jika total invoice >50, kuning jika 20-50, merah jika <20.
-- Untuk target & pencapaian performa harian/bulanan (target invoice 280/bulan, target OTD/On-Time-Delivery 80%), gunakan "targetPerformaHarianBulanan" per bulan (invoiceUnik, pencapaianInvoicePersen, otdAccuracyPersen).
+- ADA DUA jenis "target" yang BEDA sumber datanya, jangan tertukar:
+  1. **TARGET PENJUALAN/SALES (Rupiah) bulanan & tahunan cabang** — ini yang dimaksud kalau user tanya polos "target bulan ini/tahun ini berapa", "sudah capai target belum", "target penjualan/sales Makassar berapa". WAJIB gunakan "perbandinganTahunSebelumnya": field "months" berisi "targetSalesRevenue" per bulan (target BULANAN), field "totalTarget" = penjumlahan seluruh target 12 bulan (target TAHUNAN) — kalau user tanya "target tahun ini berapa" tanpa sebut bulan, jawab pakai "totalTarget" ini. Pencapaian aktualnya: "achievementSalesPersen" (dari sales2026) dan "achievementRevPersen" (dari rev2026) = persentase terhadap "totalTarget" tersebut. Kalau user tanya bulan tertentu, cari objek bulan itu di "months" dan bandingkan "sales2026"/"rev2026" bulan itu terhadap "targetSalesRevenue" bulan itu.
+  2. **TARGET INVOICE & OTD** (operasional harian/bulanan, BEDA total dari target rupiah di atas) — gunakan "targetPerformaHarianBulanan" per bulan (target invoice 280/bulan, target OTD/On-Time-Delivery 80%, field invoiceUnik, pencapaianInvoicePersen, otdAccuracyPersen). Pakai ini HANYA kalau user eksplisit menyebut "invoice" atau "OTD/on-time delivery", bukan untuk pertanyaan target penjualan/sales umum.
 - Untuk "stok tidak bergerak/tidak laku" atau "produk terjual di bawah 5 unit", gunakan "stokTidakBergerakDanKurangLaku" (tidakBergerak = stok ada tapi 0 terjual sepanjang 2026, terjualDibawah5 = terjual tapi kurang dari 5 unit).
 - Untuk pertanyaan "customer/barang yang belum dikirim/belum diantar/belum terkirim", gunakan "transaksiBelumDikirim" (daftar lengkap transaksi tahun 2026 yang statusnya masih pending, belum "Complete" dan belum "Return") — sebutkan nama customer, kode barang, dan tanggal order-nya.
 - Pahami Bahasa Indonesia informal/sehari-hari dan istilah daerah (mis. "gimana" = "bagaimana", "kemarin" = hari sebelum ini, "pake"/"pakai" = sama). Jangan kaku pada ejaan baku.
