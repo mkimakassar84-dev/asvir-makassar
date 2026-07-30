@@ -6,8 +6,8 @@
 <title>MIRA</title>
 <meta name="theme-color" content="#9c2b2e" />
 <link rel="manifest" href="./manifest.json" />
-<link rel="icon" href="./icon-192.svg" />
-<link rel="apple-touch-icon" href="./icon-192.svg" />
+<link rel="icon" href="./assets/mira-avatar.jpg" />
+<link rel="apple-touch-icon" href="./assets/mira-avatar.jpg" />
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
   tailwind.config = {
@@ -33,9 +33,12 @@
        or hiding while scrolling the chat can't push this out of view (a known h-screen/100vh
        instability on mobile — 100svh stays pinned to the smallest/stable viewport size). -->
   <header class="sticky top-0 z-10 bg-victory text-sand px-4 py-3 flex items-center justify-between shadow-md shrink-0">
-    <div>
-      <h1 class="font-bold text-lg leading-tight">MIRA</h1>
-      <p id="statusText" class="text-xs text-sand/80">Memuat status data…</p>
+    <div class="flex items-center gap-2.5 min-w-0">
+      <img src="./assets/mira-avatar.jpg" alt="MIRA" class="w-9 h-9 rounded-full object-cover shrink-0 border-2 border-sand/40" />
+      <div class="min-w-0">
+        <h1 class="font-bold text-lg leading-tight">MIRA</h1>
+        <p id="statusText" class="text-xs text-sand/80">Memuat status data…</p>
+      </div>
     </div>
     <div class="flex items-center gap-3 shrink-0">
       <button
@@ -170,6 +173,7 @@
     const wrap = document.createElement('div');
     wrap.className = 'flex justify-start items-end gap-1.5';
     wrap.innerHTML = `
+      <img src="./assets/mira-avatar.jpg" alt="MIRA" class="w-7 h-7 rounded-full object-cover shrink-0 self-start mt-0.5" />
       <div class="ai-bubble max-w-[85%] bg-white border border-sand-border rounded-2xl rounded-tl-sm px-4 py-2.5 shadow-sm text-sm">
         <div class="ai-text whitespace-pre-wrap"><span class="typing-cursor">▍</span></div>
       </div>

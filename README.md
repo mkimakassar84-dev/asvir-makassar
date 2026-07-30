@@ -8,7 +8,7 @@ PWA chat AI (Gemini) untuk cabang Makassar — performa cabang, piutang, KPI per
 - `worker.js` — Backend Cloudflare Worker (`/chat`, `/sync`, `/status`)
 - `wrangler.toml` — Konfigurasi Worker
 - `index.html` — Frontend chat UI (Tailwind CDN + vanilla JS, streaming SSE)
-- `manifest.json`, `sw.js`, `icon-192.svg`, `icon-512.svg` — PWA
+- `manifest.json`, `sw.js`, `assets/mira-avatar.jpg` — PWA
 
 ## 1. Deploy Backend (Cloudflare Worker) — Gratis
 
