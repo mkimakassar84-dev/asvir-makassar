@@ -944,6 +944,10 @@ const QUERY_NOISE_WORDS = new Set([
   'belanja', 'membeli', 'beli', 'pembelian', 'order', 'pesan', 'memesan', 'customer', 'pelanggan',
   'sudah', 'belum', 'masih', 'punya', 'mempunyai', 'sekarang', 'tidak', 'siapa', 'berapa', 'gimana',
   'bagaimana', 'kah', 'dong', 'nih', 'sisa', 'saldo', 'total', 'jumlah', 'rincian', 'detail', 'data',
+  // Ordinary Indonesian words that ALSO happen to be real customer names in this dataset (e.g. a
+  // customer literally named "HARI") — confirmed live: "...30 sampai 60 hari terakhir" (asking
+  // about a day RANGE) matched customer "HARI" purely because the word appears in the question.
+  'saja', 'hari', 'lama', 'aktif',
 ]);
 
 // True typo tolerance (not just missing/partial words): each significant word in the stored
@@ -955,6 +959,14 @@ function customerNameFuzzyMatch(msgWords, customerName) {
   const nameWords = nameWordsOf(customerName).filter((w) => w.length >= 3 && !NAME_STOPWORDS.has(w));
   if (!nameWords.length) return false;
   const candidateWords = msgWords.filter((w) => !STOPWORDS.has(w) && !QUERY_NOISE_WORDS.has(w));
+  // Single-word customer names (e.g. "MASRI") are especially vulnerable to false positives — one
+  // word is the WHOLE name, so a single lucky edit-distance hit already clears the 70% threshold.
+  // An ordinary, extremely common Indonesian word ("saja") can coincidentally land within that
+  // tolerance of a short name and hijack a completely unrelated question — confirmed live: "siapa
+  // SAJA customer..." matched customer "MASRI". Not a word we can just add to a stoplist one at a
+  // time (any short word could collide with some short name) — require an EXACT match instead,
+  // multi-word names keep the typo tolerance since one wrong word alone won't clear 70% on those.
+  if (nameWords.length === 1) return candidateWords.includes(nameWords[0]);
   const hits = nameWords.filter((nw) =>
     candidateWords.some((mw) => mw === nw || (Math.abs(mw.length - nw.length) <= 2 && levenshtein(mw, nw) <= (nw.length <= 4 ? 1 : 2)))
   ).length;
@@ -1317,6 +1329,54 @@ function findCustomerBucketMatch(message, customerBuckets) {
     ditampilkan: sample.length,
     customers: sample,
     catatan: bucket === '1x' ? 'Bucket "1x" berarti customer ini baru belanja SATU KALI sepanjang 2026 dan belum pernah order lagi sejak itu — ini sudah otomatis berarti "belum belanja lagi", bukan filter terpisah yang perlu dicari lagi.' : undefined,
+  };
+}
+
+// Parses a "days since last purchase" range from phrasings like "30-60 hari", "30 sampai 60 hari",
+// "lebih dari 30 hari", "diatas 60 hari" — used by findInactiveCustomers below.
+function extractInactivityDayRange(message) {
+  const nMsg = normText(message);
+  const rangeMatch = nMsg.match(/(\d{1,3})\s*(?:-|sampai|s\/d|hingga)\s*(\d{1,3})\s*hari/);
+  if (rangeMatch) {
+    const a = parseInt(rangeMatch[1], 10);
+    const b = parseInt(rangeMatch[2], 10);
+    return { min: Math.min(a, b), max: Math.max(a, b) };
+  }
+  const gtMatch = nMsg.match(/(?:lebih dari|diatas|di atas|>\s*)(\d{1,3})\s*hari/);
+  if (gtMatch) return { min: parseInt(gtMatch[1], 10), max: Infinity };
+  const ltMatch = nMsg.match(/(?:kurang dari|dibawah|di bawah|<\s*)(\d{1,3})\s*hari/);
+  if (ltMatch) return { min: 0, max: parseInt(ltMatch[1], 10) };
+  return null;
+}
+
+// "Customer yang sudah lama tidak belanja, 30-60 hari terakhir" / "sudah berapa hari X tidak
+// belanja?" — the sync-computed customerList has daysSinceLastPurchase for EVERY customer, not
+// just the top 20 that customerInsights keeps, so an arbitrary day-range filter needs this
+// separately-cached full list (data:customerActivity). Also supports filtering by a specific
+// customer NAME (checked first) so "apakah [nama] termasuk yang lama tidak belanja?" works even
+// without a day range — a bare day range with nothing else returns null (nothing concrete to show).
+function findInactiveCustomers(message, customerActivity) {
+  if (!customerActivity || !customerActivity.length) return null;
+  const nMsg = normText(message);
+  const dayRange = extractInactivityDayRange(message);
+  const wantsInactivityTopic = dayRange || /lama\s*tidak\s*belanja|tidak\s*aktif|belum\s*belanja\s*lagi|tidak\s*order\s*lagi|sudah\s*berapa\s*hari/.test(nMsg);
+  if (!wantsInactivityTopic) return null;
+
+  const msgWords = nameWordsOf(message);
+  const namedCustomer = customerActivity.find((c) => c.customer && c.customer.length >= 4 && customerNameFuzzyMatch(msgWords, c.customer));
+  if (namedCustomer) return { modeCustomerSpesifik: true, customer: namedCustomer };
+  if (!dayRange) return null;
+
+  const items = customerActivity.filter(
+    (c) => c.daysSinceLastPurchase !== null && c.daysSinceLastPurchase >= dayRange.min && c.daysSinceLastPurchase <= dayRange.max
+  );
+  const sorted = [...items].sort((a, b) => b.daysSinceLastPurchase - a.daysSinceLastPurchase);
+  return {
+    modeCustomerSpesifik: false,
+    rentangHari: dayRange,
+    totalCustomer: sorted.length,
+    daftar: sorted.slice(0, 80),
+    catatan: sorted.length > 80 ? `Ditampilkan 80 dari ${sorted.length} customer (urut paling lama tidak belanja duluan).` : `Semua ${sorted.length} customer ditampilkan.`,
   };
 }
 
@@ -1714,6 +1774,10 @@ async function runSync(env) {
       namesByBucket[b].push({ customer: c.customer, totalSales: c.totalSales });
     }
     await env.SHEET_CACHE.put('data:customerBuckets', JSON.stringify(namesByBucket));
+    // Full per-customer activity (incl. daysSinceLastPurchase for EVERY customer, not just top 20
+    // like customerInsights below) — needed to filter "customer tidak aktif 30-60 hari" by an
+    // arbitrary day range or a specific name, neither of which a top-20-only list can support.
+    await env.SHEET_CACHE.put('data:customerActivity', JSON.stringify(customerList));
     const customerInsights = {
       totalCustomer: customerList.length,
       totalChurned: customerList.filter((c) => c.churned).length,
@@ -2034,7 +2098,7 @@ async function handleChat(request, env) {
     stockRaw, perfRaw, piutangRaw, kpiRaw, txRaw, wilayahRaw,
     revenueRaw, poGudangRaw, topProductsRaw, deliveryRaw, customerInsightsRaw, fo1coreRaw,
     yoyRaw, zonaWilayahRaw, dailyPerformanceRaw, stockMovementRaw, undeliveredRaw, customerBucketsRaw,
-    lastSync,
+    customerActivityRaw, lastSync,
   ] = await Promise.all([
     env.SHEET_CACHE.get('data:stock'),
     env.SHEET_CACHE.get('data:performance'),
@@ -2054,6 +2118,7 @@ async function handleChat(request, env) {
     env.SHEET_CACHE.get('data:stockMovement'),
     env.SHEET_CACHE.get('data:undelivered'),
     env.SHEET_CACHE.get('data:customerBuckets'),
+    env.SHEET_CACHE.get('data:customerActivity'),
     env.SHEET_CACHE.get('lastSync'),
   ]);
 
@@ -2079,6 +2144,7 @@ async function handleChat(request, env) {
   const poMatch = findPoGudangMatches(message, poGudangData?.items);
   const zonaMatch = findZonaWilayahMatches(message, zonaWilayahData);
   const customerBucketMatch = findCustomerBucketMatch(message, customerBucketsRaw ? JSON.parse(customerBucketsRaw) : null);
+  const inactiveCustomerMatch = findInactiveCustomers(message, customerActivityRaw ? JSON.parse(customerActivityRaw) : null);
   const referensi = matchReferences(message, allStock);
   const kpiNames = Array.isArray(kpiData?.kpi) ? kpiData.kpi.map((p) => p.nama).filter(Boolean) : [];
   const absensi = await fetchAttendanceContext(message, kpiNames, history);
@@ -2131,6 +2197,7 @@ async function handleChat(request, env) {
     poGudangCatatan: poMatch.note,
     customerInsights: wantsCustomerInsights && customerInsightsRaw ? JSON.parse(customerInsightsRaw) : null,
     daftarNamaCustomerPerBucket: customerBucketMatch,
+    customerTidakAktif: inactiveCustomerMatch,
     fiberOptic1Core: wantsFo1Core && fo1coreRaw ? JSON.parse(fo1coreRaw) : null,
     perbandinganTahunSebelumnya: wantsYoy && yoyRaw ? JSON.parse(yoyRaw) : null,
     zonaWilayahRelevan: zonaMatch,
@@ -2179,6 +2246,7 @@ Aturan:
 - Untuk pertanyaan PO Gudang (HANYA kalau user eksplisit tulis "PO"/"PO Gudang" — lihat aturan di atas), gunakan "poGudangRingkasan" (ringkasan per status: ditunggu/diterima/retur/lainnya + tren bulanan) untuk pertanyaan umum, atau "poGudangRelevan" (sudah difilter kode/status, field "poGudangCatatan" menjelaskan filternya) untuk pertanyaan spesifik.
 - Untuk "frekuensi customer", "customer paling sering belanja", atau "customer churn/tidak aktif", gunakan "customerInsights" (totalCustomer, totalChurned = tidak beli >=60 hari, buckets = pengelompokan berdasar jumlah invoice unik, topByFrekuensi, topBySales).
 - Untuk pertanyaan "SIAPA saja" customer di suatu bucket frekuensi (mis. "siapa yang belanja cuma 1x"), gunakan "daftarNamaCustomerPerBucket" — kalau null padahal user tanya "siapa", berarti bucket-nya tidak terdeteksi dari pertanyaan, minta user sebutkan lebih spesifik (1x/2x/3-5x/5-10x/lebih dari 10x). Kalau "ditampilkan" < "totalCustomer", sebutkan bahwa itu sebagian (urut dari nilai belanja terbesar), bukan semuanya. Baca field "catatan" kalau ada — mis. bucket "1x" sudah otomatis berarti "baru sekali belanja dan belum belanja lagi", jangan bilang butuh data tambahan untuk itu.
+- Untuk "customer yang sudah lama tidak belanja" dengan RENTANG HARI spesifik (mis. "30 sampai 60 hari terakhir", "lebih dari 45 hari"), atau cek satu nama customer spesifik apakah termasuk tidak aktif, gunakan "customerTidakAktif" — ini BEDA dari "customerInsights.totalChurned" (itu cuma total angka ≥60 hari, field ini punya rincian nama + berapa hari persisnya, dan rentangnya bisa custom). Kalau field "modeCustomerSpesifik" true, field "customer" berisi satu orang (dengan "daysSinceLastPurchase" dan "lastPurchase"-nya) — jawab langsung soal orang itu. Kalau false, field "daftar" berisi banyak customer dalam rentang hari yang diminta (field "rentangHari" menjelaskan rentangnya), urut dari yang PALING LAMA tidak belanja. Kalau null padahal user jelas menanyakan ini, kata kuncinya tidak terdeteksi — minta user sebutkan rentang harinya atau nama customernya.
 - Kamu JUGA boleh dan SEBAIKNYA memberi SARAN/REKOMENDASI operasional & penjualan yang proaktif kalau diminta (mis. "kasih saran customer yang perlu di-follow up", "gimana caranya tingkatkan penjualan bulan ini") — bukan cuma menjawab fakta pasif. Dasarkan saran itu PADA DATA yang ada di konteks (jangan mengarang taktik di luar apa yang datanya dukung): customer bucket "1x" atau "customerInsights.totalChurned" (tidak beli ≥60 hari) = kandidat prioritas untuk di-follow up supaya belanja lagi; "stokTidakBergerakDanKurangLaku" = kandidat untuk promo/diskon supaya stok bergerak; "piutangPerKategoriUmur"/"piutangCustomerTertinggi" = kandidat prioritas penagihan; "topProduk" = acuan untuk fokus stok/promosi. Sebutkan NAMA/DATA KONKRET dari konteks sebagai dasar saran, bukan saran generik tanpa angka.
 - Untuk perbandingan tahun ini vs tahun lalu ("pertumbuhan dibanding 2025", "naik/turun berapa persen dari tahun lalu"), gunakan "perbandinganTahunSebelumnya" (sales2025/sales2026, rev2025/rev2026 per bulan+total, growthSalesPersen, growthRevPersen, achievementSalesPersen/achievementRevPersen terhadap target tahunan).
 - Untuk "zona wilayah" (merah/kuning/hijau berdasar jumlah invoice, BEDA dari topik ekspedisi), "wilayah tanpa pembelanjaan", atau zona per provinsi, gunakan "zonaWilayahRelevan". Zona: hijau jika total invoice >50, kuning jika 20-50, merah jika <20.
