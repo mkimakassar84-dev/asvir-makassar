@@ -1958,36 +1958,10 @@ async function runSync(env) {
     const totalRev2026 = months.reduce((s, m) => s + m.rev2026, 0);
     const totalTarget = months.reduce((s, m) => s + m.targetSalesRevenue, 0);
     const growthPct = (curr, prev) => (prev > 0 ? ((curr - prev) / prev) * 100 : null);
-    // Per-month target achievement + MoM (vs bulan sebelumnya) + same-month YoY (vs bulan sama
-    // tahun lalu) — the plain "months" array above only carries raw figures, so these questions
-    // ("capaian target bulan ini", "naik/turun berapa dibanding bulan lalu") need this computed
-    // pass. Kept as a separate pass (not merged into the map above) since MoM needs to look at the
-    // PREVIOUS entry of the same already-built array.
-    const monthsWithTarget = months.map((m, i) => {
-      const prev = i > 0 ? months[i - 1] : null;
-      return {
-        ...m,
-        pencapaianSalesPersen: m.targetSalesRevenue > 0 ? (m.sales2026 / m.targetSalesRevenue) * 100 : null,
-        pencapaianRevPersen: m.targetSalesRevenue > 0 ? (m.rev2026 / m.targetSalesRevenue) * 100 : null,
-        growthSalesVsBulanSamaTahunLaluPersen: growthPct(m.sales2026, m.sales2025),
-        growthRevVsBulanSamaTahunLaluPersen: growthPct(m.rev2026, m.rev2025),
-        growthSalesVsBulanLaluPersen: prev ? growthPct(m.sales2026, prev.sales2026) : null,
-        growthRevVsBulanLaluPersen: prev ? growthPct(m.rev2026, prev.rev2026) : null,
-      };
-    });
-    // "Bulan ini"/"bulan lalu" shortcuts based on the server's real current date — the sheet's
-    // "2026" column is this running year, so this assumes "now" always falls within that year
-    // (true as of when this was written; if the sheet ever rolls to a new year, GIDS/IDX above
-    // need updating too, per the README note on sheet-structure changes).
-    const nowMonthIdx = new Date().getMonth();
-    const bulanIni = monthsWithTarget[nowMonthIdx] || null;
-    const bulanLalu = nowMonthIdx > 0 ? monthsWithTarget[nowMonthIdx - 1] : null;
     await env.SHEET_CACHE.put(
       'data:yoy',
       JSON.stringify({
-        months: monthsWithTarget,
-        bulanIni,
-        bulanLalu,
+        months,
         totalSales2025,
         totalSales2026: totalSales2026yoy,
         totalRev2025,
@@ -1999,7 +1973,7 @@ async function runSync(env) {
         achievementRevPersen: totalTarget > 0 ? (totalRev2026 / totalTarget) * 100 : null,
       })
     );
-    summary.sources.yoy = { ok: true, bulan: monthsWithTarget.length };
+    summary.sources.yoy = { ok: true, bulan: months.length };
   } catch (err) {
     summary.sources.yoy = { ok: false, error: String(err) };
   }
@@ -2272,8 +2246,8 @@ async function handleChat(request, env) {
   const wantsDeliveryOverview = /ekspedisi|pengiriman|delivery|handcarry|hand carry|same ?day|cut ?off|pihak ketiga/.test(nMsgTopic);
   const wantsCustomerInsights = /frekuensi|churn|tidak aktif|jarang belanja|paling sering belanja|loyal|repeat ?order/.test(nMsgTopic);
   const wantsFo1Core = /1.?core|fiber optic 1|kabel 1 core/.test(nMsgTopic);
-  const wantsYoy = /tahun lalu|2025|pertumbuhan|growth|dibanding tahun|yoy|year.?on.?year|bulan lalu|bulan sebelumnya|dibanding bulan/.test(nMsgTopic);
-  const wantsTarget = /target|capaian|pencapaian|\botd\b|on.?time.?delivery|akurasi delivery/.test(nMsgTopic);
+  const wantsYoy = /tahun lalu|2025|pertumbuhan|growth|dibanding tahun|yoy|year.?on.?year/.test(nMsgTopic);
+  const wantsTarget = /target|pencapaian|\botd\b|on.?time.?delivery|akurasi delivery/.test(nMsgTopic);
   const wantsStockMovement = /tidak bergerak|tidak laku|kurang laku|dibawah 5|dead ?stock|slow ?moving/.test(nMsgTopic);
   const wantsUndelivered = /belum dikirim|belum diantar|belum terkirim|belum sampai|pending.*kirim/.test(nMsgTopic);
 
@@ -2312,7 +2286,7 @@ async function handleChat(request, env) {
     daftarNamaCustomerPerBucket: customerBucketMatch,
     customerTidakAktif: inactiveCustomerMatch,
     fiberOptic1Core: wantsFo1Core && fo1coreRaw ? JSON.parse(fo1coreRaw) : null,
-    perbandinganTahunSebelumnya: (wantsYoy || wantsTarget) && yoyRaw ? JSON.parse(yoyRaw) : null,
+    perbandinganTahunSebelumnya: wantsYoy && yoyRaw ? JSON.parse(yoyRaw) : null,
     zonaWilayahRelevan: zonaMatch,
     targetPerformaHarianBulanan: wantsTarget && dailyPerformanceRaw ? JSON.parse(dailyPerformanceRaw) : null,
     stokTidakBergerakDanKurangLaku: wantsStockMovement && stockMovementRaw ? JSON.parse(stockMovementRaw) : null,
@@ -2363,13 +2337,7 @@ Aturan:
 - Untuk pertanyaan "SIAPA saja" customer di suatu bucket frekuensi (mis. "siapa yang belanja cuma 1x"), gunakan "daftarNamaCustomerPerBucket" — kalau null padahal user tanya "siapa", berarti bucket-nya tidak terdeteksi dari pertanyaan, minta user sebutkan lebih spesifik (1x/2x/3-5x/5-10x/lebih dari 10x). Kalau "ditampilkan" < "totalCustomer", sebutkan bahwa itu sebagian (urut dari nilai belanja terbesar), bukan semuanya. Baca field "catatan" kalau ada — mis. bucket "1x" sudah otomatis berarti "baru sekali belanja dan belum belanja lagi", jangan bilang butuh data tambahan untuk itu.
 - Untuk "customer yang sudah lama tidak belanja" dengan RENTANG HARI spesifik (mis. "30 sampai 60 hari terakhir", "lebih dari 45 hari"), atau cek satu nama customer spesifik apakah termasuk tidak aktif, gunakan "customerTidakAktif" — ini BEDA dari "customerInsights.totalChurned" (itu cuma total angka ≥60 hari, field ini punya rincian nama + berapa hari persisnya, dan rentangnya bisa custom). Kalau field "modeCustomerSpesifik" true, field "customer" berisi satu orang (dengan "daysSinceLastPurchase" dan "lastPurchase"-nya) — jawab langsung soal orang itu. Kalau false, field "daftar" berisi banyak customer dalam rentang hari yang diminta (field "rentangHari" menjelaskan rentangnya), urut dari yang PALING LAMA tidak belanja. Kalau null padahal user jelas menanyakan ini, kata kuncinya tidak terdeteksi — minta user sebutkan rentang harinya atau nama customernya.
 - Kamu JUGA boleh dan SEBAIKNYA memberi SARAN/REKOMENDASI operasional & penjualan yang proaktif kalau diminta (mis. "kasih saran customer yang perlu di-follow up", "gimana caranya tingkatkan penjualan bulan ini") — bukan cuma menjawab fakta pasif. Dasarkan saran itu PADA DATA yang ada di konteks (jangan mengarang taktik di luar apa yang datanya dukung): customer bucket "1x" atau "customerInsights.totalChurned" (tidak beli ≥60 hari) = kandidat prioritas untuk di-follow up supaya belanja lagi; "stokTidakBergerakDanKurangLaku" = kandidat untuk promo/diskon supaya stok bergerak; "piutangPerKategoriUmur"/"piutangCustomerTertinggi" = kandidat prioritas penagihan; "topProduk" = acuan untuk fokus stok/promosi. Sebutkan NAMA/DATA KONKRET dari konteks sebagai dasar saran, bukan saran generik tanpa angka.
-- Untuk TARGET & CAPAIAN sales/revenue (bulanan maupun tahunan) dan perbandingan dengan bulan/tahun lalu, gunakan "perbandinganTahunSebelumnya":
-  - Target & capaian BULAN INI: field "bulanIni" (bulan berjalan, ditentukan dari tanggal server saat sync) punya "targetSalesRevenue" (target bulan itu, SATU angka yang jadi acuan baik untuk sales maupun revenue), "sales2026"/"rev2026" (capaian aktual), "pencapaianSalesPersen"/"pencapaianRevPersen" (aktual/target × 100 — sudah dihitung, langsung pakai).
-  - Target & capaian TAHUN INI (2026): "totalTarget" (jumlah target semua bulan), "totalSales2026"/"totalRev2026" (aktual tahun berjalan), "achievementSalesPersen"/"achievementRevPersen" (aktual/totalTarget × 100).
-  - Capaian dibanding BULAN LALU (MoM): di dalam "bulanIni", field "growthSalesVsBulanLaluPersen"/"growthRevVsBulanLaluPersen" (persen naik/turun sales & revenue bulan ini vs bulan sebelumnya). Detail angka bulan lalu ada di "bulanLalu" (bentuknya sama seperti "bulanIni") kalau user minta perbandingan lengkap, bukan cuma persentase.
-  - Capaian dibanding TAHUN LALU: untuk TOTAL setahun pakai "growthSalesPersen"/"growthRevPersen" (total 2026 vs total 2025). Untuk bulan tertentu vs bulan yang SAMA tahun lalu (mis. "Juli 2026 vs Juli 2025"), tiap entri di "months" (termasuk "bulanIni") punya "growthSalesVsBulanSamaTahunLaluPersen"/"growthRevVsBulanSamaTahunLaluPersen".
-  - Untuk target/capaian bulan LAIN yang bukan bulan berjalan (mis. "target Maret berapa"), cari entrinya di array "months" (field "label" = nama bulan Indonesia) — tiap entri sudah punya field pencapaian & growth yang sama seperti "bulanIni".
-  - Field "targetSalesRevenue" bernilai 0/null untuk bulan yang belum ada datanya di sheet (mis. bulan yang belum berjalan) — kalau begitu, bilang jujur target belum tersedia, jangan hitung persentase dari pembagi 0.
+- Untuk perbandingan tahun ini vs tahun lalu ("pertumbuhan dibanding 2025", "naik/turun berapa persen dari tahun lalu"), gunakan "perbandinganTahunSebelumnya" (sales2025/sales2026, rev2025/rev2026 per bulan+total, growthSalesPersen, growthRevPersen, achievementSalesPersen/achievementRevPersen terhadap target tahunan).
 - Untuk "zona wilayah" (merah/kuning/hijau berdasar jumlah invoice, BEDA dari topik ekspedisi), "wilayah tanpa pembelanjaan", atau zona per provinsi, gunakan "zonaWilayahRelevan". Zona: hijau jika total invoice >50, kuning jika 20-50, merah jika <20.
 - Untuk target & pencapaian performa harian/bulanan (target invoice 280/bulan, target OTD/On-Time-Delivery 80%), gunakan "targetPerformaHarianBulanan" per bulan (invoiceUnik, pencapaianInvoicePersen, otdAccuracyPersen).
 - Untuk "stok tidak bergerak/tidak laku" atau "produk terjual di bawah 5 unit", gunakan "stokTidakBergerakDanKurangLaku" (tidakBergerak = stok ada tapi 0 terjual sepanjang 2026, terjualDibawah5 = terjual tapi kurang dari 5 unit).
