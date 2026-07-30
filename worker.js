@@ -1298,7 +1298,10 @@ function findPoGudangMatches(message, poItems) {
 function findCustomerBucketMatch(message, customerBuckets) {
   if (!customerBuckets) return null;
   const nMsg = normText(message);
-  if (!/\bsiapa\b|\bnama\b|\bdaftar\b|\blist\b/.test(nMsg)) return null;
+  // A specific frequency mention ("1x belanja", "yang 2x", ">10x") is specific/intentional enough
+  // on its own — requiring "siapa"/"nama"/"daftar"/"list" on top of that missed real phrasings like
+  // "kasih customer yang 1x belanja dan belum belanja lagi" (a real reported case), which mentions
+  // the bucket clearly but never those exact trigger words.
   let bucket = null;
   if (/\b1x\b|\bsatu kali\b|\bsekali\b/.test(nMsg)) bucket = '1x';
   else if (/\b2x\b|\bdua kali\b/.test(nMsg)) bucket = '2x';
@@ -1308,7 +1311,13 @@ function findCustomerBucketMatch(message, customerBuckets) {
   if (!bucket || !customerBuckets[bucket]) return null;
   const all = customerBuckets[bucket];
   const sample = [...all].sort((a, b) => b.totalSales - a.totalSales).slice(0, 60);
-  return { bucket, totalCustomer: all.length, ditampilkan: sample.length, customers: sample };
+  return {
+    bucket,
+    totalCustomer: all.length,
+    ditampilkan: sample.length,
+    customers: sample,
+    catatan: bucket === '1x' ? 'Bucket "1x" berarti customer ini baru belanja SATU KALI sepanjang 2026 dan belum pernah order lagi sejak itu — ini sudah otomatis berarti "belum belanja lagi", bukan filter terpisah yang perlu dicari lagi.' : undefined,
+  };
 }
 
 function detectPersonMention(message, knownNames) {
@@ -2169,7 +2178,8 @@ Aturan:
 - Untuk "kabel 1 core"/"fiber optic 1 core" secara spesifik sebagai section dashboard, gunakan "fiberOptic1Core" (5 kode resmi: KSFO028, KSFO108, KSFO083, KSFO113, KSFO128, dengan tren bulanan & per kode) — untuk pencarian stok kabel 1-core secara umum tetap pakai "stokRelevan".
 - Untuk pertanyaan PO Gudang (HANYA kalau user eksplisit tulis "PO"/"PO Gudang" — lihat aturan di atas), gunakan "poGudangRingkasan" (ringkasan per status: ditunggu/diterima/retur/lainnya + tren bulanan) untuk pertanyaan umum, atau "poGudangRelevan" (sudah difilter kode/status, field "poGudangCatatan" menjelaskan filternya) untuk pertanyaan spesifik.
 - Untuk "frekuensi customer", "customer paling sering belanja", atau "customer churn/tidak aktif", gunakan "customerInsights" (totalCustomer, totalChurned = tidak beli >=60 hari, buckets = pengelompokan berdasar jumlah invoice unik, topByFrekuensi, topBySales).
-- Untuk pertanyaan "SIAPA saja" customer di suatu bucket frekuensi (mis. "siapa yang belanja cuma 1x"), gunakan "daftarNamaCustomerPerBucket" — kalau null padahal user tanya "siapa", berarti bucket-nya tidak terdeteksi dari pertanyaan, minta user sebutkan lebih spesifik (1x/2x/3-5x/5-10x/lebih dari 10x). Kalau "ditampilkan" < "totalCustomer", sebutkan bahwa itu sebagian (urut dari nilai belanja terbesar), bukan semuanya.
+- Untuk pertanyaan "SIAPA saja" customer di suatu bucket frekuensi (mis. "siapa yang belanja cuma 1x"), gunakan "daftarNamaCustomerPerBucket" — kalau null padahal user tanya "siapa", berarti bucket-nya tidak terdeteksi dari pertanyaan, minta user sebutkan lebih spesifik (1x/2x/3-5x/5-10x/lebih dari 10x). Kalau "ditampilkan" < "totalCustomer", sebutkan bahwa itu sebagian (urut dari nilai belanja terbesar), bukan semuanya. Baca field "catatan" kalau ada — mis. bucket "1x" sudah otomatis berarti "baru sekali belanja dan belum belanja lagi", jangan bilang butuh data tambahan untuk itu.
+- Kamu JUGA boleh dan SEBAIKNYA memberi SARAN/REKOMENDASI operasional & penjualan yang proaktif kalau diminta (mis. "kasih saran customer yang perlu di-follow up", "gimana caranya tingkatkan penjualan bulan ini") — bukan cuma menjawab fakta pasif. Dasarkan saran itu PADA DATA yang ada di konteks (jangan mengarang taktik di luar apa yang datanya dukung): customer bucket "1x" atau "customerInsights.totalChurned" (tidak beli ≥60 hari) = kandidat prioritas untuk di-follow up supaya belanja lagi; "stokTidakBergerakDanKurangLaku" = kandidat untuk promo/diskon supaya stok bergerak; "piutangPerKategoriUmur"/"piutangCustomerTertinggi" = kandidat prioritas penagihan; "topProduk" = acuan untuk fokus stok/promosi. Sebutkan NAMA/DATA KONKRET dari konteks sebagai dasar saran, bukan saran generik tanpa angka.
 - Untuk perbandingan tahun ini vs tahun lalu ("pertumbuhan dibanding 2025", "naik/turun berapa persen dari tahun lalu"), gunakan "perbandinganTahunSebelumnya" (sales2025/sales2026, rev2025/rev2026 per bulan+total, growthSalesPersen, growthRevPersen, achievementSalesPersen/achievementRevPersen terhadap target tahunan).
 - Untuk "zona wilayah" (merah/kuning/hijau berdasar jumlah invoice, BEDA dari topik ekspedisi), "wilayah tanpa pembelanjaan", atau zona per provinsi, gunakan "zonaWilayahRelevan". Zona: hijau jika total invoice >50, kuning jika 20-50, merah jika <20.
 - Untuk target & pencapaian performa harian/bulanan (target invoice 280/bulan, target OTD/On-Time-Delivery 80%), gunakan "targetPerformaHarianBulanan" per bulan (invoiceUnik, pencapaianInvoicePersen, otdAccuracyPersen).
