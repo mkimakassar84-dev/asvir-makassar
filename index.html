@@ -275,6 +275,13 @@
     // to ".") once each segment's final spoken text is built, a few lines down.
     const PROTECTED_SEP = '@@SEP@@';
     t = t.replace(/(\d)\.(?=\d)/g, `$1${PROTECTED_SEP}`);
+    // Protect sentence-ending punctuation (.!?) that falls INSIDE a **bold** span from the sentence
+    // splitter below — otherwise a span like "**Halo! Selamat pagi.**" gets torn in half at the
+    // "!", leaving each half with an unpaired "**" that never finds its partner later and gets read
+    // out loud as literal asterisks instead of being stripped as emphasis. Restored to plain
+    // punctuation right before each segment's final spoken text is built, a few lines down.
+    const PROTECTED_PUNCT = '@@BP@@';
+    t = t.replace(/\*\*[^*]+\*\*/g, (span) => span.replace(/[.!?]/g, PROTECTED_PUNCT));
 
     const sentences = t.match(/[^.!?\n]+[.!?]*|\n+/g) || [t];
     const segments = [];
@@ -295,6 +302,7 @@
         const spoken = (boldMatch ? boldMatch[1] : part)
           .replace(/\*(\S(?:[^*]*\S)?)\*/g, '$1')
           .split(PROTECTED_SEP).join('')
+          .split(PROTECTED_PUNCT).join(' ')
           .replace(/[:<>|#=~_".,!?]/g, ' ')
           .replace(/[ \t]+/g, ' ')
           .trim();

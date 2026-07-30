@@ -1137,6 +1137,31 @@ function findTopPiutangCustomers(message, piutangDetail) {
   return { totalCustomerPunyaPiutang: ranked.length, top10: ranked.slice(0, 10) };
 }
 
+// "Siapa saja customer dengan piutang di atas 30 hari?" — lists actual invoices/names within one
+// age-category bucket. Distinct from "piutang.byKategori" (totals only, no names) and from
+// findPiutangByCustomer (single named customer) — this was the missing piece for "who's IN each
+// bucket", not just how much each bucket totals. Category strings must match sync's exact labels.
+function findPiutangByKategoriUmur(message, piutangDetail) {
+  if (!piutangDetail || !piutangDetail.length) return null;
+  const nMsg = normText(message);
+  // Order matters: "14-30 hari" and "0-13 hari" contain "30 hari"/substrings the generic ">30"/
+  // ">60" checks would also match, so the more specific range phrasings must be checked FIRST.
+  let kategori = null;
+  if (/14\s*-?\s*(sampai\s*)?30\s*hari/.test(nMsg)) kategori = '14 - 30 Hari';
+  else if (/0\s*-?\s*(sampai\s*)?13\s*hari|di\s*bawah\s*14\s*hari/.test(nMsg)) kategori = '0 - 13 Hari';
+  else if (/60\s*hari/.test(nMsg)) kategori = '> 60 Hari';
+  else if (/30\s*hari/.test(nMsg)) kategori = '> 30 Hari';
+  if (!kategori) return null;
+  const items = [...piutangDetail.filter((p) => p.kategori === kategori)].sort((a, b) => b.nilaiSisa - a.nilaiSisa);
+  return {
+    kategori,
+    jumlahInvoice: items.length,
+    totalNilai: items.reduce((sum, p) => sum + p.nilaiSisa, 0),
+    daftar: items.slice(0, 60),
+    catatan: items.length > 60 ? `Ditampilkan 60 dari ${items.length} invoice (urut nilai terbesar).` : `Semua ${items.length} invoice ditampilkan.`,
+  };
+}
+
 // AR2026 piutang detail has NO explicit company field — but noFaktur reliably encodes it via a
 // naming convention: "INV-CFN/..." = CFN, everything else ("INV/MKS/...", "BK/MKS/...") = MKI.
 // Derived here from that pattern, not a first-class field, which is why it's flagged in the note
@@ -2018,6 +2043,7 @@ async function handleChat(request, env) {
   const wilayahMatch = findWilayahMatches(message, allWilayahEkspedisi);
   const piutangMatch = findPiutangByCustomer(message, piutangData?.detail);
   const topPiutangMatch = findTopPiutangCustomers(message, piutangData?.detail);
+  const piutangKategoriMatch = findPiutangByKategoriUmur(message, piutangData?.detail);
   const piutangCompanyMatch = findPiutangByCompany(message, piutangData?.detail);
   const stockValueMatch = findStockValueSummary(message, allStock);
   const revenueData = revenueRaw ? JSON.parse(revenueRaw) : null;
@@ -2061,6 +2087,7 @@ async function handleChat(request, env) {
       : null,
     piutangRelevan: piutangMatch,
     piutangCustomerTertinggi: topPiutangMatch,
+    piutangPerKategoriUmur: piutangKategoriMatch,
     piutangPerCompany: piutangCompanyMatch,
     nilaiStokRelevan: stockValueMatch,
     stokRelevan: stokMatch.items,
@@ -2114,6 +2141,7 @@ Aturan:
 - Untuk pertanyaan RETUR/RETURN secara khusus ("retur apa saja bulan ini", "berapa banyak retur customer X"), gunakan "returRelevan" (sudah difilter khusus baris retur, boleh dipersempit lagi dengan tanggal/customer di pertanyaan yang sama) — field "catatan" menjelaskan kriteria deteksinya.
 - Untuk pertanyaan PIUTANG (sisa tagihan yang BELUM dibayar) customer tertentu, WAJIB gunakan "piutangRelevan" (rincian per invoice) — field umum "piutang" cuma total per kategori umur + "ratioARtoSalesPersen", TIDAK punya rincian per customer. Ini beda dari "pembayaranRelevan" (uang yang SUDAH masuk) — piutang = belum bayar, pembayaran = sudah bayar.
 - Untuk "customer dengan piutang tertinggi/terbesar", gunakan "piutangCustomerTertinggi" (sudah diurutkan, field "top10"). Kalau field ini null padahal user jelas menanyakan hal ini, berarti kata kuncinya tidak terdeteksi (bukan berarti datanya tidak ada) — minta user menegaskan pertanyaannya.
+- Untuk "siapa saja customer piutang di atas 30/60 hari" atau kategori umur piutang tertentu lainnya (14-30 hari, 0-13 hari), gunakan "piutangPerKategoriUmur" (field "daftar" berisi customer+noFaktur+nilaiSisa+tanggal per invoice dalam kategori itu) — ini beda dari "piutang.byKategori" yang cuma total angka tanpa nama. Sebutkan nama-nama customernya, bukan cuma totalnya, karena itu yang diminta.
 - Untuk piutang per company MKI/CFN, gunakan "piutangPerCompany" — WAJIB sebutkan ke user bahwa company ini diturunkan dari pola nomor faktur (bukan field asli terpisah), sesuai catatan di field itu, supaya user paham asalnya. JANGAN PERNAH menjawab pertanyaan "piutang MKI/CFN" dengan angka TOTAL GABUNGAN dari field "piutang" — itu bukan jawaban yang sesuai konteks pertanyaannya.
 - Untuk "nilai stok"/"nilai rupiah stok" (total ATAU per company MKI/CFN), gunakan "nilaiStokRelevan" (field "totalNilaiRupiah" = harga x jumlah unit, sudah company-aware kalau MKI/CFN disebut). Kalau field "catatan" di dalamnya bilang ada kode tanpa data harga, sebutkan itu supaya user tahu totalnya belum 100% lengkap. Field ini null kalau pertanyaan tidak menyebut kata "nilai" DAN "stok" bersamaan.
 - Untuk pertanyaan "ekspedisi ke wilayah X pakai apa", WAJIB gunakan "wilayahEkspedisiRelevan" (lengkap, terurut dari paling sering) — JANGAN pakai transaksiRelevan untuk ini. Untuk pertanyaan ekspedisi SECARA UMUM (bukan per wilayah, mis. "berapa banyak pakai hand carry", "ekspedisi apa yang paling sering dipakai", "berapa yang same day"), gunakan "deliveryOverview" (sameDayCount, cutOffCount, handCarryCount, pihakKetigaCount, byEkspedisi).
