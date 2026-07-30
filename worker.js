@@ -1357,6 +1357,21 @@ function resolveAttendanceDate(message) {
   return { date: today, explicit: false };
 }
 
+// "Siapa yang jam kerjanya paling banyak bulan ini?" — the monthly teamOverview sync (data:kpi)
+// already carries "totalWorkHours" per person (cumulative hours across the month so far), so this
+// is a plain sort of already-cached data — no extra live Apps Script call needed, unlike a
+// per-person personView fetch which would be slow done for every team member.
+function findWorkHoursRanking(message, kpiData) {
+  if (!kpiData || !Array.isArray(kpiData.kpi) || !kpiData.kpi.length) return null;
+  const nMsg = normText(message);
+  if (!(/jam\s*kerja/.test(nMsg) && /(terbanyak|paling banyak|terlama|paling lama|tertinggi|terkecil|paling sedikit|tersedikit)/.test(nMsg))) return null;
+  const ranking = [...kpiData.kpi]
+    .filter((p) => typeof p.totalWorkHours === 'number')
+    .sort((a, b) => b.totalWorkHours - a.totalWorkHours)
+    .map((p) => ({ nama: p.nama, totalJamKerja: p.totalWorkHours, hariKerjaBerjalan: p.hariKerjaBerjalan, hariSubmitReal: p.hariSubmitReal }));
+  return { bulan: kpiData.month, catatan: 'totalJamKerja = akumulasi jam kerja (jam pulang - jam datang) sepanjang bulan berjalan sampai hari ini, sudah terurut dari yang PALING BANYAK.', ranking };
+}
+
 async function fetchAttendanceContext(message, kpiNames, history) {
   const nMsg = normText(message);
   const wantsAttendance = /jam\s*masuk|jam\s*pulang|jam\s*datang|\btelat\b|terlambat|\babsen\b|absensi|kehadiran/.test(nMsg);
@@ -2038,6 +2053,7 @@ async function handleChat(request, env) {
   const allWilayahEkspedisi = wilayahRaw ? JSON.parse(wilayahRaw) : [];
   const piutangData = piutangRaw ? JSON.parse(piutangRaw) : null;
   const kpiData = kpiRaw ? JSON.parse(kpiRaw) : null;
+  const workHoursRanking = findWorkHoursRanking(message, kpiData);
   const poGudangData = poGudangRaw ? JSON.parse(poGudangRaw) : null;
   const zonaWilayahData = zonaWilayahRaw ? JSON.parse(zonaWilayahRaw) : null;
   const stokMatch = findStockMatches(message, allStock, history);
@@ -2114,6 +2130,7 @@ async function handleChat(request, env) {
     transaksiBelumDikirim: wantsUndelivered && undeliveredRaw ? JSON.parse(undeliveredRaw) : null,
     referensiLink: referensi,
     absensiDanIndikatorHarian: absensi,
+    rankingJamKerja: workHoursRanking,
     infoKantor: COMPANY_INFO,
     jabatanPersonel: PERSONNEL_ROLES,
   };
@@ -2174,6 +2191,7 @@ Aturan:
   - Sertakan URL APA ADANYA (utuh, bisa diklik, jangan dipotong). Format baris link di akhir jawaban: "🔗 Info lengkap: [Nama Halaman] — (URL)" — kalau lebih dari satu, buat daftar bullet, MAKSIMAL 3 link per jawaban.
   - Field ini TIDAK relevan untuk pertanyaan operasional (sales/stok/piutang/dll) — jangan sisipkan link produk ke jawaban yang tidak memintanya.
 - Untuk pertanyaan jam masuk/pulang karyawan, "kinerja"/"kinerja personil"/"kinerja harian" seseorang, atau isi indikator harian personel, gunakan "absensiDanIndikatorHarian". Jika berisi "jamMasukPulangTim" itu data satu tim untuk satu tanggal (per orang: datang/pulang true-false + jamDatang/jamPulang, dan field ...Ok menandakan apakah role tsb secara keseluruhan tepat waktu).
+- Untuk "siapa yang jam kerjanya paling banyak/paling sedikit" (akumulasi, BUKAN satu hari), gunakan "rankingJamKerja" (field "ranking" sudah terurut dari paling banyak, field "totalJamKerja" per orang adalah akumulasi jam kerja bulan berjalan sampai hari ini — kalau user tanya "paling sedikit", baca dari BAWAH list). Field ini beda dari "absensiDanIndikatorHarian" yang hanya data satu hari.
   - Kalau berisi field "indikator" untuk SATU orang di SATU tanggal (field "tanggal" ada, bukan "ringkasan10HariTerakhir") — ini setara tampilan "Cek Indikator per Tanggal" di dashboard. WAJIB tampilkan LENGKAP dan SELALU, BUKAN cuma kalau ditanya spesifik: jam datang/pulang, lalu SEMUA indikator satu per satu (label + status tercapai YA/TIDAK) BESERTA isi field "detail"-nya kalau ada (mis. untuk "Follow Up Piutang Customer" sebutkan nama tiap customer, hari menunggak, saldo piutang, keterangan evaluasinya; untuk "Membuat Laporan Piutang" sebutkan no invoice/customer/jumlah piutangnya; dst — apapun isi "detail" itu, jabarkan semuanya). Jangan diringkas jadi "X dari 10 tercapai" saja kalau datanya lengkap tersedia — user secara eksplisit minta detail seutuhnya seperti tampilan dashboard, bukan ringkasan angka.
   - Kalau field "catatan" terisi (mis. tanggal yang diminta belum ada data sehingga dipakai hari kerja terakhir yang tersedia), sebutkan catatan ini ke user supaya jelas data yang ditampilkan itu untuk tanggal berapa.
   - Kalau berisi "ringkasan10HariTerakhir" (untuk pertanyaan tren/rekap mingguan/bulanan), itu memang ringkasan angka per hari (jumlah indikator tercapai dari total) — BUKAN rincian, cukup sajikan apa adanya per hari.
