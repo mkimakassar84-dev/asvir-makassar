@@ -145,6 +145,28 @@ const YOUTUBE_VIDEOS_NONTEKNIS = [
   { judul: 'Falcom di Indonesia Internet Expo & Summit (JIExpo)', url: 'https://www.youtube.com/watch?v=g7bhV5oHcp4' },
 ];
 
+// Curated TikTok video map from @falcomtechnology — same keyword-matched approach as YOUTUBE_VIDEOS,
+// kept as a SEPARATE list (not merged into it) so the answer can correctly label which platform a
+// video is on. Only tutorial/spec/product-explainer videos are included here (event/promo content
+// was filtered out during curation) — never invent a video/keyword outside this list. "kategori" is
+// kept from the source data for provenance but isn't used in matching.
+const TIKTOK_VIDEOS = [
+  { kategori: 'spesifikasiProduk', judul: 'Spesifikasi OLT GPON 1 PON AC/DC FTB-1200 FASTLINK', url: 'https://www.tiktok.com/@falcomtechnology/video/7483372707996863764', keywords: ['OLT GPON 1 PON', 'OLT FTB-1200', 'OLT FASTLINK 1 PON', 'SPESIFIKASI OLT GPON'] },
+  { kategori: 'spesifikasiProduk', judul: 'Spesifikasi Fusion Splicer Jilong KL-500E, KL-280T, KL-360E', url: 'https://www.tiktok.com/@falcomtechnology/video/7498295696123120904', keywords: ['SPLICER JILONG', 'FUSION SPLICER', 'KL-500E', 'KL-280T', 'KL-360E'] },
+  { kategori: 'spesifikasiProduk', judul: 'Spesifikasi UPS PX260 600VA/360W', url: 'https://www.tiktok.com/@falcomtechnology/video/7523459153889692935', keywords: ['UPS PX260', 'UPS 600VA', 'SPESIFIKASI UPS'] },
+  { kategori: 'penjelasanProduk', judul: 'Apa itu Latensi saat Speedtest WiFi', url: 'https://www.tiktok.com/@falcomtechnology/video/7507569057445629202', keywords: ['LATENSI', 'APA ITU LATENSI', 'SPEEDTEST WIFI'] },
+  { kategori: 'penjelasanProduk', judul: 'Urutan Warna Core Kabel Fiber Optik', url: 'https://www.tiktok.com/@falcomtechnology/video/7538354387475860754', keywords: ['WARNA CORE', 'URUTAN WARNA KABEL FIBER', 'WARNA CORE FIBER OPTIK'] },
+  { kategori: 'penjelasanProduk', judul: 'Fast Connector vs Precon, Mana Lebih Bagus?', url: 'https://www.tiktok.com/@falcomtechnology/video/7528340645073669384', keywords: ['FAST CONNECTOR', 'PRECON', 'FAST CONNECTOR VS PRECON'] },
+  { kategori: 'penjelasanProduk', judul: 'Perbedaan Konektor UPC dan APC pada Jaringan Fiber Optik', url: 'https://www.tiktok.com/@falcomtechnology/video/7542447479036415240', keywords: ['UPC', 'APC', 'KONEKTOR UPC APC', 'PERBEDAAN UPC APC'] },
+  { kategori: 'penjelasanProduk', judul: 'Perbedaan Kabel FO G652D, G657A1, dan G657A2 (Performa Bending)', url: 'https://www.tiktok.com/@falcomtechnology/video/7551354790198922503', keywords: ['G652D', 'G657A1', 'G657A2', 'KABEL FO BENDING'] },
+  { kategori: 'penjelasanProduk', judul: 'Perbedaan WiFi 4, WiFi 5, dan WiFi 6 serta Sejarahnya', url: 'https://www.tiktok.com/@falcomtechnology/video/7507203290107743506', keywords: ['WIFI 4', 'WIFI 5', 'WIFI 6', 'SEJARAH WIFI', 'PERBEDAAN WIFI'] },
+  { kategori: 'penjelasanProduk', judul: 'Keunggulan dan Keuntungan OLT Outdoor 8 PON Fastlink', url: 'https://www.tiktok.com/@falcomtechnology/video/7527605710042057991', keywords: ['OLT OUTDOOR 8 PON', 'OLT 8 PON FASTLINK', 'KEUNGGULAN OLT OUTDOOR'] },
+  { kategori: 'penjelasanProduk', judul: 'Perkenalan ODP 16 Core Kapsul 2 in 1', url: 'https://www.tiktok.com/@falcomtechnology/video/7480005529000086792', keywords: ['ODP 16 CORE', 'ODP KAPSUL 2 IN 1', 'ODP 16 PORT'] },
+  { kategori: 'penjelasanProduk', judul: 'Istilah Tube Pressline pada Tangga Teleskopik', url: 'https://www.tiktok.com/@falcomtechnology/video/7463369379238006034', keywords: ['TUBE PRESSLINE', 'TANGGA TELESKOPIK'] },
+  { kategori: 'penjelasanProduk', judul: 'Perkenalan Wireless Router Netis', url: 'https://www.tiktok.com/@falcomtechnology/video/7471198431856299271', keywords: ['ROUTER NETIS', 'WIRELESS ROUTER NETIS'] },
+  { kategori: 'penjelasanProduk', judul: 'Perkenalan Switch Safety Lock', url: 'https://www.tiktok.com/@falcomtechnology/video/7477766025145011474', keywords: ['SWITCH SAFETY LOCK', 'POE SWITCH SAFETY LOCK'] },
+];
+
 function matchVideos(message) {
   const nMsg = normText(message);
   // Loose phrase matching (word-order tolerant) — a strict substring check missed cases like
@@ -154,8 +176,13 @@ function matchVideos(message) {
     .filter((x) => x.score >= 0.6)
     .sort((a, b) => b.score - a.score);
   const teknis = scored.slice(0, 3).map((x) => x.v);
+  const scoredTiktok = TIKTOK_VIDEOS
+    .map((v) => ({ v, score: Math.max(...v.keywords.map((kw) => phraseMatchScore(kw, nMsg))) }))
+    .filter((x) => x.score >= 0.6)
+    .sort((a, b) => b.score - a.score);
+  const tiktok = scoredTiktok.slice(0, 3).map((x) => x.v);
   const wantsEvent = /kegiatan falcom|berita falcom|event falcom|acara falcom|roadshow|opening cabang/.test(nMsg);
-  return { teknis, nonTeknis: wantsEvent ? YOUTUBE_VIDEOS_NONTEKNIS : [] };
+  return { teknis, tiktok, nonTeknis: wantsEvent ? YOUTUBE_VIDEOS_NONTEKNIS : [] };
 }
 
 const ARTICLE_LINK = { judul: 'Artikel & Berita Teknis', url: 'https://falcom-technology.com/articles/' };
@@ -650,7 +677,7 @@ function matchReferences(message, allStock) {
   const produkSpesifik =
     resolveKnownCodeOverride(message) ||
     (stockDescriptions.length ? resolveStockCodeToCatalogProduct(stockDescriptions.join(' ')) : findProductCatalogMatch(message));
-  const hasAnyMatch = kategoriProduk.length || solusiSistem.length || wantsTutorial || wantsArticle || video.teknis.length || produkSpesifik;
+  const hasAnyMatch = kategoriProduk.length || solusiSistem.length || wantsTutorial || wantsArticle || video.teknis.length || video.tiktok.length || produkSpesifik;
   return {
     produkSpesifikCocok: produkSpesifik,
     kategoriProduk,
@@ -658,9 +685,10 @@ function matchReferences(message, allStock) {
     // Generic bundle (Bantuan & Dukungan + Kelas Pelatihan FTTX + Galeri Video + Channel) is a
     // FALLBACK only — if a specific video already matched, that's more useful/less cluttered
     // than dumping all 4 generic links alongside it.
-    tutorialDanDukungan: wantsTutorial && !video.teknis.length ? TUTORIAL_LINKS : [],
+    tutorialDanDukungan: wantsTutorial && !video.teknis.length && !video.tiktok.length ? TUTORIAL_LINKS : [],
     artikel: wantsArticle ? [ARTICLE_LINK] : [],
     videoTutorialRelevan: video.teknis,
+    videoTiktokRelevan: video.tiktok,
     videoKegiatanFalcom: video.nonTeknis,
     // Only fall back to generic pages when there's a clear product-spec question with no
     // specific category match — never for unrelated operational questions (sales/stok/piutang).
@@ -2436,6 +2464,7 @@ Aturan:
   - Pertanyaan TUTORIAL/cara pasang/cara pakai/troubleshooting → sertakan link dari "tutorialDanDukungan" (Bantuan & Dukungan, Kelas Pelatihan FTTX, Galeri Video, Channel YouTube).
   - Pertanyaan artikel/berita teknis → sertakan link dari "artikel".
   - Jika "videoTutorialRelevan" berisi entri (video YouTube spesifik yang cocok dengan kata kunci pertanyaan), WAJIB sertakan sebagai "🎥 Tonton tutorialnya:" — ini lebih spesifik/diutamakan daripada link kategori umum. Kalau kosong tapi topiknya masih seputar produk yang sama, arahkan ke kategori produk terkait (JANGAN pilih video acak dari luar daftar).
+  - Jika "videoTiktokRelevan" berisi entri (video TikTok @falcomtechnology spesifik yang cocok, biasanya berisi spesifikasi atau penjelasan singkat produk), WAJIB sertakan juga sebagai "🎵 Tonton di TikTok:" — beri label platformnya jelas TikTok, JANGAN dicampur/disebut sebagai video YouTube. Kalau "videoTutorialRelevan" DAN "videoTiktokRelevan" sama-sama berisi, tampilkan keduanya (YouTube dulu baru TikTok), jangan pilih salah satu saja.
   - "videoKegiatanFalcom" hanya untuk pertanyaan soal kegiatan/berita/event Falcom (bukan teknis produk) — pakai kalau ada isinya.
   - Kalau semuanya kosong tapi jelas ini pertanyaan spek produk tanpa kategori yang cocok → pakai "fallbackUmum" (Semua Produk/Kontak).
   - Kalau kamu tidak yakin dengan detail spesifikasi teknis suatu produk (bukan dari data konteks), katakan jujur "[perlu verifikasi lebih lanjut]" lalu arahkan ke link terkait — jangan menebak angka spesifikasi.
