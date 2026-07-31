@@ -111,6 +111,7 @@ const YOUTUBE_VIDEOS = [
   { judul: 'Kabel Koaksial RG11 & RG6', url: 'https://www.youtube.com/watch?v=WpBoDU9Q7Fo', keywords: ['kabel koaksial', 'rg6', 'rg11', 'kode kabel coaxial', 'struktur kabel coax', 'kabel antena', 'tv kabel'] },
   { judul: 'Kabel Fiber Optik Armored vs Non Armored', url: 'https://www.youtube.com/watch?v=Qeqyo6aoCgA', keywords: ['kabel fiber armored', 'kabel fiber non armored', 'perbedaan armored', 'tahan gigitan tikus', 'pilih kabel fiber'] },
   { judul: 'Kelebihan ODP Berbahan PC/ABS di Jaringan FTTH', url: 'https://www.youtube.com/watch?v=phrnH1QICgE', keywords: [' odp', 'optical distribution point', 'odp pc abs', 'kotak pembagi fiber', 'material odp'] },
+  { judul: 'Pentingnya Memilih ODP 8 Core & 16 Core yang Tepat untuk Jaringan Internet Stabil', url: 'https://youtu.be/0NNwWZ9mlO0', keywords: ['odp 8 core', 'odp 16 core', 'pilih odp', 'memilih odp', 'odp jaringan stabil', 'odp yang tepat'] },
   { judul: 'Fusion Splicer Jilong KL-260T', url: 'https://www.youtube.com/watch?v=BImn1JIng7s', keywords: ['fusion splicer kl-260t', 'kl-260t', 'splicer jilong', 'alat sambung fiber', 'trunk line splicer'] },
   { judul: 'OLT GPON 3 PON Fastlink (kelebihan & cara setting)', url: 'https://www.youtube.com/watch?v=pEZHy1OrByU', keywords: ['olt gpon 3 pon', 'olt 3 pon', 'fastlink olt', 'cara setting olt', 'konfigurasi gpon', 'tutorial olt'] },
   { judul: 'Media Transmisi Terpandu (LAN, Fiber Optik, Coaxial)', url: 'https://www.youtube.com/watch?v=VjYtpEj6sIE', keywords: ['jenis kabel jaringan', 'media transmisi', 'perbedaan kabel lan fiber coaxial', 'dasar kabel jaringan'] },
@@ -990,7 +991,7 @@ function findRestockCandidates(message, topProductsByQty, allStock) {
 
   const stockByKode = {};
   for (const p of allStock) stockByKode[p.kode] = p;
-  const monthsElapsed = new Date().getMonth() + 1;
+  const monthsElapsed = nowMakassar().getMonth() + 1;
 
   const candidates = topProductsByQty
     .map((tp) => {
@@ -1195,6 +1196,40 @@ const MONTHS = {
   oktober: 10, okt: 10, november: 11, nov: 11, desember: 12, des: 12,
 };
 
+// Cloudflare Workers run entirely in UTC — every "what is today/this month" computation in this
+// file used to call new Date() directly, which is several hours off from Makassar's real calendar
+// day around midnight (WITA = UTC+8, no DST). This fakes WITA wall-clock time by shifting the
+// epoch, so ordinary getFullYear()/getMonth()/getDate() on the result read as Makassar local time
+// instead of raw UTC. Use this everywhere "now" means "now in Makassar", not new Date() directly.
+function nowMakassar() {
+  return new Date(Date.now() + 8 * 60 * 60 * 1000);
+}
+
+// "Sales hari ini?", "siapa yang belanja kemarin?", "3 hari lalu gimana?" — a real reported gap:
+// only exact dates ("13 Juli 2026") were recognized, relative day words matched nothing at all.
+// Mirrors the phrasing resolveAttendanceDate already recognized for KPI/absensi questions, plus
+// "N hari (yang) lalu" which that one didn't have either.
+function extractRelativeDateMention(message) {
+  const t = normText(message);
+  const now = nowMakassar();
+  const dayOffset = (n) => {
+    const d = new Date(now.getTime() - n * 86400000);
+    return { day: d.getDate(), month: d.getMonth() + 1, year: d.getFullYear() };
+  };
+  const nHariLalu = t.match(/(\d+)\s*hari\s*(yang\s*)?lalu/);
+  if (nHariLalu) return dayOffset(parseInt(nHariLalu[1], 10));
+  if (/\bkemarin\s*lusa\b/.test(t)) return dayOffset(2);
+  if (/\bkemarin\b/.test(t)) return dayOffset(1);
+  if (/\bhari\s*ini\b|\bsekarang\b|\bskrg\b|\bhari\s*ni\b/.test(t)) return dayOffset(0);
+  return null;
+}
+
+// Combines exact-date and relative-date recognition — use this instead of extractDateMention
+// alone anywhere a plain "kapan/tanggal" question could also be phrased relatively.
+function extractAnyDateMention(message) {
+  return extractDateMention(message) || extractRelativeDateMention(message);
+}
+
 function extractDateMention(message) {
   const t = normText(message);
   // Scan ALL "number word" candidates, not just the first — messages routinely have an earlier
@@ -1205,7 +1240,7 @@ function extractDateMention(message) {
     const day = parseInt(m[1], 10);
     const month = MONTHS[m[2]];
     if (!month || day < 1 || day > 31) continue;
-    const year = m[3] ? parseInt(m[3], 10) : new Date().getFullYear();
+    const year = m[3] ? parseInt(m[3], 10) : nowMakassar().getFullYear();
     return { day, month, year };
   }
   return null;
@@ -1222,7 +1257,7 @@ function extractDateRangeMention(message) {
     const d2 = parseInt(m[2], 10);
     const month = MONTHS[m[3]];
     if (!month || d1 < 1 || d1 > 31 || d2 < 1 || d2 > 31) continue;
-    const year = m[4] ? parseInt(m[4], 10) : new Date().getFullYear();
+    const year = m[4] ? parseInt(m[4], 10) : nowMakassar().getFullYear();
     return { startDay: Math.min(d1, d2), endDay: Math.max(d1, d2), month, year };
   }
   return null;
@@ -1235,11 +1270,11 @@ function extractDateRangeMention(message) {
 function extractMonthMention(message) {
   const t = normText(message);
   if (/\bbulan ini\b/.test(t)) {
-    const now = new Date();
+    const now = nowMakassar();
     return { month: now.getMonth() + 1, year: now.getFullYear() };
   }
   if (/\bbulan lalu\b/.test(t)) {
-    const now = new Date();
+    const now = nowMakassar();
     const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     return { month: d.getMonth() + 1, year: d.getFullYear() };
   }
@@ -1249,7 +1284,7 @@ function extractMonthMention(message) {
   }
   for (const m of t.matchAll(/\bbulan\s+([a-z]+)\b/g)) {
     const month = MONTHS[m[1]];
-    if (month) return { month, year: new Date().getFullYear() };
+    if (month) return { month, year: nowMakassar().getFullYear() };
   }
   return null;
 }
@@ -1315,7 +1350,7 @@ function customerNameFuzzyMatch(msgWords, customerName) {
 function findTransactionMatches(message, allTransactions) {
   if (!allTransactions.length) return { items: [], note: '' };
   const rangeMention = extractDateRangeMention(message);
-  const dateMention = !rangeMention ? extractDateMention(message) : null;
+  const dateMention = !rangeMention ? extractAnyDateMention(message) : null;
 
   const byDateDesc = (a, b) => {
     const da = parseFlexibleDate(a.tanggal);
@@ -1361,6 +1396,27 @@ function findTransactionMatches(message, allTransactions) {
     noteParts.push(`kode ${hitKodes.join(', ')}`);
   }
 
+  // Pre-computed totals for a date/range-filtered result — a real reported bug: asking Gemini to
+  // manually sum "amount" across the raw matched rows itself (mis. "sales kemarin?") produced a
+  // wrong total even for just 19 rows, the same class of arithmetic-reliability issue every other
+  // aggregate in this file is already pre-computed to avoid. "totalAmount" mirrors how the monthly
+  // "performa.sales" is computed (every row summed, retur's negative amount nets out naturally),
+  // "jumlahInvoiceUnik" excludes retur per the invoice-uniqueness rule used everywhere else.
+  const ringkasanTanggal = (rangeMention || dateMention)
+    ? {
+        // Explicit, grounded date label — WAJIB dibaca apa adanya, jangan Gemini hitung/tebak
+        // sendiri tanggalnya (itu sumber salah label "kemarin" yang sebenarnya ditemukan saat
+        // testing: total angkanya benar tapi label tanggalnya di teks jawaban meleset/ditebak).
+        periode: rangeMention
+          ? `${rangeMention.startDay}-${rangeMention.endDay}/${rangeMention.month}/${rangeMention.year}`
+          : `${dateMention.day}/${dateMention.month}/${dateMention.year}`,
+        totalAmount: matched.reduce((s, tx) => s + tx.amount, 0),
+        totalQty: matched.reduce((s, tx) => s + tx.qty, 0),
+        jumlahBarisTransaksi: matched.length,
+        jumlahInvoiceUnik: new Set(matched.filter((tx) => !tx.isRetur).map((tx) => tx.invoice)).size,
+      }
+    : null;
+
   let note = '';
   if (noteParts.length) {
     // Date and/or code filter(s) applied above.
@@ -1385,7 +1441,7 @@ function findTransactionMatches(message, allTransactions) {
     note += ` (menampilkan 150 TERBARU dari ${matched.length} baris — sisanya lebih lama)`;
     matched = matched.slice(0, 150);
   }
-  return { items: matched, note };
+  return { items: matched, note, ringkasanTanggal };
 }
 
 // "Retur apa saja bulan ini?" / "berapa banyak retur customer X?" — every transaction row already
@@ -1399,7 +1455,7 @@ function findReturTransactions(message, allTransactions) {
   if (!/\bretur\b|\breturn\b|\bdikembalikan\b|\bpengembalian barang\b/.test(nMsg)) return null;
   let matched = allTransactions.filter((tx) => tx.isRetur);
   const rangeMention = extractDateRangeMention(message);
-  const dateMention = !rangeMention ? extractDateMention(message) : null;
+  const dateMention = !rangeMention ? extractAnyDateMention(message) : null;
   if (rangeMention) {
     matched = matched.filter((tx) => {
       const d = parseFlexibleDate(tx.tanggal);
@@ -1644,6 +1700,55 @@ function findPaymentsByCustomer(message, paymentDetail, piutangDetail) {
   };
 }
 
+// "Siapa piutang terbayar hari ini?"/"pembayaran kemarin apa saja?" — a real reported gap:
+// findPaymentsByCustomer above REQUIRES a customer name match and returns null without one, so a
+// plain date-based payment question (no customer named) always came back empty. This is the
+// date-first counterpart — lists ALL payments on a date/range across every customer, instead of
+// one customer's full history. Gated on an explicit payment-topic word so it doesn't fire on a
+// plain sales-by-date question (that's findTransactionMatches' job, a different field/topic).
+function findPaymentsByDate(message, paymentDetail, piutangDetail) {
+  if (!paymentDetail || !paymentDetail.length) return null;
+  const nMsg = normText(message);
+  const wantsPayment = /bayar|lunas|pelunasan|\brevenue\b|pendapatan/.test(nMsg);
+  if (!wantsPayment) return null;
+  const rangeMention = extractDateRangeMention(message);
+  const dateMention = !rangeMention ? extractAnyDateMention(message) : null;
+  if (!rangeMention && !dateMention) return null;
+
+  const openInvoices = new Map();
+  for (const p of piutangDetail || []) {
+    if (p.noFaktur) openInvoices.set(p.noFaktur, p.nilaiSisa);
+  }
+
+  const matched = paymentDetail
+    .filter((p) => {
+      const d = parseFlexibleDate(p.tanggal);
+      if (!d) return false;
+      if (rangeMention) {
+        return d.getMonth() + 1 === rangeMention.month && d.getFullYear() === rangeMention.year
+          && d.getDate() >= rangeMention.startDay && d.getDate() <= rangeMention.endDay;
+      }
+      return d.getDate() === dateMention.day && d.getMonth() + 1 === dateMention.month && d.getFullYear() === dateMention.year;
+    })
+    .map((p) => {
+      const sisa = openInvoices.get(p.noFaktur);
+      return { ...p, statusFaktur: sisa === undefined ? 'LUNAS' : `BELUM LUNAS — sisa piutang faktur ini saat ini Rp${sisa.toLocaleString('id-ID')}` };
+    })
+    .sort((a, b) => {
+      const da = parseFlexibleDate(a.tanggal);
+      const db = parseFlexibleDate(b.tanggal);
+      return (db ? db.getTime() : 0) - (da ? da.getTime() : 0);
+    });
+
+  return {
+    periode: rangeMention ? `${rangeMention.startDay}-${rangeMention.endDay}/${rangeMention.month}/${rangeMention.year}` : `${dateMention.day}/${dateMention.month}/${dateMention.year}`,
+    jumlahPembayaran: matched.length,
+    totalDibayar: matched.reduce((sum, p) => sum + p.amount, 0),
+    daftar: matched.slice(0, 100),
+    catatan: matched.length > 100 ? `Ditampilkan 100 dari ${matched.length} pembayaran (waktu Makassar/WITA).` : 'Waktu Makassar/WITA.',
+  };
+}
+
 // PO Gudang item-level lookup ("PO kode X status apa", "PO yang masih ditunggu apa saja") —
 // only the matched subset is sent to Gemini, the full ~250-row list stays out of every request.
 function findPoGudangMatches(message, poItems) {
@@ -1879,7 +1984,7 @@ function resolveAttendanceDate(message) {
   const nMsg = normText(message);
   const explicit = extractDateMention(message);
   if (explicit) return { date: new Date(explicit.year, explicit.month - 1, explicit.day), explicit: true };
-  const today = new Date();
+  const today = nowMakassar();
   if (/\bkemarin lusa\b/.test(nMsg)) { const d = new Date(today); d.setDate(d.getDate() - 2); return { date: d, explicit: true }; }
   if (/\bkemarin\b/.test(nMsg)) { const d = new Date(today); d.setDate(d.getDate() - 1); return { date: d, explicit: true }; }
   if (/\bhari ini\b|\bsekarang\b|\bskrg\b|\bhari ni\b/.test(nMsg)) return { date: today, explicit: true };
@@ -2266,7 +2371,7 @@ async function runSync(env) {
         .map(([nama, jumlah]) => ({ nama, jumlah })),
     };
 
-    const now = new Date();
+    const now = nowMakassar();
     const customerList = Object.values(byCustomer).map((c) => {
       const daysSince = c.lastPurchase ? Math.floor((now - c.lastPurchase) / 86400000) : null;
       return {
@@ -2585,7 +2690,7 @@ async function runSync(env) {
 
   // 4) KPI Personel — reuses the existing, already-decoded Apps Script endpoint
   try {
-    const now = new Date();
+    const now = nowMakassar();
     const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     const res = await fetch(`${KPI_WEBAPP_URL}?action=teamOverview&month=${month}`);
     const kpi = await res.json();
@@ -2666,6 +2771,7 @@ async function handleChat(request, env) {
   const restockMatch = findRestockCandidates(message, topProductsRaw ? JSON.parse(topProductsRaw).byQty : null, allStock);
   const revenueData = revenueRaw ? JSON.parse(revenueRaw) : null;
   const paymentMatch = findPaymentsByCustomer(message, revenueData?.detail, piutangData?.detail);
+  const paymentByDateMatch = findPaymentsByDate(message, revenueData?.detail, piutangData?.detail);
   const poMatch = findPoGudangMatches(message, poGudangData?.items);
   const zonaMatch = findZonaWilayahMatches(message, zonaWilayahData);
   const customerBucketMatch = findCustomerBucketMatch(message, customerBucketsRaw ? JSON.parse(customerBucketsRaw) : null, history, piutangData?.detail);
@@ -2685,7 +2791,7 @@ async function handleChat(request, env) {
   // "ranking produk by sales dan quantity" both matched nothing (no literal "terlaris"/"top
   // produk"/"best seller") and wrongly said the data wasn't available, even though it exists.
   const wantsTopProduk = /terlaris|paling laku|paling laris|top ?produk|produk ?top|best ?seller|produk.*populer|(banyak|terbanyak) terjual|(ranking|peringkat|urutan|urutkan).*produk|produk.*(ranking|peringkat)/.test(nMsgTopic);
-  const wantsDeliveryOverview = /ekspedisi|pengiriman|delivery|handcarry|hand carry|same ?day|cut ?off|pihak ketiga/.test(nMsgTopic);
+  const wantsDeliveryOverview = /ekspedisi|pengiriman|pengantaran|delivery|diantar|dikirim|dibawa|dibawakan|handcarry|hand carry|same ?day|cut ?off|pihak ketiga/.test(nMsgTopic);
   const wantsCustomerInsights = /frekuensi|churn|tidak aktif|jarang belanja|paling sering belanja|loyal|repeat ?order/.test(nMsgTopic);
   const wantsFo1Core = /1.?core|fiber optic 1|kabel 1 core/.test(nMsgTopic);
   const wantsYoy = /tahun lalu|2025|pertumbuhan|growth|dibanding tahun|yoy|year.?on.?year/.test(nMsgTopic);
@@ -2704,6 +2810,7 @@ async function handleChat(request, env) {
     // sent wholesale, only the customer-matched subset via pembayaranRelevan.
     revenue: revenueData ? { monthly: revenueData.monthly, total2026: revenueData.total2026 } : null,
     pembayaranRelevan: paymentMatch,
+    pembayaranPerTanggal: paymentByDateMatch,
     // Only the compact totals go in by default — the 189-row invoice detail is never sent
     // wholesale, only the customer-matched subset via piutangRelevan (keeps every other
     // question's context small, same principle as stock/transactions retrieval).
@@ -2720,6 +2827,7 @@ async function handleChat(request, env) {
     stokCatatan: stokMatch.note,
     transaksiRelevan: txMatch.items,
     transaksiCatatan: txMatch.note,
+    ringkasanTanggalTransaksi: txMatch.ringkasanTanggal,
     returRelevan: returMatch,
     wilayahEkspedisiRelevan: wilayahMatch,
     topProduk: wantsTopProduk && topProductsRaw ? enrichTopProdukWithNama(JSON.parse(topProductsRaw), allStock) : null,
@@ -2763,8 +2871,9 @@ Aturan:
 - Riwayat percakapan membahas topik lain untuk entitas SAMA (mis. piutang lalu tanya pembayaran) → JANGAN ragu pakai data BARU yang tersedia di giliran ini, TAPI juga JANGAN mengarang kalau memang kosong hanya karena "terasa nyambung" — selalu cek ulang field konteks saat ini.
 - User sering typo/singkat/kode dengan-tanpa spasi-strip (mis. "DKB180"="DKB-180"="DKB 180") — pahami maksudnya, jangan langsung "tidak ditemukan".
 - Jumlah spesifik diminta (mis. "10 wilayah terbesar") → berikan SEMUA sesuai jumlah itu kalau tersedia, jangan dipotong.
+- WAKTU: semua tanggal/jam di data dan semua perhitungan "hari ini"/"kemarin"/"bulan ini" WAJIB pakai zona waktu Makassar (WITA, GMT+8) — bukan zona waktu server. "Hari ini" berarti hari ini di Makassar, "kemarin" = kemarin di Makassar, dst. Kalau user tanya "sales/pembayaran/piutang/delivery hari ini" atau "kemarin" atau "2 hari lalu", ini SUDAH bisa dijawab dari data yang tersedia (field-field transaksi/pembayaran sudah difilter sesuai tanggal itu kalau relevan) — JANGAN bilang "belum bisa" atau "data berbasis bulanan" hanya karena tidak persis sebulan penuh, cek dulu field yang sesuai topiknya.
 - TERBAIK/TERBURUK/TERTINGGI/TERENDAH/TERBAWAH (semua topik): cek dulu field-nya DAFTAR LENGKAP atau TOP-N terpotong sebelum jawab versi terbalik dari sebuah ranking. DAFTAR LENGKAP ("ditampilkan"=="totalCustomer", atau "rankingKinerjaPersonel"/"zonaWilayahRelevan.wilayah") → aman baca dari BAWAH untuk "terendah". TOP-N SAJA ("topProduk"/"topProdukPerBulan"/"topWilayah"/"customerInsights.topByFrekuensi"/"topBySales" top-20, "piutangCustomerTertinggi.top10") → JANGAN ambil item terbawah lalu bilang "terendah" (itu cuma peringkat ke-10/20, bukan benar-benar terendah) — jujur soal keterbatasan ini, tawarkan alternatif kalau ada (mis. "stokTidakBergerakDanKurangLaku" untuk "produk paling tidak laku").
-- TIGA hal beda, jangan campur: (1) SALES = transaksi/order ("transaksiRelevan"/"performa"). (2) PEMBAYARAN/PELUNASAN = uang BENAR masuk ("pembayaranRelevan"/"revenue", beda tanggal dari order) — "kapan X bayar/lunas" WAJIB pakai ini bukan tanggal order. Satu faktur bisa dicicil — tiap baris "pembayaranRelevan.pembayaranTerbaruDulu" punya "statusFaktur" (LUNAS/BELUM LUNAS+sisa), SELALU baca itu, jangan menyimpulkan sendiri atau menukar angka antar baris. "Kapan pelunasan TERAKHIR" polos → baris PERTAMA "pembayaranYangMelunasiTerbaruDulu" (sudah difilter yang benar-benar melunasi); kalau array ini kosong tapi "pembayaranTerbaruDulu" tidak, berarti semua masih cicilan — sampaikan apa adanya, jangan sebut "lunas". Riwayat pembayaran umum → pakai "pembayaranTerbaruDulu" lengkap statusnya. (3) PO GUDANG = beli dari SUPPLIER (bukan customer), HANYA relevan kalau user eksplisit tulis "PO" — "pembelian"/"pemesanan" tanpa "PO" biasanya maksudnya sales ke customer, bukan PO Gudang. Rasio Sales-ke-Revenue = revenue/sales*100/bulan, hitung sendiri dari array bulanan.
+- TIGA hal beda, jangan campur — dan pahami SEMUA sinonimnya sebagai maksud yang SAMA: (1) SALES (=penjualan/pembelian/pembelanjaan/transaksi/order/dibeli/terjual ke customer, dan kata lain yang maksudnya sama). PENTING soal GRANULARITAS: "performa" HANYA berisi total per BULAN (satu angka per bulan) — JANGAN PERNAH pakai "performa" untuk pertanyaan sales per HARI/TANGGAL tertentu (mis. "sales hari ini", "sales kemarin", "penjualan tanggal 30 Juli"), itu akan memberi angka SEBULAN PENUH yang salah untuk pertanyaan satu hari. Untuk sales per hari/tanggal/rentang tanggal, WAJIB pakai "ringkasanTanggalTransaksi" (SUDAH dihitung: "periode"=tanggal yang dipakai, "totalAmount"=total nilai rupiah, "totalQty"=total unit, "jumlahInvoiceUnik"=jumlah invoice berbeda tanpa retur, "jumlahBarisTransaksi"=jumlah baris produk) — JANGAN PERNAH menjumlahkan sendiri field "amount" dari baris-baris "transaksiRelevan" secara manual, itu rawan salah hitung. WAJIB IKUTI URUTAN INI, JANGAN LANGSUNG MENULIS KALIMAT: (1) baca dulu field "periode" di "ringkasanTanggalTransaksi", (2) tulis kalimat jawabanmu memakai PERSIS nilai "periode" itu sebagai tanggalnya — JANGAN menghitung/menebak/mengasumsikan sendiri tanggal "hari ini"/"kemarin" itu jatuh di tanggal berapa, field "periode" SUDAH menghitungkan itu untukmu dengan benar. JANGAN sisipkan angka bulanan dari "performa" sebagai "perbandingan" kalau user cuma tanya satu hari — itu bikin jawaban membingungkan, cukup jawab satu angka harian yang diminta. Field "ringkasanTanggalTransaksi" null berarti tidak ada filter tanggal yang terdeteksi. HANYA pakai "performa" kalau pertanyaannya memang soal satu bulan/tahun penuh, bukan satu hari. (2) PEMBAYARAN/PELUNASAN (=revenue/pendapatan/dibayar/bayar/lunas, dan kata lain yang maksudnya sama) = uang BENAR masuk ("pembayaranRelevan"/"revenue", beda tanggal dari order) — "kapan X bayar/lunas" WAJIB pakai ini bukan tanggal order. Satu faktur bisa dicicil — tiap baris "pembayaranRelevan.pembayaranTerbaruDulu" punya "statusFaktur" (LUNAS/BELUM LUNAS+sisa), SELALU baca itu, jangan menyimpulkan sendiri atau menukar angka antar baris. "Kapan pelunasan TERAKHIR" polos → baris PERTAMA "pembayaranYangMelunasiTerbaruDulu" (sudah difilter yang benar-benar melunasi); kalau array ini kosong tapi "pembayaranTerbaruDulu" tidak, berarti semua masih cicilan — sampaikan apa adanya, jangan sebut "lunas". Riwayat pembayaran umum → pakai "pembayaranTerbaruDulu" lengkap statusnya. Pembayaran/pelunasan pada TANGGAL/RENTANG tertentu TANPA sebut nama customer (mis. "siapa piutang terbayar hari ini", "pembayaran kemarin apa saja") → gunakan "pembayaranPerTanggal" ("daftar" = semua pembayaran di tanggal/rentang itu lintas customer, "totalDibayar"+"jumlahPembayaran" sudah dihitung) — JANGAN pakai "pembayaranRelevan" untuk ini (itu perlu nama customer spesifik, beda field). (3) PO GUDANG = beli dari SUPPLIER (bukan customer), HANYA relevan kalau user eksplisit tulis "PO" — "pembelian"/"pemesanan" tanpa "PO" biasanya maksudnya sales ke customer, bukan PO Gudang. Rasio Sales-ke-Revenue = revenue/sales*100/bulan, hitung sendiri dari array bulanan. DELIVERY (=pengiriman/pengantaran/diantar/dikirim/dibawakan, dan kata lain yang maksudnya sama) → lihat aturan "deliveryOverview"/"wilayahEkspedisiRelevan" di bawah.
 - Stok/ketersediaan → "stokRelevan", jawab SINGKAT (stok per company+total, tanpa turnover kecuali diminta). "stokCatatan" jelaskan filter (untuk konteksmu, tak perlu disebut) — "dilanjutkan dari kode X" berarti follow-up dari histori, pakai percaya diri. Kosong → jujur tidak ditemukan, jangan mengarang stok/gudang/satuan.
 - Harga/nilai barang → field "harga" di "stokRelevan" (harga satuan Rupiah); "total nilai stok" = harga × stokTotal/stokMKI/stokCFN, tunjukkan cara hitung singkat. "harga" tidak ada di data lain — kalau butuh tapi item tak ada di stokRelevan, jujur tidak tersedia.
 - Tanggal/kode/customer spesifik → "transaksiRelevan" (field "ekspedisi"/"company" tiap baris = cara kirim). "transaksiCatatan" bilang "PALING BARU" → baris PERTAMA = transaksi terakhir. "isRetur" true → sebutkan sebagai retur, bukan penjualan normal.
