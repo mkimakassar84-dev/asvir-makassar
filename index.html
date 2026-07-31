@@ -599,6 +599,26 @@
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js'));
   }
+
+  // ==== Keep the screen awake while MIRA is open ====
+  // A wake lock is automatically RELEASED by the browser whenever the tab is hidden/backgrounded
+  // (spec behavior, not something we control) — so it must be re-acquired every time the app
+  // becomes visible again, not just once on load, otherwise the screen goes back to locking after
+  // the first time the user switches away and back.
+  let wakeLock = null;
+  async function requestWakeLock() {
+    if (!('wakeLock' in navigator)) return; // unsupported browser (e.g. older iOS Safari) — no-op
+    try {
+      wakeLock = await navigator.wakeLock.request('screen');
+    } catch {
+      // Can fail if the tab isn't visible yet or the OS denies it — harmless, just means the
+      // screen behaves normally; not worth surfacing as an error to the user.
+    }
+  }
+  requestWakeLock();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') requestWakeLock();
+  });
 </script>
 </body>
 </html>

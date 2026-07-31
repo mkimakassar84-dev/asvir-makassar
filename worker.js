@@ -1560,6 +1560,35 @@ function agingBucketOf(days) {
   return '> 60 Hari';
 }
 
+// "Piutang bulan Juli berapa?" / "piutang per bulan gimana?" — groups the AR ledger by the
+// INVOICE month (field "tanggal", when the faktur was issued), giving nominal + jumlah invoice
+// per bulan. Distinct from the aging-based "piutangPerKategoriUmur" (groups by how OVERDUE an
+// invoice is, not which month it was issued in) — this is a different axis entirely.
+function findPiutangPerBulan(message, piutangDetail) {
+  if (!piutangDetail || !piutangDetail.length) return null;
+  const nMsg = normText(message);
+  const wantsMonthly = /piutang/.test(nMsg) && /per\s*bulan|tiap\s*bulan|setiap\s*bulan|bulanan|\bbulan\b/.test(nMsg);
+  if (!wantsMonthly) return null;
+
+  const byMonth = {};
+  for (const p of piutangDetail) {
+    const d = parseFlexibleDate(p.tanggal);
+    const key = d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` : 'unknown';
+    if (!byMonth[key]) byMonth[key] = { bulan: key, jumlahInvoice: 0, totalNilai: 0 };
+    byMonth[key].jumlahInvoice += 1;
+    byMonth[key].totalNilai += p.nilaiSisa;
+  }
+  const semuaBulan = Object.values(byMonth).sort((a, b) => a.bulan.localeCompare(b.bulan));
+
+  const monthMention = extractMonthMention(message);
+  if (monthMention) {
+    const key = `${monthMention.year}-${String(monthMention.month).padStart(2, '0')}`;
+    const satu = byMonth[key] || { bulan: key, jumlahInvoice: 0, totalNilai: 0 };
+    return { modeBulanSpesifik: true, ...satu, catatan: 'Dihitung dari bulan TANGGAL FAKTUR (tanggal invoice diterbitkan), bukan tanggal jatuh tempo/aging.' };
+  }
+  return { modeBulanSpesifik: false, semuaBulan, catatan: 'Tiap entri = bulan tanggal faktur diterbitkan. Dihitung dari SISA piutang saat ini (nilaiSisa), bukan nilai faktur awal.' };
+}
+
 // "Siapa saja customer dengan piutang di atas 30 hari?" — lists actual invoices/names within one
 // age-category bucket. Distinct from "piutang.byKategori" (totals only, no names) and from
 // findPiutangByCustomer (single named customer) — this was the missing piece for "who's IN each
@@ -2767,6 +2796,7 @@ async function handleChat(request, env) {
   const piutangMatch = findPiutangByCustomer(message, piutangData?.detail);
   const topPiutangMatch = findTopPiutangCustomers(message, piutangData?.detail);
   const piutangKategoriMatch = findPiutangByKategoriUmur(message, piutangData?.detail);
+  const piutangBulanMatch = findPiutangPerBulan(message, piutangData?.detail);
   const piutangCompanyMatch = findPiutangByCompany(message, piutangData?.detail);
   const stockValueMatch = findStockValueSummary(message, allStock);
   const restockMatch = findRestockCandidates(message, topProductsRaw ? JSON.parse(topProductsRaw).byQty : null, allStock);
@@ -2821,6 +2851,7 @@ async function handleChat(request, env) {
     piutangRelevan: piutangMatch,
     piutangCustomerTertinggi: topPiutangMatch,
     piutangPerKategoriUmur: piutangKategoriMatch,
+    piutangPerBulan: piutangBulanMatch,
     piutangPerCompany: piutangCompanyMatch,
     nilaiStokRelevan: stockValueMatch,
     saranRestockProdukTerlaris: restockMatch,
@@ -2883,6 +2914,7 @@ Aturan:
 - Piutang (belum dibayar) customer tertentu → WAJIB "piutangRelevan" (rincian per invoice); field umum "piutang" cuma total per kategori umur, tak ada rincian per customer. Beda dari "pembayaranRelevan" (sudah bayar).
 - "Customer piutang tertinggi/terbesar" → "piutangCustomerTertinggi" (top10, sudah urut). Null padahal ditanya → kata kunci tak terdeteksi, minta user pertegas.
 - KATEGORI UMUR PIUTANG (AGING) BAKU, WAJIB konsisten: "0-30 Hari", "30-45 Hari", "45-60 Hari", "> 60 Hari" (definisi resmi dashboard dari kolom Aging/hari — BUKAN kategori lama "14-30"/"0-13" yang sudah tak dipakai). Kategori tertentu atau ambang bebas (mis. "di atas 90 hari") → "piutangPerKategoriUmur" ("daftar" = customer+noFaktur+nilaiSisa+agingHari+tanggal, beda dari "piutang.byKategori" yang cuma total tanpa nama) — sebutkan nama customer, bukan cuma total. "kategori" di hasil = salah satu 4 kategori baku atau ambang bebas.
+- "Piutang per bulan"/"piutang bulan X berapa" → gunakan "piutangPerBulan" — BEDA dari kategori aging di atas (aging = seberapa lama menunggak, ini = bulan FAKTUR-nya terbit). "modeBulanSpesifik":true → field lain di objek yang sama ("bulan","jumlahInvoice","totalNilai") langsung untuk SATU bulan yang ditanya (jumlahInvoice:0 kalau tidak ada faktur bulan itu, sampaikan apa adanya). "modeBulanSpesifik":false → "semuaBulan" berisi array SEMUA bulan (bulan+jumlahInvoice+totalNilai masing-masing), sebutkan per bulan kalau diminta breakdown lengkap. "totalNilai" adalah SISA piutang saat ini (bukan nilai faktur awal) untuk faktur-faktur yang terbit di bulan itu — JANGAN dijumlahkan ulang manual, sudah dihitung.
 - Piutang per company MKI/CFN → "piutangPerCompany", WAJIB sebutkan company diturunkan dari pola nomor faktur (bukan field asli), sesuai catatannya. JANGAN jawab pakai total GABUNGAN dari "piutang". Minta LIST → field "daftar" (per invoice: customer/noFaktur/nilaiSisa/tanggal/kategori), sebutkan nama.
 - "Nilai stok"/"nilai rupiah stok" (total/per company) → "nilaiStokRelevan" ("totalNilaiRupiah" = harga×unit, company-aware). "catatan" ada kode tanpa harga → sebutkan totalnya belum 100% lengkap. Null kalau tidak sebut "nilai" DAN "stok" bersamaan.
 - "Produk terlaris tapi stok menipis"/"saran restock" → "saranRestockProdukTerlaris" (sudah dihitung: kode/nama/qty2026/stokSaatIni/rataRataPerBulan/perkiraanBulanHabis, urut PALING mendesak). Sampaikan sebagai SARAN konkret, bukan tabel angka. "daftar" kosong (bukan null) → memang tidak ada yang mendesak, itu kabar baik bukan gagal ambil data.
