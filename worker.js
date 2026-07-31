@@ -1849,8 +1849,14 @@ function findKpiRanking(message, kpiData) {
   if (!kpiData || !Array.isArray(kpiData.kpi) || !kpiData.kpi.length) return null;
   const nMsg = normText(message);
   const mentionsJamKerja = /jam\s*kerja/.test(nMsg);
-  const wantsRanking = /terbanyak|paling banyak|terlama|paling lama|tertinggi|terkecil|paling sedikit|tersedikit|terbaik|terburuk|paling bagus|paling rajin|paling jelek|terendah|\branking\b|\bperingkat\b|\burutan\b|\burutkan\b/.test(nMsg);
-  const aboutPersonnel = /karyawan|personel|staff|\bstaf\b|\btim\b|anggota tim|siapa yang/.test(nMsg);
+  const wantsRanking = /terbanyak|paling banyak|terlama|paling lama|tertinggi|terkecil|paling sedikit|tersedikit|terbaik|terburuk|paling bagus|paling rajin|paling jelek|terendah|terbawah|\branking\b|\bperingkat\b|\burutan\b|\burutkan\b/.test(nMsg);
+  // "Siapa kinerja terendah?" — a real reported case that failed because it names neither
+  // "karyawan/personel/tim" nor "siapa yang", just "kinerja" + a superlative. "kinerja" alone is
+  // personnel-specific ENOUGH here as long as the question isn't actually about something else
+  // that also uses the word loosely (branch/company/sales performance) — excluded via
+  // mentionsOtherTopic so this doesn't hijack "kinerja cabang"/"kinerja penjualan" questions.
+  const mentionsOtherTopic = /\bcabang\b|perusahaan|penjualan|\bsales\b|\bproduk\b|\bwilayah\b|piutang|\bstok\b|\brevenue\b/.test(nMsg);
+  const aboutPersonnel = !mentionsOtherTopic && /karyawan|personel|staff|\bstaf\b|\btim\b|anggota tim|siapa yang|\bkinerja\b/.test(nMsg);
   if (!wantsRanking || (!mentionsJamKerja && !aboutPersonnel)) return null;
 
   let metric = 'skorAkhir';
@@ -2713,6 +2719,9 @@ Aturan:
 - Kalau riwayat percakapan sebelumnya membahas topik lain untuk customer/produk/orang yang SAMA (mis. piutang lalu ditanya pembayaran), JANGAN biarkan topik sebelumnya membuatmu ragu memakai data BARU yang memang tersedia di konteks giliran ini — dan sebaliknya, JANGAN mengarang kalau memang datanya kosong hanya karena topik sebelumnya "terasa nyambung". Selalu cek ULANG field-nya sendiri di konteks saat ini, jangan berasumsi dari apa yang sudah dibahas.
 - User sering salah ketik (typo 1-2 huruf), menyingkat kata, atau menulis kode barang dengan/tanpa spasi/strip (mis. "DKB180", "DKB-180", "DKB 180" adalah kode yang SAMA) — pahami maksudnya, jangan langsung bilang "tidak ditemukan".
 - Jika user bertanya jumlah spesifik (mis. "10 wilayah penjualan terbesar", "5 customer terbanyak"), berikan SEMUA item yang diminta sesuai jumlah tersebut jika datanya tersedia di konteks, jangan dipotong.
+- ATURAN TERBAIK/TERBURUK/TERTINGGI/TERENDAH/TERBAWAH — berlaku untuk SEMUA topik (personel, produk, wilayah, customer, dll), bukan cuma yang sudah ada instruksi eksplisitnya: pahami dulu apakah field yang relevan berisi DAFTAR LENGKAP atau cuma TOP-N yang dipotong, sebelum menjawab versi "terbalik"-nya (mis. sudah ada "top produk terlaris" tapi user tanya "produk paling sedikit terjual").
+  - DAFTAR LENGKAP (field "ditampilkan"/jumlah item == "totalCustomer"/total sebenarnya, ATAU field yang memang selalu berisi semua entitas seperti "rankingKinerjaPersonel"/"zonaWilayahRelevan.wilayah") — AMAN baca dari BAWAH urutan untuk jawab "terendah/terburuk/tersedikit/tersedikit", jangan bilang datanya tidak ada.
+  - TOP-N SAJA/DIPOTONG (mis. "topProduk"/"topProdukPerBulan" cuma top-20, "topWilayah" cuma top-20, "customerInsights.topByFrekuensi"/"topBySales" cuma top-20, "piutangCustomerTertinggi.top10" cuma top-10) — JANGAN PERNAH ambil item PALING BAWAH dari daftar top-N ini lalu bilang itu "yang terendah/paling sedikit" — itu cuma peringkat ke-10/20 dari SEMUA data, bukan benar-benar yang terendah. Untuk kasus ini, katakan jujur ke user bahwa data yang tersedia cuma peringkat TERATAS (top-N), jadi tidak bisa dipastikan mana yang benar-benar paling rendah dari keseluruhan data — tawarkan alternatif kalau ada (mis. untuk produk, cek dulu apakah "stokTidakBergerakDanKurangLaku" lebih relevan untuk maksud "produk paling tidak laku").
 - PENTING — TIGA hal ini BEDA, jangan pernah dicampur:
   1. **PENJUALAN/SALES** = transaksi ke customer (Grand Data, field "transaksiRelevan"/"performa") — kapan customer ORDER/beli.
   2. **PEMBAYARAN/PELUNASAN** = uang yang BENAR-BENAR masuk dari customer (Rev SUM, field "pembayaranRelevan"/"revenue") — BEDA dari tanggal order, seorang customer bisa order duluan lalu bayar belakangan (atau sebaliknya bayar dulu untuk order lama). Kalau user tanya "kapan X bayar/lunas/pembayaran terakhir", WAJIB pakai "pembayaranRelevan" — JANGAN jawab pakai tanggal transaksi/order dari "transaksiRelevan", itu beda hal.
