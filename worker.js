@@ -1141,16 +1141,18 @@ function enrichTopProdukWithNama(topProducts, allStock) {
 }
 
 // Shared superlative-detection patterns — used everywhere a question asks for a ranking/extreme
-// (personnel, product, or future topics), so every ranking-style question is understood the same
-// way instead of each retrieval function maintaining its own partial word list. A real reported
-// gap: "siapa kinerja paling tinggi?"/"paling bawah?"/"paling rendah?" matched nothing before,
-// because only the terXXX contraction ("tertinggi") was listed, not the "paling <kata>" phrasing
-// Indonesian speakers use just as often.
-const SUPERLATIVE_ANY =
-  'terbanyak|tersedikit|terbesar|terkecil|tertinggi|terendah|terbawah|teratas|terbaik|terburuk|terlama|tercepat|' +
-  'paling\\s+(tinggi|rendah|bawah|atas|banyak|sedikit|besar|kecil|bagus|jelek|buruk|laris|laku|rajin|lama|cepat|top)';
+// (personnel, product, piutang, or future topics), so every ranking-style question is understood
+// the same way instead of each retrieval function maintaining its own partial word list that
+// drifts out of sync. A real reported gap: "siapa kinerja paling tinggi?"/"paling bawah?"/"paling
+// rendah?" matched nothing before, because only the terXXX contraction ("tertinggi") was listed,
+// not the "paling <kata>" phrasing Indonesian speakers use just as often — same gap then found
+// separately in findTopPiutangCustomers (only had "tertinggi/terbesar/paling besar/paling banyak",
+// missing "paling tinggi").
+const SUPERLATIVE_HIGH =
+  'terbanyak|terbesar|tertinggi|teratas|terbaik|terlama|tercepat|paling\\s+(tinggi|atas|banyak|besar|bagus|laris|laku|rajin|lama|cepat|top)';
 const SUPERLATIVE_LOW =
-  'terkecil|tersedikit|terburuk|terendah|terbawah|paling\\s+(rendah|bawah|sedikit|kecil|jelek|buruk)';
+  'tersedikit|terkecil|terendah|terbawah|terburuk|paling\\s+(rendah|bawah|sedikit|kecil|jelek|buruk)';
+const SUPERLATIVE_ANY = `${SUPERLATIVE_HIGH}|${SUPERLATIVE_LOW}`;
 
 const MONTHS = {
   januari: 1, jan: 1, februari: 2, feb: 2, maret: 3, mar: 3, april: 4, apr: 4, mei: 5,
@@ -1439,7 +1441,10 @@ function findZonaWilayahMatches(message, zonaData) {
 function findTopPiutangCustomers(message, piutangDetail) {
   if (!piutangDetail || !piutangDetail.length) return null;
   const nMsg = normText(message);
-  const wantsTop = /piutang.*(tertinggi|terbesar|paling besar|paling banyak)|(tertinggi|terbesar|paling besar|paling banyak).*piutang/.test(nMsg);
+  // Only SUPERLATIVE_HIGH (not the full SUPERLATIVE_ANY/_LOW) — this function always returns the
+  // top10 HIGHEST, there's no ascending variant, so matching "terendah"/"paling rendah" here would
+  // return the wrong (highest, mislabeled as lowest) data instead of honestly saying unavailable.
+  const wantsTop = new RegExp(`piutang.*(${SUPERLATIVE_HIGH})|(${SUPERLATIVE_HIGH}).*piutang`).test(nMsg);
   if (!wantsTop) return null;
   const byCustomer = new Map();
   for (const p of piutangDetail) {
