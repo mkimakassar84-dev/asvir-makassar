@@ -578,7 +578,11 @@ const PRODUCT_CATALOG = [
 // tolerates reordering, extra words, and partial phrasing (per user's matching rules), unlike a
 // strict substring check.
 function phraseMatchScore(phrase, nMsg) {
-  const words = phrase.toLowerCase().split(/\s+/).filter((w) => w.length >= 2);
+  // Pure-digit tokens ("1", "2", "4"...) are kept even at length 1 — a real reported case:
+  // dropping the "1" in "1 core" from scoring made "1 core" and "2 core" keyword phrases score
+  // the same (the digit was the ONLY thing distinguishing them), so "kabel 1 core terbaik"
+  // surfaced a 2-core catalog product/photo instead of any 1-core one.
+  const words = phrase.toLowerCase().split(/\s+/).filter((w) => w.length >= 2 || /^\d+$/.test(w));
   if (!words.length) return 0;
   // Typo tolerance: a keyword word also counts as a hit if it's within edit-distance of some word
   // actually typed in the message (mis. "fusion splicr" still finds "fusion splicer") — gated to
@@ -595,6 +599,11 @@ function phraseMatchScore(phrase, nMsg) {
 // questions ("ODP 16 port hitam"), categories handle broader ones ("kabel fiber optik apa saja").
 function findProductCatalogMatch(message) {
   const nMsg = normText(message);
+  // Same core-count guard as resolveStockCodeToCatalogProduct below — without it, "kabel 1 core"
+  // could still score a 2/4/6-core product just as high (or higher) purely on shared generic
+  // words like "kabel"/"dropcore"/"premium", since word-overlap scoring alone doesn't know those
+  // are mutually exclusive specs.
+  const msgCore = extractCoreCount(message);
   const scored = [];
   for (const p of PRODUCT_CATALOG) {
     let best = 0;
@@ -602,7 +611,12 @@ function findProductCatalogMatch(message) {
       const s = phraseMatchScore(kw, nMsg);
       if (s > best) best = s;
     }
-    if (best >= 0.6) scored.push({ p, score: best });
+    if (best < 0.6) continue;
+    if (msgCore) {
+      const candidateCore = extractCoreCount(`${p.nama} ${p.keywords.join(' ')}`);
+      if (candidateCore && candidateCore !== msgCore) continue;
+    }
+    scored.push({ p, score: best });
   }
   if (!scored.length) return null;
   scored.sort((a, b) => b.score - a.score);
