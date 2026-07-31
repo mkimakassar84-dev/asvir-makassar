@@ -1757,16 +1757,22 @@ async function runSync(env) {
     const csv = await (await fetch(csvExportUrl(PERFORMANCE_SHEET_ID, GIDS.grandData))).text();
     const rows = rowsToObjects(parseCsv(csv), 0);
     const byMonth = {};
+    // byLokasi/byLokasiEkspedisi/byEkspedisiGlobal all map to Set<noInvoice>, not row counters —
+    // "invoice/transaksi" must always mean UNIQUE invoices, never raw line-item rows (one invoice
+    // can have several product rows; confirmed live: 2534 unique invoices out of 4505 total rows,
+    // ~34% of invoices are multi-line, so a row counter overstates every one of these by a lot).
     const byLokasi = {};
-    const byLokasiEkspedisi = {}; // lokasi -> { ekspedisiName -> count } — full data, not a capped sample
-    const byKode = {}; // top products: kode -> { amount, qty, amountMKI, amountCFN }
+    const byLokasiEkspedisi = {}; // lokasi -> { ekspedisiName -> Set<noInvoice> }
+    const byKode = {}; // top products: kode -> { amount, qty, amountMKI, amountCFN } — legitimately
+    // per PRODUCT LINE, not per invoice, so this one stays row-based on purpose.
     const byEkspedisiGlobal = {};
     const byCustomer = {}; // frekuensi customer
     const fo1core = { byMonth: {}, byKode: {} };
     const dpStats = {}; // Daily Performance: bulan -> { invoiceAll:Set, invoiceOTD:Set, invoiceNonRetur:Set }
-    let sameDayCount = 0;
-    let cutOffCount = 0;
-    let handCarryCount = 0;
+    const allInvoicesGlobal = new Set();
+    const sameDayInvoices = new Set();
+    const cutOffInvoices = new Set();
+    const handCarryInvoices = new Set();
     const transactions = [];
     for (const r of rows) {
       const d = parseFlexibleDate(r['Order Date']);
@@ -1786,9 +1792,9 @@ async function runSync(env) {
       const lokasi = (r['Lokasi'] || '').trim();
       const isRetur = /^R[-/]/i.test(noInvoice) || amount < 0;
 
-      if (!byMonth[key]) byMonth[key] = { bulan: key, sales: 0, transaksi: 0 };
+      if (!byMonth[key]) byMonth[key] = { bulan: key, sales: 0, invoiceSet: new Set() };
       byMonth[key].sales += amount;
-      byMonth[key].transaksi += 1;
+      if (noInvoice) byMonth[key].invoiceSet.add(noInvoice);
 
       // Daily Performance: OTD Accuracy = invoiceUnik(stage=complete AND Same Day) / invoiceUnik(all,
       // retur included). Total Invoice metric = invoiceUnik EXCLUDING retur. Both per-month, matching
@@ -1800,10 +1806,16 @@ async function runSync(env) {
         if (stage.toLowerCase() === 'complete' && statusSameCutOff === 'Same Day') dpStats[key].invoiceOTD.add(noInvoice);
       }
 
-      if (lokasi) byLokasi[lokasi] = (byLokasi[lokasi] || 0) + 1;
-      if (lokasi && ekspedisi) {
+      if (noInvoice) allInvoicesGlobal.add(noInvoice);
+
+      if (lokasi && noInvoice) {
+        if (!byLokasi[lokasi]) byLokasi[lokasi] = new Set();
+        byLokasi[lokasi].add(noInvoice);
+      }
+      if (lokasi && ekspedisi && noInvoice) {
         if (!byLokasiEkspedisi[lokasi]) byLokasiEkspedisi[lokasi] = {};
-        byLokasiEkspedisi[lokasi][ekspedisi] = (byLokasiEkspedisi[lokasi][ekspedisi] || 0) + 1;
+        if (!byLokasiEkspedisi[lokasi][ekspedisi]) byLokasiEkspedisi[lokasi][ekspedisi] = new Set();
+        byLokasiEkspedisi[lokasi][ekspedisi].add(noInvoice);
       }
 
       if (kode) {
@@ -1814,21 +1826,23 @@ async function runSync(env) {
         else if (company === 'CFN') byKode[kode].amountCFN += amount;
       }
 
-      if (/same/i.test(statusSameCutOff)) sameDayCount++;
-      else if (/cut/i.test(statusSameCutOff)) cutOffCount++;
-      const ekspUpper = ekspedisi.toUpperCase();
-      if (ekspUpper.includes('HAND CARRY')) handCarryCount++;
-      const ekspLabel = ekspedisi || 'TIDAK TERCATAT';
-      byEkspedisiGlobal[ekspLabel] = (byEkspedisiGlobal[ekspLabel] || 0) + 1;
+      if (noInvoice) {
+        if (/same/i.test(statusSameCutOff)) sameDayInvoices.add(noInvoice);
+        else if (/cut/i.test(statusSameCutOff)) cutOffInvoices.add(noInvoice);
+        const ekspUpper = ekspedisi.toUpperCase();
+        if (ekspUpper.includes('HAND CARRY')) handCarryInvoices.add(noInvoice);
+        const ekspLabel = ekspedisi || 'TIDAK TERCATAT';
+        if (!byEkspedisiGlobal[ekspLabel]) byEkspedisiGlobal[ekspLabel] = new Set();
+        byEkspedisiGlobal[ekspLabel].add(noInvoice);
+      }
 
       if (customer) {
         if (!byCustomer[customer]) {
-          byCustomer[customer] = { customer, invoices: new Set(), totalSales: 0, frequency: 0, lastPurchase: null };
+          byCustomer[customer] = { customer, invoices: new Set(), totalSales: 0, lastPurchase: null };
         }
         const c = byCustomer[customer];
         if (r['No Invoice']) c.invoices.add(r['No Invoice']);
         c.totalSales += amount;
-        c.frequency += 1;
         if (d && (!c.lastPurchase || d > c.lastPurchase)) c.lastPurchase = d;
       }
 
@@ -1857,7 +1871,9 @@ async function runSync(env) {
         tglTerkirim: r['Tanggal Terkirim'],
       });
     }
-    const performance = Object.values(byMonth).sort((a, b) => a.bulan.localeCompare(b.bulan));
+    const performance = Object.values(byMonth)
+      .map((m) => ({ bulan: m.bulan, sales: m.sales, transaksi: m.invoiceSet.size }))
+      .sort((a, b) => a.bulan.localeCompare(b.bulan));
     const totalSales2026 = performance.reduce((s, m) => s + m.sales, 0);
     const dailyPerformanceTargets = Object.entries(dpStats)
       .map(([bulan, s]) => {
@@ -1877,6 +1893,7 @@ async function runSync(env) {
       })
       .sort((a, b) => a.bulan.localeCompare(b.bulan));
     const topWilayah = Object.entries(byLokasi)
+      .map(([lokasi, set]) => [lokasi, set.size])
       .sort((a, b) => b[1] - a[1])
       .slice(0, 20)
       .map(([lokasi, jumlahTransaksi]) => ({ lokasi, jumlahTransaksi }));
@@ -1884,8 +1901,9 @@ async function runSync(env) {
     // "ekspedisi ke <wilayah> pakai apa" is always answered from full data, ranked by usage.
     const wilayahEkspedisi = Object.entries(byLokasiEkspedisi).map(([lokasi, ekspMap]) => ({
       lokasi,
-      totalTransaksi: byLokasi[lokasi] || 0,
+      totalTransaksi: byLokasi[lokasi] ? byLokasi[lokasi].size : 0,
       ekspedisi: Object.entries(ekspMap)
+        .map(([nama, set]) => [nama, set.size])
         .sort((a, b) => b[1] - a[1])
         .map(([nama, jumlah]) => ({ nama, jumlah })),
     }));
@@ -1907,11 +1925,12 @@ async function runSync(env) {
       });
 
     const delivery = {
-      sameDayCount,
-      cutOffCount,
-      handCarryCount,
-      pihakKetigaCount: rows.length - handCarryCount,
+      sameDayCount: sameDayInvoices.size,
+      cutOffCount: cutOffInvoices.size,
+      handCarryCount: handCarryInvoices.size,
+      pihakKetigaCount: allInvoicesGlobal.size - handCarryInvoices.size,
       byEkspedisi: Object.entries(byEkspedisiGlobal)
+        .map(([nama, set]) => [nama, set.size])
         .sort((a, b) => b[1] - a[1])
         .map(([nama, jumlah]) => ({ nama, jumlah })),
     };
@@ -1923,7 +1942,6 @@ async function runSync(env) {
         customer: c.customer,
         invoiceUnik: c.invoices.size,
         totalSales: c.totalSales,
-        frequency: c.frequency,
         lastPurchase: c.lastPurchase ? toIsoDate(c.lastPurchase) : null,
         daysSinceLastPurchase: daysSince,
         churned: daysSince !== null && daysSince >= 60,
@@ -2429,6 +2447,7 @@ Aturan:
 - Untuk pertanyaan stok/ketersediaan barang, gunakan "stokRelevan". Jawab SINGKAT: cukup jumlah stok per company (MKI/CFN) + total, TANPA menyebut turnover/perputaran gudang kecuali user SPESIFIK menanyakan turnover/perputaran. Field "stokCatatan" menjelaskan filter yang dipakai (untuk konteksmu sendiri, tidak perlu disebut ke user) — kalau isinya menyebut "dilanjutkan dari kode X yang dibahas sebelumnya", itu tandanya user tidak sebut ulang kode di pertanyaan ini tapi maksudnya masih produk yang sama dari histori, pakai data itu dengan percaya diri (bukan menebak). WAJIB: kalau "stokRelevan" kosong/tidak ada barang yang cocok, katakan JUJUR datanya tidak ditemukan — JANGAN PERNAH mengarang angka stok, nama gudang, atau satuan (roll/meter/dll) sendiri.
 - Untuk pertanyaan HARGA/nilai barang ("harga X berapa", "nilainya berapa"), tiap item di "stokRelevan" punya field "harga" (harga satuan dalam Rupiah) — pakai itu. Kalau user tanya "total nilai stok" suatu barang, kalikan harga × stokTotal (atau × stokMKI/stokCFN kalau ditanya per company) dan tunjukkan cara hitungnya singkat. Field "harga" TIDAK ADA di "stokTidakBergerakDanKurangLaku"/data lain — kalau butuh harga tapi item itu tidak ada di "stokRelevan", katakan datanya tidak tersedia, jangan menebak angka.
 - Untuk pertanyaan tanggal tertentu, KODE BARANG spesifik ("siapa pembeli terakhir KODE", "kapan KODE terakhir keluar"), atau nama customer spesifik ("kapan si X belanja terakhir, beli apa saja"), gunakan "transaksiRelevan" — field "ekspedisi" dan "company" tiap baris menunjukkan cara pengiriman. Baca "transaksiCatatan": kalau bilang "diurutkan dari yang PALING BARU", maka baris PERTAMA di array = transaksi TERAKHIR/TERBARU — pakai itu untuk jawab pertanyaan "terakhir/kapan". Field "isRetur" (true/false) tiap baris menandakan transaksi itu retur (nomor invoice berawalan "R-"/"R/" atau nilainya negatif) — kalau muncul di hasil pencarian biasa, sebutkan statusnya sebagai retur, jangan dianggap penjualan normal.
+- ATURAN "INVOICE"/"TRANSAKSI" = INVOICE UNIK, BUKAN jumlah baris: satu invoice bisa punya beberapa baris kalau customer beli beberapa kode barang sekaligus (field "kode" beda-beda tapi field "invoice" SAMA) — jadi kalau user tanya "berapa transaksi/invoice" dari hasil manapun (termasuk menghitung sendiri dari array "transaksiRelevan"), WAJIB hitung jumlah NILAI UNIK/BERBEDA di field "invoice", JANGAN hitung jumlah baris/item array-nya begitu saja (itu akan menghitung dobel produk-produk dalam satu invoice yang sama). Field-field yang SUDAH dihitung sebagai invoice unik dari sananya (aman dipakai langsung tanpa hitung ulang): "performa"/"targetPerformaHarianBulanan" (transaksi/invoiceUnik per bulan), "deliveryOverview" (sameDayCount/cutOffCount/handCarryCount/pihakKetigaCount/byEkspedisi), "wilayahEkspedisiRelevan"/topWilayah (jumlahTransaksi per wilayah), "customerInsights"/"daftarNamaCustomerPerBucket" (invoiceUnik per customer) — field "amount"/"qty" pada produk (mis. "topProduk") TETAP dijumlah per baris karena itu memang benar dihitung per unit produk, bukan per invoice.
 - Untuk pertanyaan RETUR/RETURN secara khusus ("retur apa saja bulan ini", "berapa banyak retur customer X"), gunakan "returRelevan" (sudah difilter khusus baris retur, boleh dipersempit lagi dengan tanggal/customer di pertanyaan yang sama) — field "catatan" menjelaskan kriteria deteksinya.
 - Untuk pertanyaan PIUTANG (sisa tagihan yang BELUM dibayar) customer tertentu, WAJIB gunakan "piutangRelevan" (rincian per invoice) — field umum "piutang" cuma total per kategori umur + "ratioARtoSalesPersen", TIDAK punya rincian per customer. Ini beda dari "pembayaranRelevan" (uang yang SUDAH masuk) — piutang = belum bayar, pembayaran = sudah bayar.
 - Untuk "customer dengan piutang tertinggi/terbesar", gunakan "piutangCustomerTertinggi" (sudah diurutkan, field "top10"). Kalau field ini null padahal user jelas menanyakan hal ini, berarti kata kuncinya tidak terdeteksi (bukan berarti datanya tidak ada) — minta user menegaskan pertanyaannya.
