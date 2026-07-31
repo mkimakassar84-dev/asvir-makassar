@@ -218,6 +218,41 @@ const PERSONNEL_ROLES = {
   PUTRI: 'General Admin Support & Operation',
 };
 
+// Default (factory/vendor) login credentials for ONU devices, keyed by stock code — provided
+// directly by the user as internal reference data, not derived from any sheet. Never invent
+// credentials for an ONU code that isn't in this list; say the code isn't in the reference list
+// instead. Some models (FL327D) share one set of credentials across several stock codes.
+const ONU_CREDENTIALS = [
+  { kodeList: ['ONUA022'], deskripsi: 'ONU DKB-180 Kedatangan Baru', keywords: ['dkb180', 'dkb-180', 'dkb 180'], username: 'falcom', password: 'fastlink' },
+  { kodeList: ['ONUA023', 'ONUA024', 'ONUA025'], deskripsi: 'ONU FL327D', keywords: ['fl327d', 'fl-327d', 'fl 327d'], username: 'falcom', password: 'fastlink' },
+  { kodeList: ['ONTG013'], deskripsi: 'ONU F670L', keywords: ['f670l', 'f670-l', 'f 670l'], username: 'admin', password: 'admin' },
+  { kodeList: ['ONTG007'], deskripsi: 'ONU F660', keywords: ['f660'], username: 'admin', password: 'admin' },
+  { kodeList: ['ONUA020'], deskripsi: 'ONU F680', keywords: ['f680'], username: 'admin', password: 'admin' },
+  { kodeList: ['ONTG008'], deskripsi: 'ONU HG8546M', keywords: ['hg8546m', 'hg-8546m', 'hg 8546m'], username: 'telecomadmin', password: 'admintelecom' },
+];
+
+// "Username/password ONU FL327D apa?" — only fires on explicit credential-related keywords so it
+// never leaks login info into an unrelated ONU stock/spec question. A bare "password ONU apa?"
+// with no specific model named returns the FULL list (only 6 entries, cheap and more useful than
+// asking the user to repeat themselves), a named model/code filters to just that one.
+function findOnuCredentials(message) {
+  const nMsg = normText(message);
+  const wantsCred = /username|password|\bpass\b|\blogin\b|kredensial/.test(nMsg);
+  if (!wantsCred) return null;
+  const nCode = normCode(message);
+  const matched = ONU_CREDENTIALS.filter(
+    (e) =>
+      /\bonu\b/.test(nMsg) ||
+      e.kodeList.some((k) => nCode.includes(normCode(k))) ||
+      e.keywords.some((kw) => nMsg.includes(kw))
+  );
+  if (!matched.length) return null;
+  return {
+    daftar: matched.map((e) => ({ kode: e.kodeList, deskripsi: e.deskripsi, username: e.username, password: e.password })),
+    catatan: 'Username/password DEFAULT bawaan pabrik/vendor untuk login ke perangkat ONU — data referensi internal (bukan dari sheet). JANGAN mengarang kredensial untuk kode ONU yang tidak ada di daftar ini, katakan jujur belum ada datanya.',
+  };
+}
+
 const JTBD_MODULE = `
 
 MODE ANALISIS JTBD (Jobs-to-Be-Done) — aktif untuk pertanyaan "kenapa" (kenapa sales/pemasangan turun, kenapa customer churn, kenapa target meleset):
@@ -2714,6 +2749,7 @@ async function handleChat(request, env) {
     rankingKinerjaPersonel: kpiRankingMatch,
     infoKantor: COMPANY_INFO,
     jabatanPersonel: PERSONNEL_ROLES,
+    usernamePasswordOnu: findOnuCredentials(message),
   };
 
   const systemPrompt = `Kamu adalah "MIRA", Asisten Virtual MKI Makassar (JANGAN sebut "asisten AI PT. Mitra Kabel Indonesia" — "MKI Makassar" identitas resmi, bukan nama perusahaan penuh). Empat peran: (1) rekan bicara dashboard "Kinerja Cabang Makassar" (performa harian, sales, revenue, wilayah, stok & PO, delivery, piutang, frekuensi customer, KPI personel); (2) bantu pelanggan/teknisi soal spesifikasi/tutorial/info produk jaringan dari katalog Falcom Technology; (3) partner diskusi bisnis & marketing (lihat MODE PARTNER DISKUSI BISNIS); (4) teman ngobrol hangat (lihat KEPRIBADIAN). Untuk data/operasional/produk, jawab HANYA dari DATA KONTEKS + histori — jangan mengarang angka meski santai.
@@ -2778,6 +2814,7 @@ Aturan:
 - ALAMAT/lokasi kantor → "infoKantor" (nama/alamat/link Maps) — sertakan link Maps kalau relevan.
 - JABATAN/posisi seseorang → "jabatanPersonel" (nama→jabatan). Beda dari data KPI harian — nama tak ada di jabatanPersonel tapi ada di KPI/absensi → jabatan belum tercatat (jangan menebak).
 - "Rifqi" dan "Rifki" adalah EJAAN BERBEDA untuk ORANG YANG SAMA (Branch Manager, pencipta MIRA) — di topik/data apa pun (jabatan, absensi, obrolan, dll), anggap kedua ejaan itu merujuk satu orang, JANGAN dianggap dua orang berbeda.
+- USERNAME/PASSWORD login ONU → "usernamePasswordOnu" ("daftar" berisi kode+deskripsi+username+password per model, boleh disebutkan APA ADANYA tanpa disensor karena ini asisten internal cabang). Null padahal user tanya kredensial ONU → kode/model itu belum ada di daftar referensi, katakan jujur, JANGAN PERNAH mengarang username/password. Kalau user cuma tanya "password ONU apa" tanpa sebut model, "daftar" berisi SEMUA model yang diketahui — tampilkan semuanya, biar user pilih sendiri yang sesuai kodenya.
 - Jawab singkat, padat, langsung ke angka/fakta. Bahasa Indonesia sehari-hari sopan.
 - PAHAMI MAKSUD DULU: pastikan benar mengerti yang ditanyakan (termasuk maksud tersirat dari histori) — ambigu & bisa beda jauh hasilnya → boleh tanya balik singkat, JANGAN asal jawab satu tafsiran.
 - JAWABAN MUDAH DIMENGERTI SIAPA SAJA (termasuk yang tak biasa istilah teknis/tak bersekolah tinggi): kata sehari-hari (bukan "terjadi peningkatan signifikan", bilang "naik banyak"). Istilah teknis/singkatan (OLT, aging, revenue) → jelaskan singkat saat pertama disebut. Kalimat pendek runtut/poin per poin, hindari kalimat panjang berbelit. Boleh perumpamaan sederhana kalau membantu, TAPI jangan korbankan ketepatan angka — cuma cara jelasinnya yang sederhana. Sopan, tidak menggurui/meremehkan.
