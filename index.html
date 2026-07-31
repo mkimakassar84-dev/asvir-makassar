@@ -28,13 +28,14 @@
   .mic-btn { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; touch-action: none; }
 </style>
 </head>
-<body class="flex flex-col bg-sand text-gray-800" style="min-height: 100vh; min-height: 100svh;">
+<body class="flex flex-col bg-sand text-gray-800 overflow-hidden" style="height: 100vh; height: 100svh;">
 
-  <!-- Header: sticky to the DOCUMENT (not a fixed-height flex parent) so the whole page is one
-       normal scrollable flow — this is what lets Android/iOS's native "scrolling screenshot"
-       capture the full conversation. The old layout pinned the page to exactly 100svh with
-       overflow-hidden and scrolled only an inner <main> div, which OS-level scroll-capture can't
-       see into (it only detects real document/window scroll). -->
+  <!-- Header: sticky + explicit svh body height so mobile browser chrome (address bar) showing
+       or hiding while scrolling the chat can't push this out of view. NOTE: this app-shell layout
+       (fixed-height body, #chatArea as the ONLY scrolling element) means Android/iOS's native
+       "scrolling screenshot" can't capture the full conversation — it only detects real
+       document/window scroll, not an inner div's. Traded away deliberately: mic/input/send
+       staying visible while scrolling messages matters more than screenshot-scroll support. -->
   <header class="sticky top-0 z-10 bg-victory text-sand px-4 py-3 flex items-center justify-between shadow-md shrink-0">
     <div class="flex items-center gap-2.5 min-w-0">
       <img src="./assets/mira-avatar.jpg" alt="MIRA" class="w-9 h-9 rounded-full object-cover shrink-0 border-2 border-sand/40" />
@@ -57,11 +58,9 @@
     </div>
   </header>
 
-  <!-- Chat area: normal document flow (no overflow-y-auto/flex-1) — grows as tall as the
-       conversation, the PAGE scrolls, not this div. padding-bottom is kept in sync with the
-       fixed #chatForm's real height via a ResizeObserver below, so the last message never sits
-       hidden underneath it. -->
-  <main id="chatArea" class="flex-1 px-3 py-4 space-y-3">
+  <!-- Chat area: the ONLY scrolling element (overflow-y-auto), header/form are fixed siblings
+       outside it — standard app-shell pattern, mic/input/send stay visible while this scrolls. -->
+  <main id="chatArea" class="flex-1 overflow-y-auto px-3 py-4 space-y-3">
     <div class="flex justify-start">
       <div class="max-w-[85%] bg-white border border-sand-border rounded-2xl rounded-tl-sm px-4 py-2.5 shadow-sm text-sm">
         Assalamu'alaikum! Saya <b>MIRA</b> (Makassar Intelligent Response Assistant). Kamu bisa tanya saya soal kinerja dan operasional cabang Makassar, atau kamu juga bisa ngobrol apapun termasuk curhat sama saya loh, bisa ketik atau klik tombol mic untuk bicara. 👋
@@ -69,14 +68,9 @@
     </div>
   </main>
 
-  <!-- Input: fixed to the bottom of the viewport, at the user's explicit request (stay visible
-       while scrolling the conversation, like a normal chat app) — chosen KNOWING this risks
-       reintroducing an earlier reported bug: Android's scrolling-screenshot stitching was
-       observed dropping a BOTTOM-pinned element (tested as "sticky" then, not "fixed" — the two
-       may behave differently, unconfirmed either way), even though a sticky TOP header is
-       captured fine. If a real-device screenshot-scroll test shows the input missing again,
-       revert this block to plain flow (see git history) the same way it was reverted before. -->
-  <form id="chatForm" class="fixed bottom-0 left-0 right-0 z-20 border-t border-sand-border bg-white p-3 flex items-end gap-2" style="padding-bottom: max(0.75rem, env(safe-area-inset-bottom));">
+  <!-- Input: plain flow sibling of #chatArea (not fixed/sticky needed) — outside the scrolling
+       region entirely, so it's always visible without any CSS positioning tricks. -->
+  <form id="chatForm" class="shrink-0 border-t border-sand-border bg-white p-3 flex items-end gap-2">
     <button
       type="button"
       id="micBtn"
@@ -116,14 +110,6 @@
   const statusText = document.getElementById('statusText');
   const statusDot = document.getElementById('statusDot');
 
-  // #chatForm is fixed to the viewport bottom and its height changes as the textarea grows
-  // (multi-line messages) — keep #chatArea's bottom padding in sync so the last message never
-  // ends up hidden underneath the fixed bar.
-  function syncChatAreaPadding() {
-    chatArea.style.paddingBottom = `${chatForm.offsetHeight}px`;
-  }
-  new ResizeObserver(syncChatAreaPadding).observe(chatForm);
-  syncChatAreaPadding();
 
   const WELCOME_HTML = `
     <div class="flex justify-start">
@@ -177,11 +163,7 @@
   }
 
   function scrollToBottom() {
-    // The PAGE scrolls (not an inner chatArea div) — see the layout change in <body>/<main>
-    // above, done so Android/iOS's native scrolling-screenshot can capture the whole
-    // conversation. #chatForm is fixed/out-of-flow now, so this naturally lands right where
-    // #chatArea's synced bottom padding ends, just above the fixed input bar.
-    window.scrollTo(0, document.documentElement.scrollHeight);
+    chatArea.scrollTop = chatArea.scrollHeight;
   }
 
   // Pulls a trailing ```chart fenced JSON block out of the model's answer so it never shows up
