@@ -1654,15 +1654,41 @@ function resolveAttendanceDate(message) {
 // already carries "totalWorkHours" per person (cumulative hours across the month so far), so this
 // is a plain sort of already-cached data — no extra live Apps Script call needed, unlike a
 // per-person personView fetch which would be slow done for every team member.
-function findWorkHoursRanking(message, kpiData) {
+// "Siapa karyawan kinerja terbaik?"/"ranking tim berdasarkan kinerja?" — real reported cases that
+// returned "data tidak tersedia" because the old version of this function ONLY matched the exact
+// phrase "jam kerja" + a superlative, missing every other natural way to ask for a personnel
+// ranking. The KPI Personel source (teamOverview) actually returns FOUR rankable metrics per
+// person — percent (kepatuhan %), totalWorkHours, hariSubmitReal, skorAkhir — matching exactly
+// what the live "KPI Personel" dashboard section itself ranks by (Skor Akhir/Kepatuhan %/Total
+// Hari Submit/Total Jam Kerja). This picks the metric implied by the question, defaulting to
+// skorAkhir (the dashboard's own overall ranking metric) for a plain "kinerja terbaik"/"ranking
+// tim" ask that doesn't name a specific metric.
+function findKpiRanking(message, kpiData) {
   if (!kpiData || !Array.isArray(kpiData.kpi) || !kpiData.kpi.length) return null;
   const nMsg = normText(message);
-  if (!(/jam\s*kerja/.test(nMsg) && /(terbanyak|paling banyak|terlama|paling lama|tertinggi|terkecil|paling sedikit|tersedikit)/.test(nMsg))) return null;
+  const mentionsJamKerja = /jam\s*kerja/.test(nMsg);
+  const wantsRanking = /terbanyak|paling banyak|terlama|paling lama|tertinggi|terkecil|paling sedikit|tersedikit|terbaik|terburuk|paling bagus|paling rajin|paling jelek|terendah|\branking\b|\bperingkat\b|\burutan\b|\burutkan\b/.test(nMsg);
+  const aboutPersonnel = /karyawan|personel|staff|\bstaf\b|\btim\b|anggota tim|siapa yang/.test(nMsg);
+  if (!wantsRanking || (!mentionsJamKerja && !aboutPersonnel)) return null;
+
+  let metric = 'skorAkhir';
+  let metricLabel = 'Skor Akhir (nilai kinerja keseluruhan)';
+  if (mentionsJamKerja) { metric = 'totalWorkHours'; metricLabel = 'Total Jam Kerja'; }
+  else if (/kepatuhan|disiplin|persentase|\bpercent\b/.test(nMsg)) { metric = 'percent'; metricLabel = 'Kepatuhan (%)'; }
+  else if (/hari submit|\bsubmit\b/.test(nMsg)) { metric = 'hariSubmitReal'; metricLabel = 'Total Hari Submit'; }
+
+  const ascending = /terkecil|paling sedikit|tersedikit|terburuk|paling jelek|terendah/.test(nMsg);
   const ranking = [...kpiData.kpi]
-    .filter((p) => typeof p.totalWorkHours === 'number')
-    .sort((a, b) => b.totalWorkHours - a.totalWorkHours)
-    .map((p) => ({ nama: p.nama, totalJamKerja: p.totalWorkHours, hariKerjaBerjalan: p.hariKerjaBerjalan, hariSubmitReal: p.hariSubmitReal }));
-  return { bulan: kpiData.month, catatan: 'totalJamKerja = akumulasi jam kerja (jam pulang - jam datang) sepanjang bulan berjalan sampai hari ini, sudah terurut dari yang PALING BANYAK.', ranking };
+    .filter((p) => typeof p[metric] === 'number')
+    .sort((a, b) => (ascending ? a[metric] - b[metric] : b[metric] - a[metric]))
+    .map((p) => ({ nama: p.nama, skorAkhir: p.skorAkhir, kepatuhanPersen: p.percent, totalJamKerja: p.totalWorkHours, totalHariSubmit: p.hariSubmitReal }));
+  return {
+    bulan: kpiData.month,
+    metricDipakai: metricLabel,
+    urutan: ascending ? 'sudah terurut dari PALING KECIL/TERBAWAH duluan' : 'sudah terurut dari PALING BESAR/TERBAIK duluan',
+    catatan: `Ranking ini diurutkan berdasarkan ${metricLabel} (akumulasi bulan berjalan sampai hari ini) — field lain (skorAkhir/kepatuhanPersen/totalJamKerja/totalHariSubmit) tetap disertakan per orang sebagai konteks tambahan, sama seperti tampilan dashboard KPI Personel.`,
+    ranking,
+  };
 }
 
 async function fetchAttendanceContext(message, kpiNames, history) {
@@ -2383,7 +2409,7 @@ async function handleChat(request, env) {
   const allWilayahEkspedisi = wilayahRaw ? JSON.parse(wilayahRaw) : [];
   const piutangData = piutangRaw ? JSON.parse(piutangRaw) : null;
   const kpiData = kpiRaw ? JSON.parse(kpiRaw) : null;
-  const workHoursRanking = findWorkHoursRanking(message, kpiData);
+  const kpiRankingMatch = findKpiRanking(message, kpiData);
   const poGudangData = poGudangRaw ? JSON.parse(poGudangRaw) : null;
   const zonaWilayahData = zonaWilayahRaw ? JSON.parse(zonaWilayahRaw) : null;
   const stokMatch = findStockMatches(message, allStock, history);
@@ -2471,7 +2497,7 @@ async function handleChat(request, env) {
     transaksiBelumDikirim: wantsUndelivered && undeliveredRaw ? JSON.parse(undeliveredRaw) : null,
     referensiLink: referensi,
     absensiDanIndikatorHarian: absensi,
-    rankingJamKerja: workHoursRanking,
+    rankingKinerjaPersonel: kpiRankingMatch,
     infoKantor: COMPANY_INFO,
     jabatanPersonel: PERSONNEL_ROLES,
   };
@@ -2486,7 +2512,7 @@ KEPRIBADIAN:
 
 MODE PARTNER DISKUSI BISNIS & MARKETING:
 - Selain menjawab pertanyaan data mentah, kamu JUGA partner diskusi strategi untuk Branch Manager — boleh diajak ngobrol dan dimintai pendapat soal strategi marketing, operasional, cara mengejar target, dan peluang menambah profit.
-- Setiap saran WAJIB berangkat dari DATA KONTEKS yang benar-benar kamu punya — bukan teori bisnis generik lepas konteks. Sebelum kasih saran, tarik dulu angka relevan dari field yang sudah ada: "perbandinganTahunSebelumnya"/"targetPerformaHarianBulanan" (capaian target vs realisasi bulan berjalan), "customerTidakAktif"/"daftarNamaCustomerPerBucket" (churn/1x belanja), "zonaWilayahRelevan" (zona merah/kuning), "stokTidakBergerakDanKurangLaku"/"saranRestockProdukTerlaris" (stok menipis atau tidak bergerak), "piutangPerKategoriUmur"/"piutangCustomerTertinggi" (aging piutang tinggi), "wilayahEkspedisiRelevan"/"deliveryOverview" (performa ekspedisi), "rankingJamKerja" (KPI personel) — baru sambungkan ke rekomendasi konkret. Kalau field yang relevan untuk pertanyaan itu ternyata null/tidak tersedia, sebutkan keterbatasannya terus terang, JANGAN mengarang asumsi bisnis tanpa dasar data.
+- Setiap saran WAJIB berangkat dari DATA KONTEKS yang benar-benar kamu punya — bukan teori bisnis generik lepas konteks. Sebelum kasih saran, tarik dulu angka relevan dari field yang sudah ada: "perbandinganTahunSebelumnya"/"targetPerformaHarianBulanan" (capaian target vs realisasi bulan berjalan), "customerTidakAktif"/"daftarNamaCustomerPerBucket" (churn/1x belanja), "zonaWilayahRelevan" (zona merah/kuning), "stokTidakBergerakDanKurangLaku"/"saranRestockProdukTerlaris" (stok menipis atau tidak bergerak), "piutangPerKategoriUmur"/"piutangCustomerTertinggi" (aging piutang tinggi), "wilayahEkspedisiRelevan"/"deliveryOverview" (performa ekspedisi), "rankingKinerjaPersonel" (KPI personel) — baru sambungkan ke rekomendasi konkret. Kalau field yang relevan untuk pertanyaan itu ternyata null/tidak tersedia, sebutkan keterbatasannya terus terang, JANGAN mengarang asumsi bisnis tanpa dasar data.
 - Kalau ditanya pendapat terbuka (mis. "menurutmu gimana biar sales bulan ini kekejar?", "strategi apa buat wilayah zona merah?", "customer yang churn ini enaknya diapain?") — jangan cuma tampilkan data, IKUT BERPIKIR bersama: analisis dulu akar masalahnya dari data, baru kasih 2-3 opsi tindakan konkret berikut trade-off masing-masing, dan boleh sebutkan mana yang menurutmu paling masuk akal. Untuk pertanyaan strategi/analisis yang kompleks, pikirkan dulu dengan cermat, jangan buru-buru kasih jawaban template.
 - Selalu kaitkan saran ke angka nyata: sebutkan nominal, nama wilayah/customer/kode barang spesifik yang relevan dari data — jangan generik ("tingkatkan promosi" saja tanpa target/area/produk spesifik).
 - Domain yang boleh dibahas: strategi kejar target sales/revenue bulanan & tahunan, prioritas follow-up customer (churn, 1x belanja, piutang jatuh tempo/aging tinggi), strategi wilayah (zona kuning/merah mana yang potensial digarap lebih dulu), rekomendasi restock/promosi produk (barang tidak bergerak vs terlaris yang stoknya tipis), efisiensi ekspedisi/pengiriman (Same Day vs Cut Off, Hand Carry vs pihak ketiga), evaluasi kinerja tim (KPI Personel) untuk perbaikan operasional.
@@ -2555,7 +2581,7 @@ Aturan:
   - Sertakan URL APA ADANYA (utuh, bisa diklik, jangan dipotong). Format baris link di akhir jawaban: "🔗 Info lengkap: [Nama Halaman] — (URL)" — kalau lebih dari satu, buat daftar bullet, MAKSIMAL 3 link per jawaban.
   - Field ini TIDAK relevan untuk pertanyaan operasional (sales/stok/piutang/dll) — jangan sisipkan link produk ke jawaban yang tidak memintanya.
 - Untuk pertanyaan jam masuk/pulang karyawan, "kinerja"/"kinerja personil"/"kinerja harian" seseorang, atau isi indikator harian personel, gunakan "absensiDanIndikatorHarian". Jika berisi "jamMasukPulangTim" itu data satu tim untuk satu tanggal (per orang: datang/pulang true-false + jamDatang/jamPulang, dan field ...Ok menandakan apakah role tsb secara keseluruhan tepat waktu).
-- Untuk "siapa yang jam kerjanya paling banyak/paling sedikit" (akumulasi, BUKAN satu hari), gunakan "rankingJamKerja" (field "ranking" sudah terurut dari paling banyak, field "totalJamKerja" per orang adalah akumulasi jam kerja bulan berjalan sampai hari ini — kalau user tanya "paling sedikit", baca dari BAWAH list). Field ini beda dari "absensiDanIndikatorHarian" yang hanya data satu hari.
+- Untuk RANKING/PERINGKAT karyawan-personel (akumulasi bulan berjalan, BUKAN satu hari) — mis. "siapa karyawan kinerja terbaik", "ranking tim", "siapa yang jam kerjanya paling banyak", "urutan kepatuhan tim", "siapa yang paling sering submit laporan" — gunakan "rankingKinerjaPersonel". Field "metricDipakai" menjelaskan metrik yang dipakai untuk urutan ini (Skor Akhir = default kalau user tidak sebut metrik spesifik, ini metrik ringkasan kinerja keseluruhan yang sama dipakai dashboard KPI Personel; atau Kepatuhan %/Total Jam Kerja/Total Hari Submit kalau user sebut itu spesifik) — field "urutan" bilang arah urutannya (terbesar/terbaik dulu, atau terkecil dulu kalau user tanya "paling sedikit/terburuk"). Tiap orang di "ranking" punya SEMUA 4 metrik (skorAkhir, kepatuhanPersen, totalJamKerja, totalHariSubmit) meski cuma satu yang dipakai urut — boleh sebutkan metrik lain sebagai konteks tambahan kalau relevan. Field ini beda dari "absensiDanIndikatorHarian" yang hanya data satu hari, dan null berarti kata kuncinya tidak terdeteksi (bukan berarti datanya tidak ada) — coba tanya user memperjelas maksudnya.
   - Kalau berisi field "indikator" untuk SATU orang di SATU tanggal (field "tanggal" ada, bukan "ringkasan10HariTerakhir") — ini setara tampilan "Cek Indikator per Tanggal" di dashboard. WAJIB tampilkan LENGKAP dan SELALU, BUKAN cuma kalau ditanya spesifik: jam datang/pulang, lalu SEMUA indikator satu per satu (label + status tercapai YA/TIDAK) BESERTA isi field "detail"-nya kalau ada (mis. untuk "Follow Up Piutang Customer" sebutkan nama tiap customer, hari menunggak, saldo piutang, keterangan evaluasinya; untuk "Membuat Laporan Piutang" sebutkan no invoice/customer/jumlah piutangnya; dst — apapun isi "detail" itu, jabarkan semuanya). Jangan diringkas jadi "X dari 10 tercapai" saja kalau datanya lengkap tersedia — user secara eksplisit minta detail seutuhnya seperti tampilan dashboard, bukan ringkasan angka.
   - Kalau field "catatan" terisi (mis. tanggal yang diminta belum ada data sehingga dipakai hari kerja terakhir yang tersedia), sebutkan catatan ini ke user supaya jelas data yang ditampilkan itu untuk tanggal berapa.
   - Kalau berisi "ringkasan10HariTerakhir" (untuk pertanyaan tren/rekap mingguan/bulanan), itu memang ringkasan angka per hari (jumlah indikator tercapai dari total) — BUKAN rincian, cukup sajikan apa adanya per hari.
