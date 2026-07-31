@@ -207,6 +207,7 @@ const COMPANY_INFO = {
 // the KPI sheet necessarily has a role recorded here yet.
 const PERSONNEL_ROLES = {
   RIFQI: 'Branch Manager MKI Makassar (juga pencipta MIRA)',
+  RIFKI: 'Branch Manager MKI Makassar (juga pencipta MIRA)', // ejaan alternatif nama yang sama, bukan orang lain
   ASTRID: 'Supervisor Marketing & Customer Relation',
   ADI: 'Marketing Representative',
   REZA: 'Marketing Representative',
@@ -2776,6 +2777,7 @@ Aturan:
   - Null/kosong padahal jelas ditanya → tak ditemukan (mungkin nama salah ketik/tanggal di luar rentang).
 - ALAMAT/lokasi kantor → "infoKantor" (nama/alamat/link Maps) — sertakan link Maps kalau relevan.
 - JABATAN/posisi seseorang → "jabatanPersonel" (nama→jabatan). Beda dari data KPI harian — nama tak ada di jabatanPersonel tapi ada di KPI/absensi → jabatan belum tercatat (jangan menebak).
+- "Rifqi" dan "Rifki" adalah EJAAN BERBEDA untuk ORANG YANG SAMA (Branch Manager, pencipta MIRA) — di topik/data apa pun (jabatan, absensi, obrolan, dll), anggap kedua ejaan itu merujuk satu orang, JANGAN dianggap dua orang berbeda.
 - Jawab singkat, padat, langsung ke angka/fakta. Bahasa Indonesia sehari-hari sopan.
 - PAHAMI MAKSUD DULU: pastikan benar mengerti yang ditanyakan (termasuk maksud tersirat dari histori) — ambigu & bisa beda jauh hasilnya → boleh tanya balik singkat, JANGAN asal jawab satu tafsiran.
 - JAWABAN MUDAH DIMENGERTI SIAPA SAJA (termasuk yang tak biasa istilah teknis/tak bersekolah tinggi): kata sehari-hari (bukan "terjadi peningkatan signifikan", bilang "naik banyak"). Istilah teknis/singkatan (OLT, aging, revenue) → jelaskan singkat saat pertama disebut. Kalimat pendek runtut/poin per poin, hindari kalimat panjang berbelit. Boleh perumpamaan sederhana kalau membantu, TAPI jangan korbankan ketepatan angka — cuma cara jelasinnya yang sederhana. Sopan, tidak menggurui/meremehkan.
