@@ -1189,20 +1189,46 @@ function findTopPiutangCustomers(message, piutangDetail) {
   return { totalCustomerPunyaPiutang: ranked.length, top10: ranked.slice(0, 10) };
 }
 
+// Official dashboard aging buckets ("Kategori baku"), computed directly from the numeric Aging
+// (days) column — see the long comment in runSync's AR section for why this replaced the sheet's
+// own text Kategori column (different, inconsistent scheme).
+function agingBucketOf(days) {
+  if (days <= 30) return '0-30 Hari';
+  if (days <= 45) return '30-45 Hari';
+  if (days <= 60) return '45-60 Hari';
+  return '> 60 Hari';
+}
+
 // "Siapa saja customer dengan piutang di atas 30 hari?" — lists actual invoices/names within one
 // age-category bucket. Distinct from "piutang.byKategori" (totals only, no names) and from
 // findPiutangByCustomer (single named customer) — this was the missing piece for "who's IN each
-// bucket", not just how much each bucket totals. Category strings must match sync's exact labels.
+// bucket", not just how much each bucket totals.
 function findPiutangByKategoriUmur(message, piutangDetail) {
   if (!piutangDetail || !piutangDetail.length) return null;
   const nMsg = normText(message);
-  // Order matters: "14-30 hari" and "0-13 hari" contain "30 hari"/substrings the generic ">30"/
-  // ">60" checks would also match, so the more specific range phrasings must be checked FIRST.
+  // Generic threshold phrasing ("di atas/lebih dari N hari", "N hari ke atas") isn't tied to the
+  // 4 named buckets — computed directly from each invoice's own agingHari so any N works, not
+  // just the dashboard's fixed 30/45/60 boundaries.
+  const thresholdMatch = nMsg.match(/(?:di\s*atas|lebih\s*dari|>\s*)\s*(\d+)\s*hari|(\d+)\s*hari\s*ke\s*atas/);
+  if (thresholdMatch) {
+    const n = Number(thresholdMatch[1] || thresholdMatch[2]);
+    if (Number.isFinite(n)) {
+      const items = [...piutangDetail.filter((p) => p.agingHari > n)].sort((a, b) => b.nilaiSisa - a.nilaiSisa);
+      return {
+        kategori: `> ${n} Hari`,
+        jumlahInvoice: items.length,
+        totalNilai: items.reduce((sum, p) => sum + p.nilaiSisa, 0),
+        daftar: items.slice(0, 60),
+        catatan: `Dihitung langsung dari umur piutang (hari) per invoice, bukan dari salah satu 4 kategori baku dashboard. ${items.length > 60 ? `Ditampilkan 60 dari ${items.length} invoice (urut nilai terbesar).` : `Semua ${items.length} invoice ditampilkan.`}`,
+      };
+    }
+  }
+  // Named standard buckets (persis istilah baku dashboard): 0-30, 30-45, 45-60, >60 Hari.
   let kategori = null;
-  if (/14\s*-?\s*(sampai\s*)?30\s*hari/.test(nMsg)) kategori = '14 - 30 Hari';
-  else if (/0\s*-?\s*(sampai\s*)?13\s*hari|di\s*bawah\s*14\s*hari/.test(nMsg)) kategori = '0 - 13 Hari';
+  if (/0\s*-?\s*(sampai\s*)?30\s*hari|kurang\s*dari\s*30\s*hari|di\s*bawah\s*30\s*hari/.test(nMsg)) kategori = '0-30 Hari';
+  else if (/30\s*-?\s*(sampai\s*)?45\s*hari/.test(nMsg)) kategori = '30-45 Hari';
+  else if (/45\s*-?\s*(sampai\s*)?60\s*hari/.test(nMsg)) kategori = '45-60 Hari';
   else if (/60\s*hari/.test(nMsg)) kategori = '> 60 Hari';
-  else if (/30\s*hari/.test(nMsg)) kategori = '> 30 Hari';
   if (!kategori) return null;
   const items = [...piutangDetail.filter((p) => p.kategori === kategori)].sort((a, b) => b.nilaiSisa - a.nilaiSisa);
   return {
@@ -2110,7 +2136,13 @@ async function runSync(env) {
   // needed there, and it's row-compacted, not aligned 1:1 with the left table) — per the user,
   // L-S is the authoritative source for piutang. Column indices (0-based): 11 Tanggal,
   // 12 No Faktur, 13 Nama Customer, 14 Nilai Faktur, 15 Sisa Saldo Piutang, 16 Aging,
-  // 17 Kategori, 18 Company.
+  // 17 Kategori (sheet's OWN text, e.g. "14 - 30 Hari"/"> 30 Hari" — NOT used below), 18 Company.
+  // The sheet's own Kategori column uses a DIFFERENT bucket scheme than the official dashboard's
+  // "Kategori baku" (0-30 / 30-45 / 45-60 / >60 Hari, per the live dashboard's Piutang section) —
+  // confirmed by cross-checking real Aging-day values against both schemes: the sheet's own text
+  // buckets at 0-13/14-30/31-59(labeled ">30")/62+ (labeled ">60"), which does not line up with
+  // the dashboard's stated 0-30/30-45/45-60/>60 at all. Recomputed from the numeric Aging (days)
+  // column instead, matching the dashboard's own definition exactly.
   try {
     const csv = await (await fetch(csvExportUrl(PERFORMANCE_SHEET_ID, GIDS.ar))).text();
     const allRows = parseCsv(csv).slice(1); // drop header row
@@ -2121,14 +2153,15 @@ async function runSync(env) {
     for (const r of allRows) {
       if (!r[12]) continue; // stop counting once the compacted L-S list runs out (No Faktur empty)
       rowCount++;
-      const kategori = (r[17] || r[16] || 'Tidak diketahui').trim();
+      const agingHari = toNumber(r[16]);
+      const kategori = agingBucketOf(agingHari);
       const nilai = toNumber(r[15]);
       const customer = (r[13] || '').trim().toUpperCase(); // matches dashboard's buildAR() normalization
       totalPiutang += nilai;
       if (!byKategori[kategori]) byKategori[kategori] = { kategori, jumlahInvoice: 0, totalNilai: 0 };
       byKategori[kategori].jumlahInvoice += 1;
       byKategori[kategori].totalNilai += nilai;
-      detail.push({ tanggal: r[11], noFaktur: r[12], customer, nilaiSisa: nilai, kategori });
+      detail.push({ tanggal: r[11], noFaktur: r[12], customer, nilaiSisa: nilai, agingHari, kategori });
     }
     // Ratio AR-to-sales needs total 2026 sales, already computed and cached above in this
     // same /sync run — read it back rather than re-deriving from a second data pass.
@@ -2329,7 +2362,7 @@ Aturan:
 - Untuk pertanyaan RETUR/RETURN secara khusus ("retur apa saja bulan ini", "berapa banyak retur customer X"), gunakan "returRelevan" (sudah difilter khusus baris retur, boleh dipersempit lagi dengan tanggal/customer di pertanyaan yang sama) — field "catatan" menjelaskan kriteria deteksinya.
 - Untuk pertanyaan PIUTANG (sisa tagihan yang BELUM dibayar) customer tertentu, WAJIB gunakan "piutangRelevan" (rincian per invoice) — field umum "piutang" cuma total per kategori umur + "ratioARtoSalesPersen", TIDAK punya rincian per customer. Ini beda dari "pembayaranRelevan" (uang yang SUDAH masuk) — piutang = belum bayar, pembayaran = sudah bayar.
 - Untuk "customer dengan piutang tertinggi/terbesar", gunakan "piutangCustomerTertinggi" (sudah diurutkan, field "top10"). Kalau field ini null padahal user jelas menanyakan hal ini, berarti kata kuncinya tidak terdeteksi (bukan berarti datanya tidak ada) — minta user menegaskan pertanyaannya.
-- Untuk "siapa saja customer piutang di atas 30/60 hari" atau kategori umur piutang tertentu lainnya (14-30 hari, 0-13 hari), gunakan "piutangPerKategoriUmur" (field "daftar" berisi customer+noFaktur+nilaiSisa+tanggal per invoice dalam kategori itu) — ini beda dari "piutang.byKategori" yang cuma total angka tanpa nama. Sebutkan nama-nama customernya, bukan cuma totalnya, karena itu yang diminta.
+- KATEGORI UMUR PIUTANG (AGING) BAKU — WAJIB dipakai konsisten, JANGAN improvisasi rentang lain: "0-30 Hari", "30-45 Hari", "45-60 Hari", "> 60 Hari" (ini definisi resmi dashboard, dihitung dari kolom Aging/hari per invoice — beda dari kategori versi lama yang mungkin pernah kamu lihat di histori percakapan sebelumnya seperti "14-30 Hari"/"0-13 Hari", itu sudah tidak dipakai lagi). Untuk "siapa saja customer piutang di kategori tertentu" (0-30/30-45/45-60/>60 hari) ATAU ambang bebas (mis. "piutang di atas 90 hari", "lebih dari 45 hari"), gunakan "piutangPerKategoriUmur" (field "daftar" berisi customer+noFaktur+nilaiSisa+agingHari+tanggal per invoice) — ini beda dari "piutang.byKategori" yang cuma total angka tanpa nama. Sebutkan nama-nama customernya, bukan cuma totalnya, karena itu yang diminta. Field "kategori" di hasilnya menunjukkan apakah ini salah satu dari 4 kategori baku atau ambang bebas (mis. "> 90 Hari").
 - Untuk piutang per company MKI/CFN, gunakan "piutangPerCompany" — WAJIB sebutkan ke user bahwa company ini diturunkan dari pola nomor faktur (bukan field asli terpisah), sesuai catatan di field itu, supaya user paham asalnya. JANGAN PERNAH menjawab pertanyaan "piutang MKI/CFN" dengan angka TOTAL GABUNGAN dari field "piutang" — itu bukan jawaban yang sesuai konteks pertanyaannya. Kalau user minta LIST/daftar (bukan cuma total), field "daftar" di dalamnya berisi rincian per invoice (customer, noFaktur, nilaiSisa, tanggal, kategori) — sebutkan nama-namanya, jangan cuma angka total.
 - Untuk "nilai stok"/"nilai rupiah stok" (total ATAU per company MKI/CFN), gunakan "nilaiStokRelevan" (field "totalNilaiRupiah" = harga x jumlah unit, sudah company-aware kalau MKI/CFN disebut). Kalau field "catatan" di dalamnya bilang ada kode tanpa data harga, sebutkan itu supaya user tahu totalnya belum 100% lengkap. Field ini null kalau pertanyaan tidak menyebut kata "nilai" DAN "stok" bersamaan.
 - Untuk "produk terlaris tapi stoknya menipis" atau "saran pemesanan/restock/isi stok gudang", gunakan "saranRestockProdukTerlaris" — ini SUDAH dihitung (kode, nama, qty terjual 2026, stok saat ini, rata-rata terjual per bulan, perkiraan berapa bulan lagi stoknya habis), urut dari yang PALING mendesak. Sampaikan sebagai SARAN konkret ("kode X sebaiknya di-PO sekarang, stok cuma cukup untuk Y bulan lagi berdasarkan kecepatan jualnya"), bukan cuma tabel angka. Kalau field "daftar" kosong tapi bukan null, artinya memang TIDAK ADA produk terlaris yang stoknya mendesak saat ini — sampaikan itu sebagai kabar baik, JANGAN dikira gagal ambil data.
