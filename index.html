@@ -58,7 +58,9 @@
   </header>
 
   <!-- Chat area: normal document flow (no overflow-y-auto/flex-1) — grows as tall as the
-       conversation, the PAGE scrolls, not this div. -->
+       conversation, the PAGE scrolls, not this div. padding-bottom is kept in sync with the
+       fixed #chatForm's real height via a ResizeObserver below, so the last message never sits
+       hidden underneath it. -->
   <main id="chatArea" class="flex-1 px-3 py-4 space-y-3">
     <div class="flex justify-start">
       <div class="max-w-[85%] bg-white border border-sand-border rounded-2xl rounded-tl-sm px-4 py-2.5 shadow-sm text-sm">
@@ -67,13 +69,14 @@
     </div>
   </main>
 
-  <!-- Input: plain document flow (NOT sticky) — a real reported case: Android's scrolling-
-       screenshot stitching drops sticky/fixed elements pinned to the BOTTOM edge (the "growing"
-       edge it scrolls toward), even though it handles a sticky TOP header fine. Flowing normally
-       right after #chatArea means it's ordinary content and gets captured like everything else.
-       Still effectively "always in view after sending" because scrollToBottom() already scrolls
-       the page to document.documentElement.scrollHeight, which is exactly where this sits. -->
-  <form id="chatForm" class="shrink-0 border-t border-sand-border bg-white p-3 flex items-end gap-2">
+  <!-- Input: fixed to the bottom of the viewport, at the user's explicit request (stay visible
+       while scrolling the conversation, like a normal chat app) — chosen KNOWING this risks
+       reintroducing an earlier reported bug: Android's scrolling-screenshot stitching was
+       observed dropping a BOTTOM-pinned element (tested as "sticky" then, not "fixed" — the two
+       may behave differently, unconfirmed either way), even though a sticky TOP header is
+       captured fine. If a real-device screenshot-scroll test shows the input missing again,
+       revert this block to plain flow (see git history) the same way it was reverted before. -->
+  <form id="chatForm" class="fixed bottom-0 left-0 right-0 z-20 border-t border-sand-border bg-white p-3 flex items-end gap-2" style="padding-bottom: max(0.75rem, env(safe-area-inset-bottom));">
     <button
       type="button"
       id="micBtn"
@@ -112,6 +115,15 @@
   const refreshBtn = document.getElementById('refreshBtn');
   const statusText = document.getElementById('statusText');
   const statusDot = document.getElementById('statusDot');
+
+  // #chatForm is fixed to the viewport bottom and its height changes as the textarea grows
+  // (multi-line messages) — keep #chatArea's bottom padding in sync so the last message never
+  // ends up hidden underneath the fixed bar.
+  function syncChatAreaPadding() {
+    chatArea.style.paddingBottom = `${chatForm.offsetHeight}px`;
+  }
+  new ResizeObserver(syncChatAreaPadding).observe(chatForm);
+  syncChatAreaPadding();
 
   const WELCOME_HTML = `
     <div class="flex justify-start">
@@ -165,9 +177,10 @@
   }
 
   function scrollToBottom() {
-    // The PAGE scrolls now (not an inner chatArea div) — see the layout change in <body>/<main>/
-    // <form> above, done so Android/iOS's native scrolling-screenshot can capture the whole
-    // conversation.
+    // The PAGE scrolls (not an inner chatArea div) — see the layout change in <body>/<main>
+    // above, done so Android/iOS's native scrolling-screenshot can capture the whole
+    // conversation. #chatForm is fixed/out-of-flow now, so this naturally lands right where
+    // #chatArea's synced bottom padding ends, just above the fixed input bar.
     window.scrollTo(0, document.documentElement.scrollHeight);
   }
 
@@ -286,14 +299,29 @@
     [/\bsubmit\b/gi, 'sabmit'],
     [/\bKPI\b/g, 'Ki Pi Ai'],
     [/\bPON\b/g, 'Pon'],
-    [/\bONU\b/g, 'Onu'],
   ];
 
-  // Known 3-letter (or short) all-caps ACRONYMS that should be spelled out letter-by-letter — a
-  // fixed whitelist, not "any 3-letter all-caps word", because customer/personnel names are
-  // stored uppercase in the data and Gemini sometimes echoes them verbatim (e.g. customer "ARI"),
-  // which a blanket rule would wrongly spell out as "A R I" instead of reading it as a name.
-  const KNOWN_ACRONYMS = new Set(['OLT', 'ODP', 'ONT', 'ODF', 'ODC', 'FTB', 'FTP', 'HFC', 'WDM', 'MKI', 'CFN', 'OTD', 'LAN', 'APC', 'UPC']);
+  // Product/item CODE prefixes that should be spelled out letter-by-letter (mis. "KSFO001" -> "Ka
+  // Es Ef O 0 0 1") — a fixed whitelist pulled from the real "kode" prefixes in the stock sheet
+  // (plus a few domain acronyms like ONU/OLT that show up bare, without a trailing number), NOT
+  // "any all-caps word". Customer/personnel names are ALSO stored uppercase in the data and Gemini
+  // echoes them verbatim (mis. "FATUM BACHMID") — those must be heard as a name, not spelled out,
+  // so anything NOT in this whitelist gets Title-Cased instead (see the regex below).
+  const KNOWN_ACRONYMS = new Set([
+    'ADFC', 'ADIS', 'ADP', 'ADSC', 'ADSD', 'ADSF', 'AINS', 'AJBR', 'AJIR', 'AJPT', 'AKRK', 'AKRV', 'AKTB', 'APC', 'APRB',
+    'ASUS', 'ATRS', 'AUDA', 'AUDB', 'AUOM', 'AUOP', 'AUOT', 'CBFC', 'CBNC', 'CBSC', 'CCTB', 'CCTV', 'CDLN', 'CFN', 'CLTX',
+    'CNJO', 'CNQR', 'CPOR', 'CR', 'CRDC', 'CRG', 'CRI', 'CRTV', 'CTQR', 'DB', 'DE', 'DGT', 'DS', 'DVBA', 'DVBC', 'DVBE',
+    'DVBK', 'DVBM', 'DVBN', 'DVBR', 'DVBS', 'DVBT', 'DVBX', 'EDFA', 'ESFP', 'FMCH', 'FORN', 'FOTB', 'FTB', 'FTP', 'GSFP',
+    'HFC', 'JCFM', 'JCH', 'JCV', 'JH', 'JHN', 'JV', 'KC', 'KCQR', 'KSFO', 'LAN', 'MA', 'MAE', 'MCFC', 'MCSC', 'MEOC', 'MF',
+    'MFE', 'MFEB', 'MFEE', 'MFES', 'MFFB', 'MFFC', 'MFFM', 'MFOR', 'MFS', 'MKI', 'MVAR', 'MVAT', 'NB', 'NETC', 'NETS',
+    'NGF', 'NS', 'NSF', 'NWDM', 'ODC', 'ODF', 'ODP', 'OEPC', 'OEPO', 'OEQS', 'OESO', 'OLT', 'OLTG', 'OLTP', 'OLTR', 'ONBS',
+    'ONT', 'ONTG', 'ONU', 'ONUA', 'OPCA', 'ORPT', 'OTD', 'OTPR', 'OWDM', 'PC', 'PDE', 'PDMC', 'PDUP', 'PFOL', 'PI', 'PJFO',
+    'PLBT', 'PLIV', 'PLKA', 'PLST', 'PLUP', 'PO', 'POLT', 'PPLK', 'PS', 'PSDC', 'PSGD', 'PTCO', 'PTFC', 'PTLC', 'PTSC',
+    'PTVK', 'RACC', 'RACK', 'RAS', 'RCC', 'RDS', 'RDVB', 'RKPM', 'SADV', 'SAMP', 'SBAT', 'SCAP', 'SCON', 'SDIO', 'SFIL',
+    'SFT', 'SFUS', 'SI', 'SICT', 'SJUM', 'SLCD', 'SLFO', 'SNTC', 'SO', 'SOPT', 'SPAK', 'SPCB', 'SPCT', 'SREG', 'SRES',
+    'SSCR', 'SSPL', 'STRF', 'STRS', 'STUN', 'SVAR', 'TBGP', 'TCQR', 'TI', 'TO', 'TTSR', 'TVHD', 'TXOP', 'UPC', 'WDM',
+    'XTAL',
+  ]);
 
   // Splits a reply into speech segments with per-segment prosody so MIRA doesn't read every
   // sentence in the same flat pitch/rate — a single SpeechSynthesisUtterance has no mid-utterance
@@ -323,8 +351,19 @@
       // and it ("11 koma 94 Rupiah miliar" reads oddly) — only plain figures put Rupiah right after.
       return unit ? `${amount}${unit} Rupiah` : `${amount} Rupiah`;
     });
-    t = t.replace(/\b(?!Rp\d)([A-Za-z]{2,8})(\d{2,6})\b/g, (m, letters, digits) => `${letters} ${digits.split('').join(' ')}`);
-    t = t.replace(/\b([A-Z]{2,4})\b(?!\d)/g, (m, letters) => (KNOWN_ACRONYMS.has(letters) ? letters.split('').join(' ') : letters));
+    // Letters+digits together ("KSFO001", "ONUA022") is always a product/item code — spell the
+    // WHOLE thing out, letters included (previously only the digits were split, so the letters
+    // silently fell back on whatever the device's own TTS engine guesses for an unrecognized
+    // all-caps chunk).
+    t = t.replace(/\b(?!Rp\d)([A-Za-z]{2,8})(\d{2,6})\b/g, (m, letters, digits) => `${letters.split('').join(' ')} ${digits.split('').join(' ')}`);
+    // Any remaining bare all-caps word (no length cap — customer/personnel names like "FATUM
+    // BACHMID" are often longer than 4 letters, which the old {2,4} bound silently let straight
+    // through in full caps): known product-code prefixes still get spelled letter-by-letter,
+    // everything else (names, categories, stray caps) gets Title-Cased so it's heard as an actual
+    // word/name instead of the device TTS engine's own letter-by-letter guess for unrecognized caps.
+    t = t.replace(/\b([A-Z]{2,})\b(?!\d)/g, (m, letters) =>
+      KNOWN_ACRONYMS.has(letters) ? letters.split('').join(' ') : letters.charAt(0) + letters.slice(1).toLowerCase()
+    );
     // Strip formatting/punctuation symbols that some TTS voices read literally out loud ("titik
     // dua" for ":", "titik" for ".", "koma" for ",", "lebih besar/kecil dari" for "<"/">", ...) —
     // none of these should ever be heard as words. Trailing "!"/"?" are kept out of this set:
