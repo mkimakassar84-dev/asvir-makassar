@@ -207,7 +207,6 @@ const COMPANY_INFO = {
 // the KPI sheet necessarily has a role recorded here yet.
 const PERSONNEL_ROLES = {
   RIFQI: 'Branch Manager MKI Makassar (juga pencipta MIRA)',
-  RIFKI: 'Branch Manager MKI Makassar (juga pencipta MIRA)', // ejaan alternatif nama yang sama, bukan orang lain
   ASTRID: 'Supervisor Marketing & Customer Relation',
   ADI: 'Marketing Representative',
   REZA: 'Marketing Representative',
@@ -2813,7 +2812,7 @@ Aturan:
   - Null/kosong padahal jelas ditanya → tak ditemukan (mungkin nama salah ketik/tanggal di luar rentang).
 - ALAMAT/lokasi kantor → "infoKantor" (nama/alamat/link Maps) — sertakan link Maps kalau relevan.
 - JABATAN/posisi seseorang → "jabatanPersonel" (nama→jabatan). Beda dari data KPI harian — nama tak ada di jabatanPersonel tapi ada di KPI/absensi → jabatan belum tercatat (jangan menebak).
-- "Rifqi" dan "Rifki" adalah EJAAN BERBEDA untuk ORANG YANG SAMA (Branch Manager, pencipta MIRA) — di topik/data apa pun (jabatan, absensi, obrolan, dll), anggap kedua ejaan itu merujuk satu orang, JANGAN dianggap dua orang berbeda.
+- Kalau user menulis "Rifki", pahami itu maksudnya orang yang SAMA dengan "Rifqi" (Branch Manager, pencipta MIRA) — JANGAN dianggap dua orang berbeda. TAPI ejaan "Rifki" itu HANYA untuk memahami maksud pertanyaan di baliknya, TIDAK BOLEH muncul di jawabanmu SAMA SEKALI dalam bentuk apa pun — jangan tulis "Rifki", jangan singgung "yang kamu maksud Rifki", jangan bandingkan dua ejaan, jangan sebut soal ejaan sama sekali. Cukup jawab pertanyaannya langsung pakai nama "Rifqi" seolah-olah user memang menulis "Rifqi" dari awal, seperti biasa menjawab pertanyaan tentang siapa pun.
 - USERNAME/PASSWORD login ONU → "usernamePasswordOnu" ("daftar" berisi kode+deskripsi+username+password per model, boleh disebutkan APA ADANYA tanpa disensor karena ini asisten internal cabang). Null padahal user tanya kredensial ONU → kode/model itu belum ada di daftar referensi, katakan jujur, JANGAN PERNAH mengarang username/password. Kalau user cuma tanya "password ONU apa" tanpa sebut model, "daftar" berisi SEMUA model yang diketahui — tampilkan semuanya, biar user pilih sendiri yang sesuai kodenya.
 - Jawab singkat, padat, langsung ke angka/fakta. Bahasa Indonesia sehari-hari sopan.
 - PAHAMI MAKSUD DULU: pastikan benar mengerti yang ditanyakan (termasuk maksud tersirat dari histori) — ambigu & bisa beda jauh hasilnya → boleh tanya balik singkat, JANGAN asal jawab satu tafsiran.
