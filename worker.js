@@ -1320,6 +1320,12 @@ function extractMonthMention(message) {
     const month = MONTHS[m[1]];
     if (month) return { month, year: nowMakassar().getFullYear() };
   }
+  // Bare month name with no "bulan"/year prefix (mis. "siapa karyawan terbaik Juli") — last
+  // resort, checked after every more specific pattern above already failed.
+  for (const m of t.matchAll(/\b([a-z]+)\b/g)) {
+    const month = MONTHS[m[1]];
+    if (month) return { month, year: nowMakassar().getFullYear() };
+  }
   return null;
 }
 
@@ -1932,7 +1938,7 @@ function extractInactivityDayRange(text) {
 // still counts as "wants this topic" — split out so both the current message AND history scanning
 // below can reuse the exact same rule.
 function wantsInactivityTopicText(text) {
-  return !!extractInactivityDayRange(text) || /lama\s*tidak\s*belanja|tidak\s*aktif|belum\s*belanja\s*lagi|tidak\s*order\s*lagi|sudah\s*berapa\s*hari|\bchurn(ed)?\b/.test(normText(text));
+  return !!extractInactivityDayRange(text) || /lama\s*tidak\s*(ber)?belanja|tidak\s*aktif|belum\s*(ber)?belanja\s*lagi|tidak\s*(ber)?order\s*lagi|sudah\s*berapa\s*hari|\bchurn(ed)?\b/.test(normText(text));
 }
 
 // "Customer yang sudah lama tidak belanja, 30-60 hari terakhir" / "sudah berapa hari X tidak
@@ -1954,7 +1960,13 @@ function findInactiveCustomers(message, customerActivity, history, piutangDetail
   let dayRange = extractInactivityDayRange(message);
   let fromHistory = false;
   let fromGenericDefault = false;
-  if (!dayRange && !wantsInactivityTopicText(message) && Array.isArray(history)) {
+  if (!dayRange && wantsInactivityTopicText(message)) {
+    // Topic is clearly about churn/inactivity ("siapa yang sudah lama tidak berbelanja") but no
+    // explicit day number given — a real reported case that returned nothing at all. Default to
+    // the standard churn threshold instead of giving up.
+    dayRange = { min: 60, max: Infinity };
+    fromGenericDefault = true;
+  } else if (!dayRange && Array.isArray(history)) {
     // Follow-up like "nama customernya?" right after MIRA HERSELF proposed a churned/inactive
     // segment as a sales-follow-up suggestion — a real reported case where this incorrectly said
     // the data wasn't available, when it was just never re-mentioned in THIS specific message.
@@ -2068,8 +2080,7 @@ function resolveAttendanceDate(message) {
 // Hari Submit/Total Jam Kerja). This picks the metric implied by the question, defaulting to
 // skorAkhir (the dashboard's own overall ranking metric) for a plain "kinerja terbaik"/"ranking
 // tim" ask that doesn't name a specific metric.
-function findKpiRanking(message, kpiData) {
-  if (!kpiData || !Array.isArray(kpiData.kpi) || !kpiData.kpi.length) return null;
+async function findKpiRanking(message, kpiData, env) {
   const nMsg = normText(message);
   const mentionsJamKerja = /jam\s*kerja/.test(nMsg);
   const wantsRanking = new RegExp(`${SUPERLATIVE_ANY}|\\branking\\b|\\bperingkat\\b|\\burutan\\b|\\burutkan\\b`).test(nMsg);
@@ -2082,6 +2093,31 @@ function findKpiRanking(message, kpiData) {
   const aboutPersonnel = !mentionsOtherTopic && /karyawan|personel|staff|\bstaf\b|\btim\b|anggota tim|siapa yang|\bkinerja\b/.test(nMsg);
   if (!wantsRanking || (!mentionsJamKerja && !aboutPersonnel)) return null;
 
+  // "Siapa karyawan terbaik JULI?" — the KV cache (data:kpi) only ever holds the CURRENT month's
+  // teamOverview (overwritten every cron cycle), so a question naming a DIFFERENT month silently
+  // got the wrong (often all-zero, freshly-started) month instead — a real reported case. Fetch
+  // that month's teamOverview live from the same Apps Script endpoint the sync uses, same pattern
+  // as fetchAttendanceContext's personView already does for one-person lookups.
+  const monthMention = extractMonthMention(message);
+  const requestedMonth = monthMention ? `${monthMention.year}-${String(monthMention.month).padStart(2, '0')}` : null;
+  let kpiList = kpiData?.kpi;
+  let bulan = kpiData?.month;
+  let catatanBulan = '';
+  if (requestedMonth && requestedMonth !== kpiData?.month) {
+    try {
+      const res = await fetch(`${KPI_WEBAPP_URL}?action=teamOverview&month=${requestedMonth}`);
+      const live = await res.json();
+      if (Array.isArray(live) && live.length) {
+        kpiList = live;
+        bulan = requestedMonth;
+        catatanBulan = `Bulan ${requestedMonth} diambil langsung (live), bukan dari cache bulan berjalan. `;
+      }
+    } catch {
+      // Live fetch failed — fall through to whatever the cache has (still better than nothing).
+    }
+  }
+  if (!Array.isArray(kpiList) || !kpiList.length) return null;
+
   let metric = 'skorAkhir';
   let metricLabel = 'Skor Akhir (nilai kinerja keseluruhan)';
   if (mentionsJamKerja) { metric = 'totalWorkHours'; metricLabel = 'Total Jam Kerja'; }
@@ -2089,15 +2125,15 @@ function findKpiRanking(message, kpiData) {
   else if (/hari submit|\bsubmit\b/.test(nMsg)) { metric = 'hariSubmitReal'; metricLabel = 'Total Hari Submit'; }
 
   const ascending = new RegExp(SUPERLATIVE_LOW).test(nMsg);
-  const ranking = [...kpiData.kpi]
+  const ranking = [...kpiList]
     .filter((p) => typeof p[metric] === 'number')
     .sort((a, b) => (ascending ? a[metric] - b[metric] : b[metric] - a[metric]))
     .map((p) => ({ nama: p.nama, skorAkhir: p.skorAkhir, kepatuhanPersen: p.percent, totalJamKerja: p.totalWorkHours, totalHariSubmit: p.hariSubmitReal }));
   return {
-    bulan: kpiData.month,
+    bulan,
     metricDipakai: metricLabel,
     urutan: ascending ? 'sudah terurut dari PALING KECIL/TERBAWAH duluan' : 'sudah terurut dari PALING BESAR/TERBAIK duluan',
-    catatan: `Ranking ini diurutkan berdasarkan ${metricLabel} (akumulasi bulan berjalan sampai hari ini) — field lain (skorAkhir/kepatuhanPersen/totalJamKerja/totalHariSubmit) tetap disertakan per orang sebagai konteks tambahan, sama seperti tampilan dashboard KPI Personel.`,
+    catatan: `${catatanBulan}Ranking ini diurutkan berdasarkan ${metricLabel} — field lain (skorAkhir/kepatuhanPersen/totalJamKerja/totalHariSubmit) tetap disertakan per orang sebagai konteks tambahan, sama seperti tampilan dashboard KPI Personel.`,
     ranking,
   };
 }
@@ -2820,7 +2856,7 @@ async function handleChat(request, env) {
   const allWilayahEkspedisi = wilayahRaw ? JSON.parse(wilayahRaw) : [];
   const piutangData = piutangRaw ? JSON.parse(piutangRaw) : null;
   const kpiData = kpiRaw ? JSON.parse(kpiRaw) : null;
-  const kpiRankingMatch = findKpiRanking(message, kpiData);
+  const kpiRankingMatch = await findKpiRanking(message, kpiData, env);
   const poGudangData = poGudangRaw ? JSON.parse(poGudangRaw) : null;
   const zonaWilayahData = zonaWilayahRaw ? JSON.parse(zonaWilayahRaw) : null;
   const stokMatch = findStockMatches(message, allStock, history);
@@ -2856,7 +2892,7 @@ async function handleChat(request, env) {
   // produk"/"best seller") and wrongly said the data wasn't available, even though it exists.
   const wantsTopProduk = /terlaris|paling laku|paling laris|top ?produk|produk ?top|best ?seller|produk.*populer|(banyak|terbanyak) terjual|(ranking|peringkat|urutan|urutkan).*produk|produk.*(ranking|peringkat)/.test(nMsgTopic);
   const wantsDeliveryOverview = /ekspedisi|pengiriman|pengantaran|delivery|diantar|dikirim|dibawa|dibawakan|handcarry|hand carry|same ?day|cut ?off|pihak ketiga/.test(nMsgTopic);
-  const wantsCustomerInsights = /frekuensi|churn|tidak aktif|jarang belanja|paling sering belanja|loyal|repeat ?order/.test(nMsgTopic);
+  const wantsCustomerInsights = /frekuensi|churn|tidak aktif|jarang (ber)?belanja|paling sering (ber)?belanja|loyal|repeat ?order/.test(nMsgTopic);
   const wantsFo1Core = /1.?core|fiber optic 1|kabel 1 core/.test(nMsgTopic);
   const wantsYoy = /tahun lalu|2025|pertumbuhan|growth|dibanding tahun|yoy|year.?on.?year/.test(nMsgTopic);
   const wantsTarget = /target|pencapaian|\botd\b|on.?time.?delivery|akurasi delivery/.test(nMsgTopic);
