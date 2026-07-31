@@ -580,7 +580,13 @@ const PRODUCT_CATALOG = [
 function phraseMatchScore(phrase, nMsg) {
   const words = phrase.toLowerCase().split(/\s+/).filter((w) => w.length >= 2);
   if (!words.length) return 0;
-  const hits = words.filter((w) => nMsg.includes(w)).length;
+  // Typo tolerance: a keyword word also counts as a hit if it's within edit-distance of some word
+  // actually typed in the message (mis. "fusion splicr" still finds "fusion splicer") — gated to
+  // words >=4 chars, since edit-distance-1 on a 2-3 letter word is too loose to mean anything.
+  const msgWords = nMsg.split(/\s+/).filter(Boolean);
+  const hits = words.filter((w) =>
+    nMsg.includes(w) || (w.length >= 4 && msgWords.some((mw) => fuzzyWordEquals(w, mw)))
+  ).length;
   return hits / words.length;
 }
 
@@ -846,6 +852,16 @@ function levenshtein(a, b) {
   return dp[m][n];
 }
 
+// Shared typo-tolerance check for a single word pair — same threshold used across all fuzzy
+// matchers (customer names, personnel names, product keywords): exact match, or within edit-
+// distance 1 for short words (<=4 chars) / 2 for longer ones, scaled so a name-length mismatch
+// doesn't silently pass (e.g. "budi" should never fuzzy-match "budianto").
+function fuzzyWordEquals(a, b) {
+  if (a === b) return true;
+  if (Math.abs(a.length - b.length) > 2) return false;
+  return levenshtein(a, b) <= (Math.min(a.length, b.length) <= 4 ? 1 : 2);
+}
+
 // Scans conversation HISTORY (most recent first) for the last product CODE actually mentioned —
 // same pattern as the attendance context's person-carryover fix. Without this, a natural follow-up
 // like "ada stok gak?" or "harganya berapa?" right after discussing a specific code has nothing in
@@ -911,6 +927,9 @@ function findStockMatches(message, allStock, history) {
       if (ckw.length >= 3 && nKode.includes(ckw)) return true;
       if (nkw.length >= 3 && nNama.includes(nkw)) return true;
       if (ckw.length >= 4 && ckw.length <= 12 && levenshtein(ckw, nKode) <= 2) return true;
+      // Typo tolerance on the product NAME too (previously only the code got this) — mis. "splicr"
+      // still finds "Fusion Splicer ...".
+      if (nkw.length >= 4 && nNama.split(/\s+/).some((nw) => fuzzyWordEquals(nkw, nw))) return true;
       return false;
     });
   });
@@ -1948,8 +1967,23 @@ function findInactiveCustomers(message, customerActivity, history, piutangDetail
 
 function detectPersonMention(message, knownNames) {
   const nMsg = normText(message);
+  // Fast path: exact substring — handles full multi-word names cleanly.
   for (const name of knownNames) {
     if (name && name.length >= 3 && nMsg.includes(normText(name))) return name;
+  }
+  // Typo-tolerant fallback, same word-level edit-distance approach as customerNameFuzzyMatch, so
+  // a name typed slightly wrong ("Bahrol" for "Bahrul Ulum") still resolves instead of silently
+  // falling through to the team-wide view. Single-word names are deliberately excluded here (kept
+  // exact-only) — a lone edit-distance hit is enough to clear the 70% threshold on its own, which
+  // is exactly the false-positive pattern already confirmed live for single-word customer names
+  // (see NAME_STOPWORDS/QUERY_NOISE_WORDS comments above).
+  const candidateWords = nameWordsOf(message).filter((w) => !STOPWORDS.has(w) && !QUERY_NOISE_WORDS.has(w));
+  for (const name of knownNames) {
+    if (!name) continue;
+    const nameWords = nameWordsOf(name).filter((w) => w.length >= 3 && !NAME_STOPWORDS.has(w));
+    if (nameWords.length < 2) continue;
+    const hits = nameWords.filter((nw) => candidateWords.some((mw) => fuzzyWordEquals(mw, nw))).length;
+    if (hits / nameWords.length >= 0.7) return name;
   }
   return null;
 }
@@ -2862,7 +2896,7 @@ async function handleChat(request, env) {
 
   const systemPrompt = `Kamu adalah "MIRA", Asisten Virtual MKI Makassar (JANGAN sebut "asisten AI PT. Mitra Kabel Indonesia" — "MKI Makassar" identitas resmi, bukan nama perusahaan penuh). Empat peran: (1) rekan bicara dashboard "Kinerja Cabang Makassar" (performa harian, sales, revenue, wilayah, stok & PO, delivery, piutang, frekuensi customer, KPI personel); (2) bantu pelanggan/teknisi soal spesifikasi/tutorial/info produk jaringan dari katalog Falcom Technology; (3) partner diskusi bisnis & marketing (lihat MODE PARTNER DISKUSI BISNIS); (4) teman ngobrol hangat (lihat KEPRIBADIAN). Untuk data/operasional/produk, jawab HANYA dari DATA KONTEKS + histori — jangan mengarang angka meski santai.
 
-KEPRIBADIAN: peka, hangat, supel — bukan robot kaku. User curhat/ngobrol santai → tanggapi dengan empati sesuai nada perasaannya, jangan buru-buru alihkan ke data. Emoji boleh sesekali kalau santai, tetap sopan. Pertanyaan data tetap akurat — kehangatan tidak berarti boleh menebak angka.
+KEPRIBADIAN: berkesan islami, ekspresif, sopan, penuh perhatian, dan tulus sayang ke penanya — bukan robot kaku, bukan template dingin. Ucapan islami dipakai WAJAR sesuai konteks, jangan dipaksakan tiap kalimat DAN jangan sampai salah konteks: "Alhamdulillah" KHUSUS kabar baik/pencapaian/rasa syukur sungguhan (mis. target tercapai, piutang berkurang) — JANGAN dipakai membuka pesan yang isinya keluhan/kabar kurang enak (capek, piutang menumpuk, target meleset), itu janggal; untuk momen begitu cukup empati/kata penenang dulu ("MasyaAllah, pasti berat ya", semangat, dukungan) baru boleh tutup dengan doa/"InsyaAllah" untuk harapan ke depan. "MasyaAllah" untuk sesuatu yang mengagumkan/di luar dugaan (baik maupun berat). Boleh sisipkan doa singkat menutup harapan baik. Taruh di kalimat pembuka/penutup yang natural — JANGAN sampai menyelip di tengah angka/data teknis hingga mengganggu keterbacaan. User curhat/ngobrol santai atau ada kabar kurang menyenangkan → tanggapi dengan empati dan dukungan tulus dulu, jangan buru-buru melempar angka dingin. Ekspresif: nada antusias untuk kabar baik, menenangkan untuk kabar kurang baik, emoji boleh sesekali kalau santai. Rasa sayang ke penanya WAJIB terasa KONKRET tiap balasan, bukan cuma kata sifat kosong: pakai sapaan hangat/personal, sesekali sungguh-sungguh peduli kondisi penanya (capek/istirahat/kabar), beri semangat tulus bukan basa-basi, dan tutup dengan harapan/doa baik yang terasa personal untuk penanya — bukan cuma seputar urusan kerjaan/data. Pertanyaan data tetap WAJIB akurat — kehangatan dan nuansa islami tidak pernah jadi alasan menebak/mengarang angka.
 
 MODE PARTNER DISKUSI BISNIS & MARKETING: boleh diajak diskusi strategi marketing/operasional/target/profit. Setiap saran WAJIB berangkat dari DATA KONTEKS nyata (bukan teori generik) — tarik dulu angka relevan ("perbandinganTahunSebelumnya"/"targetPerformaHarianBulanan"=target vs realisasi, "customerTidakAktif"/"daftarNamaCustomerPerBucket"=churn/1x belanja, "zonaWilayahRelevan"=zona merah/kuning, "stokTidakBergerakDanKurangLaku"/"saranRestockProdukTerlaris"=stok, "piutangPerKategoriUmur"/"piutangCustomerTertinggi"=aging piutang, "wilayahEkspedisiRelevan"/"deliveryOverview"=ekspedisi, "rankingKinerjaPersonel"=KPI) baru beri rekomendasi. Field null → sebutkan keterbatasannya terus terang, jangan mengarang. Pertanyaan terbuka (mis. "gimana kejar target?") → analisis akar masalah dari data dulu, baru 2-3 opsi konkret + trade-off + rekomendasi mana paling masuk akal; yang kompleks pikirkan cermat dulu. Selalu sebutkan nominal/nama wilayah/customer/kode spesifik, jangan generik. Domain: strategi target sales/revenue, follow-up customer (churn/1x/piutang jatuh tempo), strategi wilayah zona kuning/merah, restock/promosi produk, efisiensi ekspedisi, evaluasi KPI tim. Boleh proaktif kasih 1 insight paling relevan kalau ada red flag jelas di data (jangan membanjiri). Nada: santai mengalir, tapi padat angka dan actionable.
 ${wantsJTBD ? JTBD_MODULE : ''}${wantsCouncil ? COUNCIL_MODULE : ''}${wantsChart ? CHART_MODULE : ''}

@@ -371,7 +371,7 @@
           .replace(/\*(\S(?:[^*]*\S)?)\*/g, '$1')
           .split(PROTECTED_SEP).join('')
           .split(PROTECTED_PUNCT).join(' ')
-          .replace(/[:<>|#=~_".,!?]/g, ' ')
+          .replace(/[:<>|#=~_".,!?\-/()[\]{}]/g, ' ')
           // Final safety net: any "*" still here is a leftover/unpaired markdown artifact (mis.
           // Gemini forgot to close a **bold** span), not real content — every INTENTIONAL bold/
           // italic marker was already consumed by the replacements above, so strip whatever's left

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'asvir-makassar-v21';
+const CACHE_NAME = 'asvir-makassar-v22';
 const STATIC_ASSETS = [
   './',
   './index.html',
