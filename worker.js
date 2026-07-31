@@ -991,7 +991,9 @@ function findRestockCandidates(message, topProductsByQty, allStock) {
 function findTopProdukByMonth(message, allTransactions, allStock) {
   if (!allTransactions.length) return null;
   const nMsg = normText(message);
-  const wantsRanking = /terlaris|paling laku|paling laris|top ?produk|produk ?top|best ?seller|produk.*populer|(banyak|terbanyak) terjual|(ranking|peringkat|urutan|urutkan).*produk|produk.*(ranking|peringkat)/.test(nMsg);
+  const wantsRanking = new RegExp(
+    `terlaris|paling laku|paling laris|top ?produk|produk ?top|best ?seller|produk.*populer|(banyak|terbanyak) terjual|(ranking|peringkat|urutan|urutkan).*produk|produk.*(ranking|peringkat)|produk.*(${SUPERLATIVE_ANY})|(${SUPERLATIVE_ANY}).*(terjual|produk)`
+  ).test(nMsg);
   if (!wantsRanking) return null;
   const monthMention = extractMonthMention(message);
   if (!monthMention) return null; // no specific month named -> let the cumulative "topProduk" field handle it
@@ -1137,6 +1139,18 @@ function enrichTopProdukWithNama(topProducts, allStock) {
   const addNama = (arr) => arr.map((x) => ({ ...x, nama: namaByKode[x.kode] || null }));
   return { byAmount: addNama(topProducts.byAmount), byQty: addNama(topProducts.byQty) };
 }
+
+// Shared superlative-detection patterns — used everywhere a question asks for a ranking/extreme
+// (personnel, product, or future topics), so every ranking-style question is understood the same
+// way instead of each retrieval function maintaining its own partial word list. A real reported
+// gap: "siapa kinerja paling tinggi?"/"paling bawah?"/"paling rendah?" matched nothing before,
+// because only the terXXX contraction ("tertinggi") was listed, not the "paling <kata>" phrasing
+// Indonesian speakers use just as often.
+const SUPERLATIVE_ANY =
+  'terbanyak|tersedikit|terbesar|terkecil|tertinggi|terendah|terbawah|teratas|terbaik|terburuk|terlama|tercepat|' +
+  'paling\\s+(tinggi|rendah|bawah|atas|banyak|sedikit|besar|kecil|bagus|jelek|buruk|laris|laku|rajin|lama|cepat|top)';
+const SUPERLATIVE_LOW =
+  'terkecil|tersedikit|terburuk|terendah|terbawah|paling\\s+(rendah|bawah|sedikit|kecil|jelek|buruk)';
 
 const MONTHS = {
   januari: 1, jan: 1, februari: 2, feb: 2, maret: 3, mar: 3, april: 4, apr: 4, mei: 5,
@@ -1849,7 +1863,7 @@ function findKpiRanking(message, kpiData) {
   if (!kpiData || !Array.isArray(kpiData.kpi) || !kpiData.kpi.length) return null;
   const nMsg = normText(message);
   const mentionsJamKerja = /jam\s*kerja/.test(nMsg);
-  const wantsRanking = /terbanyak|paling banyak|terlama|paling lama|tertinggi|terkecil|paling sedikit|tersedikit|terbaik|terburuk|paling bagus|paling rajin|paling jelek|terendah|terbawah|\branking\b|\bperingkat\b|\burutan\b|\burutkan\b/.test(nMsg);
+  const wantsRanking = new RegExp(`${SUPERLATIVE_ANY}|\\branking\\b|\\bperingkat\\b|\\burutan\\b|\\burutkan\\b`).test(nMsg);
   // "Siapa kinerja terendah?" — a real reported case that failed because it names neither
   // "karyawan/personel/tim" nor "siapa yang", just "kinerja" + a superlative. "kinerja" alone is
   // personnel-specific ENOUGH here as long as the question isn't actually about something else
@@ -1865,7 +1879,7 @@ function findKpiRanking(message, kpiData) {
   else if (/kepatuhan|disiplin|persentase|\bpercent\b/.test(nMsg)) { metric = 'percent'; metricLabel = 'Kepatuhan (%)'; }
   else if (/hari submit|\bsubmit\b/.test(nMsg)) { metric = 'hariSubmitReal'; metricLabel = 'Total Hari Submit'; }
 
-  const ascending = /terkecil|paling sedikit|tersedikit|terburuk|paling jelek|terendah/.test(nMsg);
+  const ascending = new RegExp(SUPERLATIVE_LOW).test(nMsg);
   const ranking = [...kpiData.kpi]
     .filter((p) => typeof p[metric] === 'number')
     .sort((a, b) => (ascending ? a[metric] - b[metric] : b[metric] - a[metric]))
