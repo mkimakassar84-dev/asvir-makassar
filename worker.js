@@ -1184,11 +1184,16 @@ function findReturTransactions(message, allTransactions) {
     return (db ? db.getTime() : 0) - (da ? da.getTime() : 0);
   });
   const total = matched.length;
+  const invoiceUnikRetur = new Set(matched.map((tx) => tx.invoice).filter(Boolean)).size;
   const capped = matched.slice(0, 100);
   return {
-    jumlahRetur: total,
+    // jumlahInvoiceUnikRetur = jumlah invoice retur BERBEDA (pakai ini untuk "berapa banyak
+    // retur") — beda dari jumlahBarisRetur yang menghitung tiap baris produk (satu invoice retur
+    // bisa punya beberapa baris kalau returnya lebih dari satu kode barang sekaligus).
+    jumlahInvoiceUnikRetur: invoiceUnikRetur,
+    jumlahBarisRetur: total,
     items: capped,
-    catatan: `Retur dikenali dari nomor invoice berawalan "R-"/"R/" atau nilai transaksi negatif.${total > 100 ? ` Ditampilkan 100 TERBARU dari ${total}.` : ''}`,
+    catatan: `Retur dikenali dari nomor invoice berawalan "R-"/"R/" atau nilai transaksi negatif. Retur TIDAK ikut dihitung di angka invoice/transaksi normal manapun (per bulan, per wilayah, delivery, dst) — ini satu-satunya jalur untuk pertanyaan retur secara khusus.${total > 100 ? ` Ditampilkan 100 TERBARU dari ${total}.` : ''}`,
   };
 }
 
@@ -1794,7 +1799,12 @@ async function runSync(env) {
 
       if (!byMonth[key]) byMonth[key] = { bulan: key, sales: 0, invoiceSet: new Set() };
       byMonth[key].sales += amount;
-      if (noInvoice) byMonth[key].invoiceSet.add(noInvoice);
+      // "Invoice/transaksi" counts EXCLUDE retur (kode "R-"/"R/") everywhere by design — a retur
+      // is a reversal, not a new transaction, so it shouldn't inflate any invoice/transaction
+      // count. Retur has its own dedicated unique-invoice count via findReturTransactions instead
+      // of being folded into the normal counts. "sales" (Rupiah) is untouched here — retur rows
+      // are already negative amounts, so they correctly net OUT of the sales total on their own.
+      if (noInvoice && !isRetur) byMonth[key].invoiceSet.add(noInvoice);
 
       // Daily Performance: OTD Accuracy = invoiceUnik(stage=complete AND Same Day) / invoiceUnik(all,
       // retur included). Total Invoice metric = invoiceUnik EXCLUDING retur. Both per-month, matching
@@ -1806,13 +1816,13 @@ async function runSync(env) {
         if (stage.toLowerCase() === 'complete' && statusSameCutOff === 'Same Day') dpStats[key].invoiceOTD.add(noInvoice);
       }
 
-      if (noInvoice) allInvoicesGlobal.add(noInvoice);
+      if (noInvoice && !isRetur) allInvoicesGlobal.add(noInvoice);
 
-      if (lokasi && noInvoice) {
+      if (lokasi && noInvoice && !isRetur) {
         if (!byLokasi[lokasi]) byLokasi[lokasi] = new Set();
         byLokasi[lokasi].add(noInvoice);
       }
-      if (lokasi && ekspedisi && noInvoice) {
+      if (lokasi && ekspedisi && noInvoice && !isRetur) {
         if (!byLokasiEkspedisi[lokasi]) byLokasiEkspedisi[lokasi] = {};
         if (!byLokasiEkspedisi[lokasi][ekspedisi]) byLokasiEkspedisi[lokasi][ekspedisi] = new Set();
         byLokasiEkspedisi[lokasi][ekspedisi].add(noInvoice);
@@ -1826,7 +1836,7 @@ async function runSync(env) {
         else if (company === 'CFN') byKode[kode].amountCFN += amount;
       }
 
-      if (noInvoice) {
+      if (noInvoice && !isRetur) {
         if (/same/i.test(statusSameCutOff)) sameDayInvoices.add(noInvoice);
         else if (/cut/i.test(statusSameCutOff)) cutOffInvoices.add(noInvoice);
         const ekspUpper = ekspedisi.toUpperCase();
@@ -1841,7 +1851,9 @@ async function runSync(env) {
           byCustomer[customer] = { customer, invoices: new Set(), totalSales: 0, lastPurchase: null };
         }
         const c = byCustomer[customer];
-        if (r['No Invoice']) c.invoices.add(r['No Invoice']);
+        // invoiceUnik (belanja X kali) should reflect real purchases, not a retur reversing one —
+        // lastPurchase/totalSales still consider every row (a retur legitimately affects both).
+        if (r['No Invoice'] && !isRetur) c.invoices.add(r['No Invoice']);
         c.totalSales += amount;
         if (d && (!c.lastPurchase || d > c.lastPurchase)) c.lastPurchase = d;
       }
@@ -2447,8 +2459,8 @@ Aturan:
 - Untuk pertanyaan stok/ketersediaan barang, gunakan "stokRelevan". Jawab SINGKAT: cukup jumlah stok per company (MKI/CFN) + total, TANPA menyebut turnover/perputaran gudang kecuali user SPESIFIK menanyakan turnover/perputaran. Field "stokCatatan" menjelaskan filter yang dipakai (untuk konteksmu sendiri, tidak perlu disebut ke user) — kalau isinya menyebut "dilanjutkan dari kode X yang dibahas sebelumnya", itu tandanya user tidak sebut ulang kode di pertanyaan ini tapi maksudnya masih produk yang sama dari histori, pakai data itu dengan percaya diri (bukan menebak). WAJIB: kalau "stokRelevan" kosong/tidak ada barang yang cocok, katakan JUJUR datanya tidak ditemukan — JANGAN PERNAH mengarang angka stok, nama gudang, atau satuan (roll/meter/dll) sendiri.
 - Untuk pertanyaan HARGA/nilai barang ("harga X berapa", "nilainya berapa"), tiap item di "stokRelevan" punya field "harga" (harga satuan dalam Rupiah) — pakai itu. Kalau user tanya "total nilai stok" suatu barang, kalikan harga × stokTotal (atau × stokMKI/stokCFN kalau ditanya per company) dan tunjukkan cara hitungnya singkat. Field "harga" TIDAK ADA di "stokTidakBergerakDanKurangLaku"/data lain — kalau butuh harga tapi item itu tidak ada di "stokRelevan", katakan datanya tidak tersedia, jangan menebak angka.
 - Untuk pertanyaan tanggal tertentu, KODE BARANG spesifik ("siapa pembeli terakhir KODE", "kapan KODE terakhir keluar"), atau nama customer spesifik ("kapan si X belanja terakhir, beli apa saja"), gunakan "transaksiRelevan" — field "ekspedisi" dan "company" tiap baris menunjukkan cara pengiriman. Baca "transaksiCatatan": kalau bilang "diurutkan dari yang PALING BARU", maka baris PERTAMA di array = transaksi TERAKHIR/TERBARU — pakai itu untuk jawab pertanyaan "terakhir/kapan". Field "isRetur" (true/false) tiap baris menandakan transaksi itu retur (nomor invoice berawalan "R-"/"R/" atau nilainya negatif) — kalau muncul di hasil pencarian biasa, sebutkan statusnya sebagai retur, jangan dianggap penjualan normal.
-- ATURAN "INVOICE"/"TRANSAKSI" = INVOICE UNIK, BUKAN jumlah baris: satu invoice bisa punya beberapa baris kalau customer beli beberapa kode barang sekaligus (field "kode" beda-beda tapi field "invoice" SAMA) — jadi kalau user tanya "berapa transaksi/invoice" dari hasil manapun (termasuk menghitung sendiri dari array "transaksiRelevan"), WAJIB hitung jumlah NILAI UNIK/BERBEDA di field "invoice", JANGAN hitung jumlah baris/item array-nya begitu saja (itu akan menghitung dobel produk-produk dalam satu invoice yang sama). Field-field yang SUDAH dihitung sebagai invoice unik dari sananya (aman dipakai langsung tanpa hitung ulang): "performa"/"targetPerformaHarianBulanan" (transaksi/invoiceUnik per bulan), "deliveryOverview" (sameDayCount/cutOffCount/handCarryCount/pihakKetigaCount/byEkspedisi), "wilayahEkspedisiRelevan"/topWilayah (jumlahTransaksi per wilayah), "customerInsights"/"daftarNamaCustomerPerBucket" (invoiceUnik per customer) — field "amount"/"qty" pada produk (mis. "topProduk") TETAP dijumlah per baris karena itu memang benar dihitung per unit produk, bukan per invoice.
-- Untuk pertanyaan RETUR/RETURN secara khusus ("retur apa saja bulan ini", "berapa banyak retur customer X"), gunakan "returRelevan" (sudah difilter khusus baris retur, boleh dipersempit lagi dengan tanggal/customer di pertanyaan yang sama) — field "catatan" menjelaskan kriteria deteksinya.
+- ATURAN "INVOICE"/"TRANSAKSI" = INVOICE UNIK, BUKAN jumlah baris, DAN RETUR TIDAK IKUT DIHITUNG: satu invoice bisa punya beberapa baris kalau customer beli beberapa kode barang sekaligus (field "kode" beda-beda tapi field "invoice" SAMA) — jadi kalau user tanya "berapa transaksi/invoice" dari hasil manapun (termasuk menghitung sendiri dari array "transaksiRelevan"), WAJIB hitung jumlah NILAI UNIK/BERBEDA di field "invoice", JANGAN hitung jumlah baris/item array-nya begitu saja (itu akan menghitung dobel produk-produk dalam satu invoice yang sama). Kalau menghitung sendiri dari "transaksiRelevan", buang dulu baris dengan "isRetur":true SEBELUM menghitung invoice unik — invoice retur (kode "R-"/"R/") BUKAN transaksi baru, itu pembalikan transaksi lama, jadi tidak boleh ikut dihitung sebagai invoice/transaksi. Field-field yang SUDAH dihitung sebagai invoice unik TANPA retur dari sananya (aman dipakai langsung tanpa hitung ulang atau filter tambahan): "performa"/"targetPerformaHarianBulanan" (transaksi/invoiceUnik per bulan), "deliveryOverview" (sameDayCount/cutOffCount/handCarryCount/pihakKetigaCount/byEkspedisi), "wilayahEkspedisiRelevan"/topWilayah (jumlahTransaksi per wilayah), "customerInsights"/"daftarNamaCustomerPerBucket" (invoiceUnik per customer) — semuanya sudah otomatis mengecualikan retur. Untuk pertanyaan retur itu sendiri ("berapa banyak retur"), JANGAN pakai field-field ini (isinya sudah TIDAK termasuk retur) — gunakan "returRelevan" (lihat aturan RETUR di bawah). Field "amount"/"qty" pada produk (mis. "topProduk") TETAP dijumlah per baris karena itu memang benar dihitung per unit produk, bukan per invoice.
+- Untuk pertanyaan RETUR/RETURN secara khusus ("retur apa saja bulan ini", "berapa banyak retur customer X"), gunakan "returRelevan" (sudah difilter khusus baris retur, boleh dipersempit lagi dengan tanggal/customer di pertanyaan yang sama). Untuk "berapa BANYAK retur", WAJIB pakai field "jumlahInvoiceUnikRetur" (jumlah invoice retur BERBEDA) — JANGAN pakai "jumlahBarisRetur" (itu jumlah baris produk, bisa lebih dari satu per invoice retur yang sama) kecuali user spesifik minta rincian per baris/produk. Field "catatan" menjelaskan kriteria deteksinya.
 - Untuk pertanyaan PIUTANG (sisa tagihan yang BELUM dibayar) customer tertentu, WAJIB gunakan "piutangRelevan" (rincian per invoice) — field umum "piutang" cuma total per kategori umur + "ratioARtoSalesPersen", TIDAK punya rincian per customer. Ini beda dari "pembayaranRelevan" (uang yang SUDAH masuk) — piutang = belum bayar, pembayaran = sudah bayar.
 - Untuk "customer dengan piutang tertinggi/terbesar", gunakan "piutangCustomerTertinggi" (sudah diurutkan, field "top10"). Kalau field ini null padahal user jelas menanyakan hal ini, berarti kata kuncinya tidak terdeteksi (bukan berarti datanya tidak ada) — minta user menegaskan pertanyaannya.
 - KATEGORI UMUR PIUTANG (AGING) BAKU — WAJIB dipakai konsisten, JANGAN improvisasi rentang lain: "0-30 Hari", "30-45 Hari", "45-60 Hari", "> 60 Hari" (ini definisi resmi dashboard, dihitung dari kolom Aging/hari per invoice — beda dari kategori versi lama yang mungkin pernah kamu lihat di histori percakapan sebelumnya seperti "14-30 Hari"/"0-13 Hari", itu sudah tidak dipakai lagi). Untuk "siapa saja customer piutang di kategori tertentu" (0-30/30-45/45-60/>60 hari) ATAU ambang bebas (mis. "piutang di atas 90 hari", "lebih dari 45 hari"), gunakan "piutangPerKategoriUmur" (field "daftar" berisi customer+noFaktur+nilaiSisa+agingHari+tanggal per invoice) — ini beda dari "piutang.byKategori" yang cuma total angka tanpa nama. Sebutkan nama-nama customernya, bukan cuma totalnya, karena itu yang diminta. Field "kategori" di hasilnya menunjukkan apakah ini salah satu dari 4 kategori baku atau ambang bebas (mis. "> 90 Hari").
