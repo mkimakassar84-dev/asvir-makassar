@@ -392,9 +392,12 @@
     window.speechSynthesis.onvoiceschanged = () => { indonesianVoice = pickIndonesianVoice(); };
   }
 
-  function speak(text) {
+  // Fallback path (free, on-device, no API key) — the original buildSpeechSegments-based reader,
+  // tuned earlier for a natural pace/pitch on Indonesian Web Speech API voices. Kept as-is and used
+  // whenever the Google Cloud TTS backend call below fails/isn't configured, so MIRA never goes
+  // silent just because the paid API key hasn't been set up yet.
+  function speakBrowserFallback(text) {
     if (!('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
     const BASE_PITCH = 1.05; // slightly higher — reads more natural on most Indonesian TTS voices
     const BASE_RATE = 1.25; // faster than default — Indonesian TTS voices default to a noticeably slow pace
     const segments = buildSpeechSegments(text);
@@ -427,8 +430,67 @@
     }
   }
 
+  // Lighter cleanup than buildSpeechSegments — a real neural voice (Google WaveNet) already
+  // produces natural pacing/intonation from ordinary punctuation, so this only fixes things that
+  // would otherwise be read as literal symbols/abbreviations (markdown, URLs, Rp amounts, known
+  // acronyms), it does NOT strip sentence punctuation the way the segment-based fallback needs to.
+  function prepareForSpeech(text) {
+    let t = text
+      .replace(/```chart[\s\S]*?```/g, '')
+      .replace(/!\[[^\]]*\]\((https?:\/\/[^\s)]+)\)/g, '')
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '$1')
+      .replace(/https?:\/\/\S+/g, '')
+      .replace(/`([^`]+)`/g, '$1');
+    for (const [pattern, replacement] of SPEECH_WORD_OVERRIDES) t = t.replace(pattern, replacement);
+    t = t.replace(/Rp\.?\s?(\d{1,3}(?:\.\d{3})*(?:,\d+)?)(\s*(?:triliun|miliar|milyar|juta|ribu))?/gi, (m, num, unit) => {
+      const [intPart, decPart] = num.split(',');
+      const cleanInt = intPart.replace(/\./g, '');
+      const amount = decPart ? `${cleanInt} koma ${decPart}` : cleanInt;
+      return unit ? `${amount}${unit} Rupiah` : `${amount} Rupiah`;
+    });
+    t = t.replace(/\b(?!Rp\d)([A-Za-z]{2,8})(\d{2,6})\b/g, (m, letters, digits) => `${letters} ${digits.split('').join(' ')}`);
+    t = t.replace(/\b([A-Z]{2,4})\b(?!\d)/g, (m, letters) => (KNOWN_ACRONYMS.has(letters) ? letters.split('').join(' ') : letters));
+    t = t.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*(\S(?:[^*]*\S)?)\*/g, '$1');
+    t = t.replace(/^[ \t]*[-•]\s+/gm, '');
+    t = t.replace(/(\d),(\d)/g, '$1 koma $2');
+    t = t.replace(/(\d)\.(?=\d)/g, '$1');
+    t = t.replace(/[:<>|#=~_"]/g, ' ');
+    return t.replace(/[ \t]+/g, ' ').trim();
+  }
+
+  let currentAudio = null;
+
   function stopSpeaking() {
+    if (currentAudio) {
+      currentAudio.pause();
+      currentAudio = null;
+    }
     if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+  }
+
+  // Primary path: Google Cloud Text-to-Speech (WaveNet, natural-sounding) via the backend's
+  // /speak proxy — the API key stays server-side, never exposed to the browser. Falls back to the
+  // free on-device Web Speech API (speakBrowserFallback) if the backend call fails for any reason
+  // (key not configured yet, network error, quota) so voice output never just goes silent.
+  async function speak(text) {
+    stopSpeaking();
+    const preparedText = prepareForSpeech(text);
+    if (!preparedText) return;
+    try {
+      const res = await fetch(`${API_BASE}/speak`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: preparedText }),
+      });
+      if (!res.ok) throw new Error('Backend TTS merespons error');
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      currentAudio = new Audio(objectUrl);
+      currentAudio.onended = () => URL.revokeObjectURL(objectUrl);
+      await currentAudio.play();
+    } catch (err) {
+      speakBrowserFallback(text);
+    }
   }
 
   chatArea.addEventListener('click', () => stopSpeaking());

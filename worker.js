@@ -67,6 +67,17 @@ const KPI_WEBAPP_URL =
 
 const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
 
+// Google Cloud Text-to-Speech. Per pengecekan daftar suara resmi Google,
+// Neural2 BELUM tersedia untuk locale id-ID (baru ada di segelintir bahasa
+// seperti en-US/ja-JP/de-DE) — WaveNet dipakai sebagai gantinya, kualitasnya
+// juga neural (bukan "Standard" yang robotik), cuma beda nama tier. Kalau
+// Google merilis Neural2/Chirp untuk id-ID di masa depan, cek daftar suara
+// terbaru (GET https://texttospeech.googleapis.com/v1/voices?languageCode=id-ID)
+// dan ganti nilai ini. id-ID-Wavenet-A = perempuan, -B = laki-laki, -C/-D varian lain.
+const TTS_VOICE_NAME = 'id-ID-Wavenet-A';
+const TTS_TIMEOUT_MS = 10000;
+const TTS_MAX_CHARS = 2000;
+
 // Curated Falcom Technology product-page / tutorial references. Small and hand-maintained on
 // purpose — matching the whole live catalog would need on-demand scraping (adds latency and
 // fragility); extend this list over time with more {keywords, judul, links} entries.
@@ -2846,6 +2857,41 @@ ${JSON.stringify(context)}`;
   });
 }
 
+async function synthesizeSpeech(text, env) {
+  if (!env.GOOGLE_TTS_API_KEY) throw new Error('GOOGLE_TTS_API_KEY belum di-set di Worker secrets.');
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TTS_TIMEOUT_MS);
+  let res;
+  try {
+    res = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${env.GOOGLE_TTS_API_KEY}`, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        input: { text },
+        voice: { languageCode: 'id-ID', name: TTS_VOICE_NAME },
+        audioConfig: { audioEncoding: 'MP3' },
+      }),
+    });
+  } catch (err) {
+    throw new Error(err.name === 'AbortError' ? 'Google TTS tidak merespons (timeout).' : `Gagal menghubungi Google TTS: ${err.message}`);
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`Google TTS gagal (HTTP ${res.status}): ${errText.slice(0, 200)}`);
+  }
+
+  const { audioContent } = await res.json();
+  const binary = atob(audioContent);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
 function corsHeaders(env) {
   return {
     'Access-Control-Allow-Origin': env.ALLOWED_ORIGIN || '*',
@@ -2882,6 +2928,38 @@ export default {
       }
       if (pathname === '/chat' && request.method === 'POST') {
         return await handleChat(request, env);
+      }
+      if (pathname === '/speak' && request.method === 'POST') {
+        if (!env.GOOGLE_TTS_API_KEY) {
+          const res = json({ error: 'GOOGLE_TTS_API_KEY belum di-set di Worker secrets.' }, 500);
+          Object.entries(corsHeaders(env)).forEach(([k, v]) => res.headers.set(k, v));
+          return res;
+        }
+        let body;
+        try {
+          body = await request.json();
+        } catch {
+          const res = json({ error: 'Body harus JSON valid: { "text": "..." }' }, 400);
+          Object.entries(corsHeaders(env)).forEach(([k, v]) => res.headers.set(k, v));
+          return res;
+        }
+        const text = (body.text || '').toString().trim().slice(0, TTS_MAX_CHARS);
+        if (!text) {
+          const res = json({ error: 'Field "text" wajib diisi.' }, 400);
+          Object.entries(corsHeaders(env)).forEach(([k, v]) => res.headers.set(k, v));
+          return res;
+        }
+        try {
+          const audioBytes = await synthesizeSpeech(text, env);
+          return new Response(audioBytes, {
+            status: 200,
+            headers: { 'Content-Type': 'audio/mpeg', ...corsHeaders(env) },
+          });
+        } catch (err) {
+          const res = json({ error: err.message }, 502);
+          Object.entries(corsHeaders(env)).forEach(([k, v]) => res.headers.set(k, v));
+          return res;
+        }
       }
       return json({ error: 'Not found' }, 404);
     } catch (err) {
