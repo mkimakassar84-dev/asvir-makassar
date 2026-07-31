@@ -67,9 +67,13 @@
     </div>
   </main>
 
-  <!-- Input: sticky to the bottom of the (now normally-scrolling) document, same visual pinned
-       effect as before but via document-level sticky instead of a fixed-height flex layout. -->
-  <form id="chatForm" class="sticky bottom-0 shrink-0 border-t border-sand-border bg-white p-3 flex items-end gap-2">
+  <!-- Input: plain document flow (NOT sticky) — a real reported case: Android's scrolling-
+       screenshot stitching drops sticky/fixed elements pinned to the BOTTOM edge (the "growing"
+       edge it scrolls toward), even though it handles a sticky TOP header fine. Flowing normally
+       right after #chatArea means it's ordinary content and gets captured like everything else.
+       Still effectively "always in view after sending" because scrollToBottom() already scrolls
+       the page to document.documentElement.scrollHeight, which is exactly where this sits. -->
+  <form id="chatForm" class="shrink-0 border-t border-sand-border bg-white p-3 flex items-end gap-2">
     <button
       type="button"
       id="micBtn"
