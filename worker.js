@@ -982,6 +982,162 @@ function findRestockCandidates(message, topProductsByQty, allStock) {
   };
 }
 
+// Same keyword set as wantsTopProduk in handleChat — kept in sync so "produk terlaris"-style
+// phrasing routes here INSTEAD of the cumulative-2026 topProduk whenever a specific month is also
+// named ("produk terlaris bulan Juli", "ranking produk Juni 2026") — matches the live dashboard's
+// own "Peringkat Kode Barang per Bulan" sub-view, which this backend didn't have an equivalent
+// for until this was reported. Computed on-demand from the raw transaction rows (same principle
+// as findTransactionMatches) rather than pre-aggregated in KV, since a month filter is arbitrary.
+function findTopProdukByMonth(message, allTransactions, allStock) {
+  if (!allTransactions.length) return null;
+  const nMsg = normText(message);
+  const wantsRanking = /terlaris|paling laku|paling laris|top ?produk|produk ?top|best ?seller|produk.*populer|(banyak|terbanyak) terjual|(ranking|peringkat|urutan|urutkan).*produk|produk.*(ranking|peringkat)/.test(nMsg);
+  if (!wantsRanking) return null;
+  const monthMention = extractMonthMention(message);
+  if (!monthMention) return null; // no specific month named -> let the cumulative "topProduk" field handle it
+
+  const namaByKode = {};
+  for (const p of allStock) if (p.kode) namaByKode[p.kode] = p.nama;
+
+  const byKode = {};
+  for (const tx of allTransactions) {
+    if (!tx.kode) continue;
+    const d = parseFlexibleDate(tx.tanggal);
+    if (!d || d.getMonth() + 1 !== monthMention.month || d.getFullYear() !== monthMention.year) continue;
+    if (!byKode[tx.kode]) byKode[tx.kode] = { kode: tx.kode, nama: namaByKode[tx.kode] || null, amount: 0, qty: 0 };
+    byKode[tx.kode].amount += tx.amount;
+    byKode[tx.kode].qty += tx.qty;
+  }
+  const list = Object.values(byKode);
+  return {
+    bulan: `${monthMention.month}/${monthMention.year}`,
+    byAmount: [...list].sort((a, b) => b.amount - a.amount).slice(0, 20),
+    byQty: [...list].sort((a, b) => b.qty - a.qty).slice(0, 20),
+    catatan: list.length ? undefined : `Tidak ada transaksi tercatat untuk bulan ${monthMention.month}/${monthMention.year}.`,
+  };
+}
+
+// Finds the ONE stock code the message is naming (same matching approach as
+// findTransactionMatches' hitKodes) and returns its full sales breakdown: total for the whole
+// synced period AND a month-by-month split — "penjualan rinci kode barang by sales dan quantity,
+// per bulan atau full 1 tahun" (a real reported request). Distinct from findStockMatches
+// (current stock LEVEL) and findTransactionMatches (raw matching rows) — this is specifically the
+// aggregated sales history for one code. Only fires when the message also asks about sales/qty,
+// not on a plain stock-level lookup like "stok KSFO108 berapa".
+function findProductSalesBreakdown(message, allTransactions) {
+  if (!allTransactions.length) return null;
+  const nMsg = normText(message);
+  if (!/penjualan|\bsales\b|terjual|omset|\bqty\b|quantity|\bunit\b/.test(nMsg)) return null;
+
+  const kodeSet = new Set();
+  for (const tx of allTransactions) if (tx.kode) kodeSet.add(tx.kode);
+  let hitKode = null;
+  for (const kw of extractKeywords(message)) {
+    const ckw = normCode(kw);
+    if (ckw.length < 4) continue;
+    for (const k of kodeSet) {
+      const ck = normCode(k);
+      if (ck.length >= 4 && (ck === ckw || ckw.includes(ck))) { hitKode = k; break; }
+    }
+    if (hitKode) break;
+  }
+  if (!hitKode) return null;
+
+  const rows = allTransactions.filter((tx) => tx.kode === hitKode);
+  if (!rows.length) return null;
+  const monthly = {};
+  let totalAmount = 0;
+  let totalQty = 0;
+  for (const tx of rows) {
+    totalAmount += tx.amount;
+    totalQty += tx.qty;
+    const d = parseFlexibleDate(tx.tanggal);
+    const key = d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` : 'unknown';
+    if (!monthly[key]) monthly[key] = { bulan: key, amount: 0, qty: 0 };
+    monthly[key].amount += tx.amount;
+    monthly[key].qty += tx.qty;
+  }
+  return {
+    kode: hitKode,
+    totalSepanjangTahun: { amount: totalAmount, qty: totalQty },
+    perBulan: Object.values(monthly).sort((a, b) => a.bulan.localeCompare(b.bulan)),
+    catatan: 'totalSepanjangTahun = akumulasi seluruh periode data yang tersinkron untuk kode ini. perBulan = breakdown bulanan (format YYYY-MM), pakai ini kalau user minta rincian per bulan, pakai totalSepanjangTahun kalau minta total setahun/keseluruhan.',
+  };
+}
+
+// "Kabel 1 core" vs "kabel di atas 1 core" (multi-core) — groups cable STOCK items by core count
+// (parsed from the product name via extractCoreCount, same helper already used for catalog
+// matching) and aggregates their combined sales — a category-level view the individual per-code
+// lookups above can't answer on their own.
+// Returns ALL distinct core categories mentioned, not just one — "kabel 1 core dan kabel di atas
+// 1 core" (a real reported phrasing, comparing two categories in the same question) needs both,
+// not just whichever regex happened to match first. De-duped by (type, value) so the "1" inside
+// "di atas 1 core" doesn't also get double-counted as a separate "exactly 1 core" mention.
+function detectCoreCategoriesFromText(nMsg) {
+  const categories = [];
+  const aboveMatch = nMsg.match(/(?:di\s*atas|lebih\s*dari|diatas|>)\s*(\d+)\s*core/);
+  if (aboveMatch) categories.push({ type: 'above', value: parseInt(aboveMatch[1], 10) });
+  else if (/multi.?core|banyak core/.test(nMsg)) categories.push({ type: 'above', value: 1 });
+  for (const m of nMsg.matchAll(/\b(\d+)\s*core\b/g)) {
+    const value = parseInt(m[1], 10);
+    if (!categories.some((c) => c.type === 'exact' && c.value === value)) categories.push({ type: 'exact', value });
+  }
+  return categories;
+}
+function findKabelByCoreCategory(message, allStock, allTransactions) {
+  if (!allStock.length) return null;
+  const nMsg = normText(message);
+  if (!/\bkabel\b/.test(nMsg)) return null;
+  const categories = detectCoreCategoriesFromText(nMsg);
+  if (!categories.length) return null;
+
+  const hasil = categories.map((category) => {
+    const matches = allStock.filter((p) => {
+      if (!/kabel/i.test(p.nama || '')) return false;
+      const coreStr = extractCoreCount(p.nama);
+      if (!coreStr) return false;
+      const core = parseInt(coreStr, 10);
+      return category.type === 'exact' ? core === category.value : core > category.value;
+    });
+    const kategori = category.type === 'exact' ? `${category.value} core` : `di atas ${category.value} core`;
+    if (!matches.length) return { kategori, totalKodeProduk: 0, totalPenjualanGabungan: 0, totalQtyGabungan: 0, daftarProduk: [] };
+
+    const kodeSet = new Set(matches.map((p) => p.kode));
+    let totalSales = 0;
+    let totalQty = 0;
+    for (const tx of allTransactions) {
+      if (kodeSet.has(tx.kode)) {
+        totalSales += tx.amount;
+        totalQty += tx.qty;
+      }
+    }
+    return {
+      kategori,
+      totalKodeProduk: matches.length,
+      totalPenjualanGabungan: totalSales,
+      totalQtyGabungan: totalQty,
+      daftarProduk: matches
+        .map((p) => ({ kode: p.kode, nama: p.nama, harga: p.harga, stokTotal: p.stokTotal, stokMKI: p.stokMKI, stokCFN: p.stokCFN }))
+        .slice(0, 40),
+    };
+  });
+
+  return {
+    kategoriDibandingkan: hasil,
+    catatan: 'Kategori ditentukan dari jumlah core di nama produk. Tiap entri di "kategoriDibandingkan" adalah GABUNGAN dari semua kode produk kabel yang cocok kategori itu (sepanjang periode data yang tersinkron), bukan per kode terpisah — kalau user cuma tanya satu kategori, cukup pakai entri pertama. "totalKodeProduk": 0 berarti tidak ada produk yang cocok kategori itu.',
+  };
+}
+
+// The cumulative-2026 topProducts cached in KV only has {kode, amount, qty, ...} — no product
+// name, which made a "produk terlaris" answer show bare SKUs like "KSFO028" with nothing readable
+// attached. Joins in "nama" from the stock list at request time (cheap, no KV/sync change needed).
+function enrichTopProdukWithNama(topProducts, allStock) {
+  const namaByKode = {};
+  for (const p of allStock) if (p.kode) namaByKode[p.kode] = p.nama;
+  const addNama = (arr) => arr.map((x) => ({ ...x, nama: namaByKode[x.kode] || null }));
+  return { byAmount: addNama(topProducts.byAmount), byQty: addNama(topProducts.byQty) };
+}
+
 const MONTHS = {
   januari: 1, jan: 1, februari: 2, feb: 2, maret: 3, mar: 3, april: 4, apr: 4, mei: 5,
   juni: 6, jun: 6, juli: 7, jul: 7, agustus: 8, agu: 8, ags: 8, september: 9, sep: 9, sept: 9,
@@ -1017,6 +1173,32 @@ function extractDateRangeMention(message) {
     if (!month || d1 < 1 || d1 > 31 || d2 < 1 || d2 > 31) continue;
     const year = m[4] ? parseInt(m[4], 10) : new Date().getFullYear();
     return { startDay: Math.min(d1, d2), endDay: Math.max(d1, d2), month, year };
+  }
+  return null;
+}
+
+// Bare MONTH mention with no specific day ("bulan Juli", "Juli 2026", "bulan ini", "bulan lalu") —
+// used for "produk terlaris bulan X" style questions where a whole month is wanted, not one date/
+// range. Deliberately only matches "bulan <nama>" or "<nama> <tahun>" phrasing (not a bare month
+// name floating alone in the sentence) to avoid false positives on unrelated words.
+function extractMonthMention(message) {
+  const t = normText(message);
+  if (/\bbulan ini\b/.test(t)) {
+    const now = new Date();
+    return { month: now.getMonth() + 1, year: now.getFullYear() };
+  }
+  if (/\bbulan lalu\b/.test(t)) {
+    const now = new Date();
+    const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    return { month: d.getMonth() + 1, year: d.getFullYear() };
+  }
+  for (const m of t.matchAll(/\b([a-z]+)\s+(\d{4})\b/g)) {
+    const month = MONTHS[m[1]];
+    if (month) return { month, year: parseInt(m[2], 10) };
+  }
+  for (const m of t.matchAll(/\bbulan\s+([a-z]+)\b/g)) {
+    const month = MONTHS[m[1]];
+    if (month) return { month, year: new Date().getFullYear() };
   }
   return null;
 }
@@ -2439,7 +2621,10 @@ async function handleChat(request, env) {
   // "thinking" latency). Gate these behind a topic check, same query-aware-retrieval principle
   // already used for stock/transactions/piutang, so a typical question's prompt stays small.
   const nMsgTopic = normText(message);
-  const wantsTopProduk = /terlaris|paling laku|top ?produk|produk ?top|best ?seller|produk.*populer/.test(nMsgTopic);
+  // Broadened after a real reported case: "urutkan produk dari yang paling banyak terjual" and
+  // "ranking produk by sales dan quantity" both matched nothing (no literal "terlaris"/"top
+  // produk"/"best seller") and wrongly said the data wasn't available, even though it exists.
+  const wantsTopProduk = /terlaris|paling laku|paling laris|top ?produk|produk ?top|best ?seller|produk.*populer|(banyak|terbanyak) terjual|(ranking|peringkat|urutan|urutkan).*produk|produk.*(ranking|peringkat)/.test(nMsgTopic);
   const wantsDeliveryOverview = /ekspedisi|pengiriman|delivery|handcarry|hand carry|same ?day|cut ?off|pihak ketiga/.test(nMsgTopic);
   const wantsCustomerInsights = /frekuensi|churn|tidak aktif|jarang belanja|paling sering belanja|loyal|repeat ?order/.test(nMsgTopic);
   const wantsFo1Core = /1.?core|fiber optic 1|kabel 1 core/.test(nMsgTopic);
@@ -2477,7 +2662,10 @@ async function handleChat(request, env) {
     transaksiCatatan: txMatch.note,
     returRelevan: returMatch,
     wilayahEkspedisiRelevan: wilayahMatch,
-    topProduk: wantsTopProduk && topProductsRaw ? JSON.parse(topProductsRaw) : null,
+    topProduk: wantsTopProduk && topProductsRaw ? enrichTopProdukWithNama(JSON.parse(topProductsRaw), allStock) : null,
+    topProdukPerBulan: findTopProdukByMonth(message, allTransactions, allStock),
+    produkSalesDetailPerKode: findProductSalesBreakdown(message, allTransactions),
+    kabelKategoriCore: findKabelByCoreCategory(message, allStock, allTransactions),
     deliveryOverview: wantsDeliveryOverview && deliveryRaw ? JSON.parse(deliveryRaw) : null,
     poGudangRingkasan: poGudangData ? { byStatus: poGudangData.byStatus, monthly: poGudangData.monthly } : null,
     poGudangRelevan: poMatch.items,
@@ -2545,7 +2733,11 @@ Aturan:
 - Untuk "nilai stok"/"nilai rupiah stok" (total ATAU per company MKI/CFN), gunakan "nilaiStokRelevan" (field "totalNilaiRupiah" = harga x jumlah unit, sudah company-aware kalau MKI/CFN disebut). Kalau field "catatan" di dalamnya bilang ada kode tanpa data harga, sebutkan itu supaya user tahu totalnya belum 100% lengkap. Field ini null kalau pertanyaan tidak menyebut kata "nilai" DAN "stok" bersamaan.
 - Untuk "produk terlaris tapi stoknya menipis" atau "saran pemesanan/restock/isi stok gudang", gunakan "saranRestockProdukTerlaris" — ini SUDAH dihitung (kode, nama, qty terjual 2026, stok saat ini, rata-rata terjual per bulan, perkiraan berapa bulan lagi stoknya habis), urut dari yang PALING mendesak. Sampaikan sebagai SARAN konkret ("kode X sebaiknya di-PO sekarang, stok cuma cukup untuk Y bulan lagi berdasarkan kecepatan jualnya"), bukan cuma tabel angka. Kalau field "daftar" kosong tapi bukan null, artinya memang TIDAK ADA produk terlaris yang stoknya mendesak saat ini — sampaikan itu sebagai kabar baik, JANGAN dikira gagal ambil data.
 - Untuk pertanyaan "ekspedisi ke wilayah X pakai apa", WAJIB gunakan "wilayahEkspedisiRelevan" (lengkap, terurut dari paling sering) — JANGAN pakai transaksiRelevan untuk ini. Untuk pertanyaan ekspedisi SECARA UMUM (bukan per wilayah, mis. "berapa banyak pakai hand carry", "ekspedisi apa yang paling sering dipakai", "berapa yang same day"), gunakan "deliveryOverview" (sameDayCount, cutOffCount, handCarryCount, pihakKetigaCount, byEkspedisi).
-- Untuk "produk paling laku/terlaris", gunakan "topProduk" (byAmount = berdasarkan nilai rupiah, byQty = berdasarkan jumlah unit, sudah top-20).
+- RANKING/PENJUALAN PRODUK — empat field berbeda, pilih sesuai maksud pertanyaan:
+  - "produk paling laku/terlaris" TANPA sebut bulan tertentu (kumulatif sepanjang data tersinkron) → "topProduk" (byAmount = urut nilai rupiah, byQty = urut jumlah unit, top-20, tiap item sudah punya field "nama" produk selain "kode" — SELALU sebutkan nama produknya, jangan cuma kode SKU mentah kalau nama-nya ada).
+  - "produk terlaris BULAN X" / "ranking produk Juni 2026" (sebut bulan spesifik) → "topProdukPerBulan" (field "bulan" konfirmasi periode yang dipakai, byAmount/byQty top-20 khusus bulan itu). Kalau null padahal user sebut bulan, berarti kata kunci rankingnya tidak terdeteksi dari pertanyaan.
+  - "penjualan/sales kode BARANG X" (sebut kode/nama produk spesifik + kata sales/penjualan/qty) → "produkSalesDetailPerKode" (field "totalSepanjangTahun" untuk total keseluruhan, field "perBulan" array breakdown per bulan format YYYY-MM) — pakai "totalSepanjangTahun" kalau user minta total/setahun, pakai "perBulan" kalau minta rincian bulanan.
+  - "kabel 1 core" / "kabel di atas 1 core" / "kabel multicore" / bandingkan beberapa kategori sekaligus (kategori produk berdasar jumlah core, BUKAN satu kode spesifik) → "kabelKategoriCore" (field "kategoriDibandingkan" = array, satu entri per kategori yang disebut user — kalau user cuma tanya satu kategori, array ini isinya cuma 1 entri, pakai itu saja). Tiap entri: "kategori" (label kategorinya), "totalPenjualanGabungan"/"totalQtyGabungan" = jumlah GABUNGAN semua kode produk dalam kategori itu (BUKAN per kode terpisah), "daftarProduk" = daftar kode+nama+stok yang termasuk kategori ini. "totalKodeProduk": 0 berarti tidak ada produk yang cocok kategori itu, sampaikan apa adanya.
 - Untuk "kabel 1 core"/"fiber optic 1 core" secara spesifik sebagai section dashboard, gunakan "fiberOptic1Core" (5 kode resmi: KSFO028, KSFO108, KSFO083, KSFO113, KSFO128, dengan tren bulanan & per kode) — untuk pencarian stok kabel 1-core secara umum tetap pakai "stokRelevan".
 - Untuk pertanyaan PO Gudang (HANYA kalau user eksplisit tulis "PO"/"PO Gudang" — lihat aturan di atas), gunakan "poGudangRingkasan" (ringkasan per status: ditunggu/diterima/retur/lainnya + tren bulanan) untuk pertanyaan umum, atau "poGudangRelevan" (sudah difilter kode/status, field "poGudangCatatan" menjelaskan filternya) untuk pertanyaan spesifik.
 - Untuk "frekuensi customer", "customer paling sering belanja", atau "customer churn/tidak aktif", gunakan "customerInsights" (totalCustomer, totalChurned = tidak beli >=60 hari, buckets = pengelompokan berdasar jumlah invoice unik, topByFrekuensi, topBySales).
