@@ -1450,7 +1450,30 @@ function detectBucketFromText(nMsg) {
   return null;
 }
 
-function findCustomerBucketMatch(message, customerBuckets, history) {
+// "Siapa customer yang bisa saya followup untuk belanja?" — a real reported case: this asks
+// directly for NAMES in a single turn (no prior turn to fall back to, and no specific bucket/day-
+// range keyword at all), so both detectBucketFromText and extractInactivityDayRange came back
+// null and the answer wrongly said the data wasn't available. Shared by both retrieval functions
+// below so a bare "who should I follow up" question defaults to a sensible candidate list instead
+// of nothing.
+function wantsGenericFollowUpText(text) {
+  return /follow.?\s*-?\s*up|di.?follow|perlu (di)?hubungi(\s*lagi)?|perlu didekati|digarap lagi|perlu disapa|kandidat (follow.?up|customer)/.test(normText(text));
+}
+
+// Per-customer total UNPAID piutang, from the same detail array findPiutangByCustomer uses —
+// lets the follow-up/inactivity lists below flag "this customer might not be ordering again
+// BECAUSE they still owe money", instead of only ever suggesting a plain sales nudge.
+function piutangTotalByCustomer(piutangDetail) {
+  const map = {};
+  if (!Array.isArray(piutangDetail)) return map;
+  for (const p of piutangDetail) {
+    if (!p.customer) continue;
+    map[p.customer] = (map[p.customer] || 0) + p.nilaiSisa;
+  }
+  return map;
+}
+
+function findCustomerBucketMatch(message, customerBuckets, history, piutangDetail) {
   if (!customerBuckets) return null;
   // A specific frequency mention ("1x belanja", "yang 2x", ">10x") is specific/intentional enough
   // on its own — requiring "siapa"/"nama"/"daftar"/"list" on top of that missed real phrasings like
@@ -1458,6 +1481,7 @@ function findCustomerBucketMatch(message, customerBuckets, history) {
   // the bucket clearly but never those exact trigger words.
   let bucket = detectBucketFromText(normText(message));
   let fromHistory = false;
+  let fromGenericDefault = false;
   // Follow-up like "nama customernya?" right after MIRA HERSELF proposed a bucket as a sales
   // suggestion (e.g. "customer 1x belanja adalah kandidat follow-up") doesn't repeat the bucket —
   // a real reported case where this returned "data tidak tersedia" despite the data existing.
@@ -1469,18 +1493,28 @@ function findCustomerBucketMatch(message, customerBuckets, history) {
       if (bucket) { fromHistory = true; break; }
     }
   }
+  // No specific bucket anywhere, but a plain "who should I follow up" ask — default to "1x
+  // belanja" (customers who bought exactly once and never again), the most obvious follow-up
+  // candidate segment, rather than returning nothing.
+  if (!bucket && wantsGenericFollowUpText(message)) { bucket = '1x'; fromGenericDefault = true; }
   if (!bucket || !customerBuckets[bucket]) return null;
   const all = customerBuckets[bucket];
-  const sample = [...all].sort((a, b) => b.totalSales - a.totalSales).slice(0, 60);
+  const piutangMap = piutangTotalByCustomer(piutangDetail);
+  const sample = [...all]
+    .sort((a, b) => b.totalSales - a.totalSales)
+    .slice(0, 60)
+    .map((c) => ({ ...c, piutangBelumLunas: piutangMap[c.customer] || 0 }));
   const catatanParts = [];
   if (bucket === '1x') catatanParts.push('Bucket "1x" berarti customer ini baru belanja SATU KALI sepanjang 2026 dan belum pernah order lagi sejak itu — ini sudah otomatis berarti "belum belanja lagi", bukan filter terpisah yang perlu dicari lagi.');
   if (fromHistory) catatanParts.push('Kategori bucket ini dilanjutkan dari yang baru dibahas sebelumnya di percakapan ini (tidak disebut ulang di pertanyaan ini) — pakai dengan percaya diri, bukan berarti datanya tidak ada.');
+  if (fromGenericDefault) catatanParts.push('User tidak menyebut kategori spesifik, jadi ini default kandidat follow-up standar (customer baru 1x belanja) — kalau maksud user ternyata beda (mis. customer lama tidak aktif), boleh tanya balik atau lihat juga field "customerTidakAktif".');
+  catatanParts.push('Field "piutangBelumLunas" per customer (0 kalau tidak ada) menandakan customer itu MASIH punya tagihan belum lunas — kalau nilainya besar, itu bisa jadi ALASAN mereka belum belanja lagi (mis. sengaja ditahan sampai bayar, atau memang sedang kesulitan bayar), sampaikan itu sebagai insight kalau relevan, bukan cuma saran follow-up penjualan generik.');
   return {
     bucket,
     totalCustomer: all.length,
     ditampilkan: sample.length,
     customers: sample,
-    catatan: catatanParts.length ? catatanParts.join(' ') : undefined,
+    catatan: catatanParts.join(' '),
   };
 }
 
@@ -1517,17 +1551,19 @@ function wantsInactivityTopicText(text) {
 // separately-cached full list (data:customerActivity). Also supports filtering by a specific
 // customer NAME (checked first) so "apakah [nama] termasuk yang lama tidak belanja?" works even
 // without a day range — a bare day range with nothing else returns null (nothing concrete to show).
-function findInactiveCustomers(message, customerActivity, history) {
+function findInactiveCustomers(message, customerActivity, history, piutangDetail) {
   if (!customerActivity || !customerActivity.length) return null;
+  const piutangMap = piutangTotalByCustomer(piutangDetail);
 
   // Named-customer check always uses the CURRENT message — asking about one person doesn't need
   // topic carryover from history.
   const msgWords = nameWordsOf(message);
   const namedCustomer = customerActivity.find((c) => c.customer && c.customer.length >= 4 && customerNameFuzzyMatch(msgWords, c.customer));
-  if (namedCustomer) return { modeCustomerSpesifik: true, customer: namedCustomer };
+  if (namedCustomer) return { modeCustomerSpesifik: true, customer: { ...namedCustomer, piutangBelumLunas: piutangMap[namedCustomer.customer] || 0 } };
 
   let dayRange = extractInactivityDayRange(message);
   let fromHistory = false;
+  let fromGenericDefault = false;
   if (!dayRange && !wantsInactivityTopicText(message) && Array.isArray(history)) {
     // Follow-up like "nama customernya?" right after MIRA HERSELF proposed a churned/inactive
     // segment as a sales-follow-up suggestion — a real reported case where this incorrectly said
@@ -1542,20 +1578,29 @@ function findInactiveCustomers(message, customerActivity, history) {
       }
     }
   }
+  // No specific range/topic anywhere, but a plain "who should I follow up" ask — default to
+  // "churn" (>=60 hari tidak belanja), the most obvious inactive-customer follow-up segment,
+  // rather than returning nothing.
+  if (!dayRange && wantsGenericFollowUpText(message)) { dayRange = { min: 60, max: Infinity }; fromGenericDefault = true; }
   if (!dayRange) return null;
 
   const items = customerActivity.filter(
     (c) => c.daysSinceLastPurchase !== null && c.daysSinceLastPurchase >= dayRange.min && c.daysSinceLastPurchase <= dayRange.max
   );
-  const sorted = [...items].sort((a, b) => b.daysSinceLastPurchase - a.daysSinceLastPurchase);
+  const sorted = [...items]
+    .sort((a, b) => b.daysSinceLastPurchase - a.daysSinceLastPurchase)
+    .slice(0, 80)
+    .map((c) => ({ ...c, piutangBelumLunas: piutangMap[c.customer] || 0 }));
   return {
     modeCustomerSpesifik: false,
     rentangHari: dayRange,
-    totalCustomer: sorted.length,
-    daftar: sorted.slice(0, 80),
+    totalCustomer: items.length,
+    daftar: sorted,
     catatan:
       (fromHistory ? 'Rentang hari ini dilanjutkan dari topik "tidak aktif/churn" yang baru dibahas sebelumnya di percakapan ini (tidak disebut ulang di pertanyaan ini) — pakai dengan percaya diri, bukan berarti datanya tidak ada. ' : '') +
-      (sorted.length > 80 ? `Ditampilkan 80 dari ${sorted.length} customer (urut paling lama tidak belanja duluan).` : `Semua ${sorted.length} customer ditampilkan.`),
+      (fromGenericDefault ? 'User tidak menyebut rentang hari spesifik, jadi ini default kandidat follow-up standar (churn, >=60 hari tidak belanja) — kalau maksud user ternyata beda (mis. customer baru 1x belanja), boleh tanya balik atau lihat juga field "daftarNamaCustomerPerBucket". ' : '') +
+      'Field "piutangBelumLunas" per customer (0 kalau tidak ada) menandakan customer itu MASIH punya tagihan belum lunas — kalau nilainya besar, itu bisa jadi ALASAN mereka belum belanja lagi, sampaikan sebagai insight kalau relevan. ' +
+      (items.length > 80 ? `Ditampilkan 80 dari ${items.length} customer (urut paling lama tidak belanja duluan).` : `Semua ${items.length} customer ditampilkan.`),
   };
 }
 
@@ -2355,8 +2400,8 @@ async function handleChat(request, env) {
   const paymentMatch = findPaymentsByCustomer(message, revenueData?.detail, piutangData?.detail);
   const poMatch = findPoGudangMatches(message, poGudangData?.items);
   const zonaMatch = findZonaWilayahMatches(message, zonaWilayahData);
-  const customerBucketMatch = findCustomerBucketMatch(message, customerBucketsRaw ? JSON.parse(customerBucketsRaw) : null, history);
-  const inactiveCustomerMatch = findInactiveCustomers(message, customerActivityRaw ? JSON.parse(customerActivityRaw) : null, history);
+  const customerBucketMatch = findCustomerBucketMatch(message, customerBucketsRaw ? JSON.parse(customerBucketsRaw) : null, history, piutangData?.detail);
+  const inactiveCustomerMatch = findInactiveCustomers(message, customerActivityRaw ? JSON.parse(customerActivityRaw) : null, history, piutangData?.detail);
   const referensi = matchReferences(message, allStock);
   const kpiNames = Array.isArray(kpiData?.kpi) ? kpiData.kpi.map((p) => p.nama).filter(Boolean) : [];
   const absensi = await fetchAttendanceContext(message, kpiNames, history);
@@ -2478,9 +2523,10 @@ Aturan:
 - Untuk "kabel 1 core"/"fiber optic 1 core" secara spesifik sebagai section dashboard, gunakan "fiberOptic1Core" (5 kode resmi: KSFO028, KSFO108, KSFO083, KSFO113, KSFO128, dengan tren bulanan & per kode) — untuk pencarian stok kabel 1-core secara umum tetap pakai "stokRelevan".
 - Untuk pertanyaan PO Gudang (HANYA kalau user eksplisit tulis "PO"/"PO Gudang" — lihat aturan di atas), gunakan "poGudangRingkasan" (ringkasan per status: ditunggu/diterima/retur/lainnya + tren bulanan) untuk pertanyaan umum, atau "poGudangRelevan" (sudah difilter kode/status, field "poGudangCatatan" menjelaskan filternya) untuk pertanyaan spesifik.
 - Untuk "frekuensi customer", "customer paling sering belanja", atau "customer churn/tidak aktif", gunakan "customerInsights" (totalCustomer, totalChurned = tidak beli >=60 hari, buckets = pengelompokan berdasar jumlah invoice unik, topByFrekuensi, topBySales).
-- Untuk pertanyaan "SIAPA saja" customer di suatu bucket frekuensi (mis. "siapa yang belanja cuma 1x"), gunakan "daftarNamaCustomerPerBucket" — kalau null padahal user tanya "siapa", berarti bucket-nya tidak terdeteksi dari pertanyaan, minta user sebutkan lebih spesifik (1x/2x/3-5x/5-10x/lebih dari 10x). Kalau "ditampilkan" < "totalCustomer", sebutkan bahwa itu sebagian (urut dari nilai belanja terbesar), bukan semuanya. Baca field "catatan" kalau ada — mis. bucket "1x" sudah otomatis berarti "baru sekali belanja dan belum belanja lagi", jangan bilang butuh data tambahan untuk itu.
-- Untuk "customer yang sudah lama tidak belanja" dengan RENTANG HARI spesifik (mis. "30 sampai 60 hari terakhir", "lebih dari 45 hari"), atau cek satu nama customer spesifik apakah termasuk tidak aktif, gunakan "customerTidakAktif" — ini BEDA dari "customerInsights.totalChurned" (itu cuma total angka ≥60 hari, field ini punya rincian nama + berapa hari persisnya, dan rentangnya bisa custom). Kalau field "modeCustomerSpesifik" true, field "customer" berisi satu orang (dengan "daysSinceLastPurchase" dan "lastPurchase"-nya) — jawab langsung soal orang itu. Kalau false, field "daftar" berisi banyak customer dalam rentang hari yang diminta (field "rentangHari" menjelaskan rentangnya), urut dari yang PALING LAMA tidak belanja. Kalau null padahal user jelas menanyakan ini, kata kuncinya tidak terdeteksi — minta user sebutkan rentang harinya atau nama customernya.
-- Kamu JUGA boleh dan SEBAIKNYA memberi SARAN/REKOMENDASI operasional & penjualan yang proaktif kalau diminta (mis. "kasih saran customer yang perlu di-follow up", "gimana caranya tingkatkan penjualan bulan ini") — bukan cuma menjawab fakta pasif. Dasarkan saran itu PADA DATA yang ada di konteks (jangan mengarang taktik di luar apa yang datanya dukung): customer bucket "1x" atau "customerInsights.totalChurned" (tidak beli ≥60 hari) = kandidat prioritas untuk di-follow up supaya belanja lagi; "stokTidakBergerakDanKurangLaku" = kandidat untuk promo/diskon supaya stok bergerak; "piutangPerKategoriUmur"/"piutangCustomerTertinggi" = kandidat prioritas penagihan; "topProduk" = acuan untuk fokus stok/promosi. Sebutkan NAMA/DATA KONKRET dari konteks sebagai dasar saran, bukan saran generik tanpa angka.
+- Untuk pertanyaan "SIAPA saja" customer di suatu bucket frekuensi (mis. "siapa yang belanja cuma 1x") ATAU pertanyaan umum "siapa customer yang bisa di-follow up/dihubungi untuk belanja lagi" TANPA sebut kategori spesifik, gunakan "daftarNamaCustomerPerBucket" — field ini SEKARANG otomatis default ke bucket "1x" untuk pertanyaan follow-up umum (bukan null), jadi kalau isinya ada, WAJIB sebutkan nama-nama customernya, JANGAN bilang "data tidak tersedia". Kalau "ditampilkan" < "totalCustomer", sebutkan bahwa itu sebagian (urut dari nilai belanja terbesar), bukan semuanya. Baca field "catatan" — selain menjelaskan bucket, juga menjelaskan field "piutangBelumLunas" per customer (lihat aturan piutang di poin berikutnya) dan kapan daftarnya dipakai sebagai default (bukan permintaan spesifik user).
+- Untuk "customer yang sudah lama tidak belanja" dengan RENTANG HARI spesifik (mis. "30 sampai 60 hari terakhir", "lebih dari 45 hari"), cek satu nama customer spesifik, ATAU pertanyaan umum "siapa yang perlu di-follow up" TANPA rentang spesifik, gunakan "customerTidakAktif" — field ini SEKARANG otomatis default ke churn (>=60 hari) untuk pertanyaan follow-up umum (bukan null). Ini BEDA dari "customerInsights.totalChurned" (itu cuma total angka, field ini punya rincian nama). Kalau field "modeCustomerSpesifik" true, field "customer" berisi satu orang — jawab langsung soal orang itu. Kalau false, field "daftar" berisi banyak customer, urut dari yang PALING LAMA tidak belanja. Kalau null padahal user jelas menanyakan ini, kata kuncinya tidak terdeteksi — minta user sebutkan rentang harinya atau nama customernya.
+- PENTING — mengaitkan customer tidak aktif/1x-belanja dengan PIUTANG: baik "daftarNamaCustomerPerBucket" maupun "customerTidakAktif" punya field "piutangBelumLunas" per customer (Rupiah, 0 kalau tidak ada tagihan tertunggak). Kalau seorang customer di daftar follow-up itu punya "piutangBelumLunas" > 0 (apalagi nilainya besar/aging lama), WAJIB sampaikan itu sebagai insight tambahan — kemungkinan mereka belum belanja lagi KARENA masih ada tagihan belum lunas (baik dari sisi mereka menahan diri, maupun dari sisi kita menahan kredit baru sampai piutang lama beres). Untuk customer seperti ini, sarankan prioritaskan PENAGIHAN dulu (atau tawarkan bareng dengan follow-up penjualan), bukan cuma "hubungi buat jualan lagi" — itu saran yang kurang tepat kalau akar masalahnya piutang. Customer dengan "piutangBelumLunas" = 0 memang murni kandidat follow-up penjualan biasa.
+- Kamu JUGA boleh dan SEBAIKNYA memberi SARAN/REKOMENDASI operasional & penjualan yang proaktif kalau diminta (mis. "kasih saran customer yang perlu di-follow up", "gimana caranya tingkatkan penjualan bulan ini") — bukan cuma menjawab fakta pasif. Dasarkan saran itu PADA DATA yang ada di konteks (jangan mengarang taktik di luar apa yang datanya dukung): customer bucket "1x" atau "customerInsights.totalChurned" (tidak beli ≥60 hari) = kandidat prioritas untuk di-follow up supaya belanja lagi (WAJIB cek "piutangBelumLunas" dulu, lihat aturan di atas); "stokTidakBergerakDanKurangLaku" = kandidat untuk promo/diskon supaya stok bergerak; "piutangPerKategoriUmur"/"piutangCustomerTertinggi" = kandidat prioritas penagihan; "topProduk" = acuan untuk fokus stok/promosi. Sebutkan NAMA/DATA KONKRET dari konteks sebagai dasar saran, bukan saran generik tanpa angka.
 - Untuk TARGET SALES/REVENUE (Rupiah, bulanan maupun tahunan) DAN perbandingan tahun ini vs tahun lalu, gunakan "perbandinganTahunSebelumnya":
   - Field "months" (array 12 bulan) tiap bulan punya "targetSalesRevenue" (target Rupiah bulan itu — SATU angka target yang sama dipakai untuk sales maupun revenue, karena sheet sumbernya memang cuma punya satu kolom target), plus sales2025/sales2026 dan rev2025/rev2026 bulan itu.
   - "target sales/revenue bulan ini" atau bulan tertentu → cari bulan yang sesuai di "months" (field "label"), sebutkan "targetSalesRevenue"-nya.
