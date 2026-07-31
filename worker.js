@@ -207,6 +207,18 @@ Pilih 3-5 penasihat paling relevan dari bangku ini, SELALU sertakan minimal satu
 Seth Godin (remarkability, audiens spesifik) · David Ogilvy (iklan berbasis riset) · Eugene Schwartz (manfaatkan keinginan pasar yang sudah ada) · Claude Hopkins (uji semua klaim) · Gary Halbert (pasar dulu baru produk) · Russell Brunson (funnel, value ladder) · Alex Hormozi (konstruksi offer, volume) · April Dunford (positioning vs alternatif nyata) · Rory Sutherland (ilmu perilaku) · Byron Sharp (ketersediaan mental & fisik > loyalitas) · Ann Handley (kualitas konten) · Gary Vaynerchuk (channel murah perhatian, volume).
 Format: 1 paragraf pendek per penasihat menerapkan kerangka kerjanya ke kasus cabang spesifik (pakai angka/nama dari DATA KONTEKS, bukan saran generik), tanpa kutipan dikarang. Tutup dengan "Titik beda pendapat" (trade-off nyata antar penasihat) dan "Kesimpulan" (rekomendasi paling cocok untuk konteks Cabang Makassar + langkah konkret).`;
 
+const CHART_MODULE = `
+
+MODE GRAFIK/CHART — aktif kalau user minta grafik/chart/diagram/visualisasi/tren digambarkan (bukan cuma angka teks):
+- Jawab dulu dengan teks singkat seperti biasa (angka, insight, saran) — chart ini TAMBAHAN, bukan pengganti teks.
+- WAJIB akhiri jawaban dengan TEPAT SATU blok berpagar \`\`\`chart berisi JSON valid, format persis begini (tanpa teks lain di dalam pagar):
+  \`\`\`chart
+  {"type":"line","title":"judul singkat","labels":["Jan","Feb"],"datasets":[{"label":"nama seri","data":[1000000,1200000]}]}
+  \`\`\`
+- "type" HANYA "line" (untuk tren dari waktu ke waktu — bulanan/tahunan) atau "bar" (untuk perbandingan antar kategori — zona wilayah, top produk, dst). Tidak ada tipe lain.
+- SETIAP angka di "data" WAJIB persis sama dengan angka yang sudah kamu sebutkan/hitung dari DATA KONTEKS — JANGAN PERNAH mengarang angka baru khusus untuk chart yang tidak ada dasarnya.
+- Kalau data yang diminta tidak cukup untuk digrafikkan (mis. cuma 1 angka tunggal, bukan deret waktu atau perbandingan kategori), JANGAN paksa buat blok chart — cukup jawab teks biasa saja.`;
+
 // Full Falcom Technology product catalog (~230 products, no formal SKU — the full product name
 // IS the identity). Transcribed verbatim from the user-supplied grounding data; never add,
 // remove, or invent an entry here without a matching authoritative source.
@@ -2302,6 +2314,7 @@ async function handleChat(request, env) {
   const wantsUndelivered = /belum dikirim|belum diantar|belum terkirim|belum sampai|pending.*kirim/.test(nMsgTopic);
   const wantsJTBD = /kenapa.*(turun|churn|berhenti|tidak.*aktif|meleset|tidak.*tercapai)|akar masalah|root cause/.test(nMsgTopic);
   const wantsCouncil = /dewan penasihat|pendapat (pakar|ahli) marketing|bandingkan opsi strategi|banyak sudut pandang|menurut beberapa (pakar|ahli)/.test(nMsgTopic);
+  const wantsChart = /grafik|chart|diagram|visualisasi|tren.*(bulan|tahun|sales|revenue|target|stok|customer)|trennya|gambarkan tren/.test(nMsgTopic);
 
   const context = {
     // "performa" = SALES (order value from Grand Data 2026). "revenue" = actual cash collected
@@ -2370,7 +2383,7 @@ MODE PARTNER DISKUSI BISNIS & MARKETING:
 - Domain yang boleh dibahas: strategi kejar target sales/revenue bulanan & tahunan, prioritas follow-up customer (churn, 1x belanja, piutang jatuh tempo/aging tinggi), strategi wilayah (zona kuning/merah mana yang potensial digarap lebih dulu), rekomendasi restock/promosi produk (barang tidak bergerak vs terlaris yang stoknya tipis), efisiensi ekspedisi/pengiriman (Same Day vs Cut Off, Hand Carry vs pihak ketiga), evaluasi kinerja tim (KPI Personel) untuk perbaikan operasional.
 - Boleh proaktif: kalau dari DATA KONTEKS yang baru ditampilkan ada red flag jelas (mis. capaian target jauh di bawah rata-rata, AR overdue >60 hari menumpuk di satu customer, banyak customer churn di satu wilayah, kode barang laris tapi stok hampir habis), boleh tawarkan insight itu meski tidak ditanya langsung. Cukup 1 insight paling relevan per respons kecuali diminta lebih, jangan membanjiri jawaban dengan banyak insight sekaligus.
 - Nada bicara mode ini: santai dan mengalir seperti ngobrol biasa (bukan laporan formal berpoin kaku), TAPI tetap padat angka dan actionable — santai di cara bicara, tegas di substansi.
-${wantsJTBD ? JTBD_MODULE : ''}${wantsCouncil ? COUNCIL_MODULE : ''}
+${wantsJTBD ? JTBD_MODULE : ''}${wantsCouncil ? COUNCIL_MODULE : ''}${wantsChart ? CHART_MODULE : ''}
 
 Aturan:
 - ATURAN PALING PENTING, di atas semua yang lain: SETIAP angka, nama, tanggal, atau fakta operasional yang kamu sebutkan WAJIB benar-benar ADA persis di DATA KONTEKS di bawah — bukan hasil menebak, membulatkan, atau melanjutkan pola dari jawabanmu sendiri di giliran sebelumnya. Kalau field yang relevan bernilai null/kosong/tidak ada di konteks, WAJIB bilang jujur "datanya tidak tersedia" — JANGAN PERNAH mengisi kekosongan itu dengan angka yang terdengar masuk akal. Ini berlaku untuk SEMUA topik operasional (sales, revenue, stok, piutang, customer, karyawan/KPI, dan lainnya) — semuanya sudah ada jalur datanya masing-masing di bawah, jadi tidak ada alasan untuk menebak.

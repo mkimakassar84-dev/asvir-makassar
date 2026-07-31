@@ -9,6 +9,7 @@
 <link rel="icon" href="./assets/mira-avatar.jpg" />
 <link rel="apple-touch-icon" href="./assets/mira-avatar.jpg" />
 <script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script>
   tailwind.config = {
     theme: {
@@ -159,6 +160,56 @@
     chatArea.scrollTop = chatArea.scrollHeight;
   }
 
+  // Pulls a trailing ```chart fenced JSON block out of the model's answer so it never shows up
+  // as raw text/TTS — the numbers inside MUST mirror what MIRA already said in the text (enforced
+  // in worker.js's system prompt), this just turns that JSON into an actual Chart.js canvas.
+  // While the block is still streaming in (opening fence seen, closing fence not yet arrived),
+  // everything from the opening fence onward is hidden rather than shown as raw JSON.
+  function extractChartSpec(text) {
+    const closed = text.match(/```chart\s*([\s\S]*?)```/);
+    if (closed) {
+      let chart = null;
+      try { chart = JSON.parse(closed[1].trim()); } catch { chart = null; }
+      const cleanText = (text.slice(0, closed.index) + text.slice(closed.index + closed[0].length)).trim();
+      return { cleanText, chart };
+    }
+    const openIdx = text.indexOf('```chart');
+    if (openIdx !== -1) return { cleanText: text.slice(0, openIdx).trimEnd(), chart: null };
+    return { cleanText: text, chart: null };
+  }
+
+  // Renders one Chart.js canvas inside the AI bubble. Fails silently (removes the canvas) on any
+  // malformed spec instead of breaking the rest of the answer — a chart is a bonus, not a
+  // requirement, the text answer next to it is always the source of truth.
+  function renderChart(bubbleEl, spec) {
+    if (!spec || (spec.type !== 'line' && spec.type !== 'bar')) return;
+    if (!Array.isArray(spec.labels) || !Array.isArray(spec.datasets) || !spec.datasets.length) return;
+    const canvas = document.createElement('canvas');
+    canvas.className = 'mt-2 w-full';
+    canvas.style.maxHeight = '220px';
+    bubbleEl.appendChild(canvas);
+    try {
+      new Chart(canvas.getContext('2d'), {
+        type: spec.type,
+        data: {
+          labels: spec.labels,
+          datasets: spec.datasets.map((d) => ({ label: d.label || '', data: d.data, borderWidth: 2 })),
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: spec.datasets.length > 1 },
+            title: { display: !!spec.title, text: spec.title || '' },
+          },
+          scales: { y: { beginAtZero: true } },
+        },
+      });
+    } catch {
+      canvas.remove();
+    }
+  }
+
   function addUserBubble(text) {
     const wrap = document.createElement('div');
     wrap.className = 'flex justify-end';
@@ -188,14 +239,16 @@
 
   function finalizeAiBubble(bubbleEl, fullText) {
     const textEl = bubbleEl.querySelector('.ai-text');
-    textEl.innerHTML = linkify(fullText || '(tidak ada jawaban)');
+    const { cleanText, chart } = extractChartSpec(fullText);
+    textEl.innerHTML = linkify(cleanText || '(tidak ada jawaban)');
+    if (chart) renderChart(bubbleEl.querySelector('.ai-bubble'), chart);
     const waBtn = bubbleEl.querySelector('.wa-share-btn');
     waBtn.classList.remove('hidden');
     waBtn.classList.add('flex');
     waBtn.addEventListener('click', () => {
-      window.open(`https://wa.me/?text=${encodeURIComponent(fullText)}`, '_blank');
+      window.open(`https://wa.me/?text=${encodeURIComponent(cleanText)}`, '_blank');
     });
-    if (fullText) speak(fullText);
+    if (cleanText) speak(cleanText);
   }
 
   // ==== Text-to-speech with Indonesian pronunciation rules ====
@@ -422,7 +475,7 @@
             const piece = parsed?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || '';
             if (piece) {
               fullText += piece;
-              textEl.innerHTML = linkify(fullText) + '<span class="typing-cursor">▍</span>';
+              textEl.innerHTML = linkify(extractChartSpec(fullText).cleanText) + '<span class="typing-cursor">▍</span>';
               scrollToBottom();
             }
           } catch { /* ignore partial/non-JSON keepalive lines */ }
