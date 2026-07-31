@@ -669,6 +669,11 @@ function matchReferences(message, allStock) {
   const wantsTutorial = /tutorial|cara pasang|cara install|cara setting|cara konfigurasi|cara pakai|cara menggunakan|troubleshoot|bagaimana cara|video (tutorial|demo)/.test(nMsg);
   const wantsArticle = /\bartikel\b|berita teknis/.test(nMsg);
   const wantsSpec = /\bspek\b|spesifikasi|datasheet/.test(nMsg);
+  // Plain "kasih link produk"/"link katalog Falcom" requests don't mention "spek" at all, so they
+  // used to match NOTHING (hasAnyMatch false, wantsSpec false) — fallbackUmum stayed empty and
+  // Gemini had zero real URLs to ground on, which is exactly how it ended up fabricating a
+  // nonexistent domain ("falcomindo.com") for a real user request. Broadened trigger below.
+  const wantsProdukLinkUmum = /link (produk|katalog)|katalog (produk|falcom)|website falcom|web falcom|situs falcom|link falcom|semua produk/.test(nMsg);
   const video = matchVideos(message);
   // A resolved stock CODE goes through the stricter dedicated matcher (core-count + category
   // filtering, see resolveStockCodeToCatalogProduct) instead of the general one — the code itself
@@ -690,9 +695,10 @@ function matchReferences(message, allStock) {
     videoTutorialRelevan: video.teknis,
     videoTiktokRelevan: video.tiktok,
     videoKegiatanFalcom: video.nonTeknis,
-    // Only fall back to generic pages when there's a clear product-spec question with no
-    // specific category match — never for unrelated operational questions (sales/stok/piutang).
-    fallbackUmum: wantsSpec && !hasAnyMatch ? [GENERAL_LINKS.semuaProduk, GENERAL_LINKS.kontak] : [],
+    // Only fall back to generic pages when there's a clear product-spec question (or a plain
+    // request for the general product link) with no specific category match — never for
+    // unrelated operational questions (sales/stok/piutang).
+    fallbackUmum: (wantsSpec || wantsProdukLinkUmum) && !hasAnyMatch ? [GENERAL_LINKS.semuaProduk, GENERAL_LINKS.kontak] : [],
   };
 }
 
@@ -2497,7 +2503,7 @@ Aturan:
   - Jika "videoTutorialRelevan" berisi entri (video YouTube spesifik yang cocok dengan kata kunci pertanyaan), WAJIB sertakan sebagai "🎥 Tonton tutorialnya:" — ini lebih spesifik/diutamakan daripada link kategori umum. Kalau kosong tapi topiknya masih seputar produk yang sama, arahkan ke kategori produk terkait (JANGAN pilih video acak dari luar daftar).
   - Jika "videoTiktokRelevan" berisi entri (video TikTok @falcomtechnology spesifik yang cocok, biasanya berisi spesifikasi atau penjelasan singkat produk), WAJIB sertakan juga sebagai "🎵 Tonton di TikTok:" — beri label platformnya jelas TikTok, JANGAN dicampur/disebut sebagai video YouTube. Kalau "videoTutorialRelevan" DAN "videoTiktokRelevan" sama-sama berisi, tampilkan keduanya (YouTube dulu baru TikTok), jangan pilih salah satu saja.
   - "videoKegiatanFalcom" hanya untuk pertanyaan soal kegiatan/berita/event Falcom (bukan teknis produk) — pakai kalau ada isinya.
-  - Kalau semuanya kosong tapi jelas ini pertanyaan spek produk tanpa kategori yang cocok → pakai "fallbackUmum" (Semua Produk/Kontak).
+  - Kalau semuanya kosong tapi jelas ini pertanyaan spek produk atau minta link produk/katalog tanpa kategori yang cocok → pakai "fallbackUmum" (Semua Produk/Kontak). Kalau "fallbackUmum" JUGA kosong/null (berarti field ini memang tidak terpicu untuk pertanyaan ini), JANGAN PERNAH mengarang domain/URL sendiri (mis. menebak "falcomindo.com" atau variasi nama lain) — satu-satunya domain resmi yang boleh disebut adalah "falcom-technology.com" dan HANYA dari URL yang benar-benar ada di field-field referensi ini. Kalau tidak ada satupun link yang cocok, katakan jujur ke user "belum ada link spesifik yang cocok untuk ini" dan minta user memperjelas produk/kategori yang dimaksud.
   - Kalau kamu tidak yakin dengan detail spesifikasi teknis suatu produk (bukan dari data konteks), katakan jujur "[perlu verifikasi lebih lanjut]" lalu arahkan ke link terkait — jangan menebak angka spesifikasi.
   - JANGAN menyalin/merangkai ulang isi halaman secara panjang (hak cipta) — cukup 1-3 kalimat ringkasan, lalu arahkan ke link untuk detail lengkap.
   - Sertakan URL APA ADANYA (utuh, bisa diklik, jangan dipotong). Format baris link di akhir jawaban: "🔗 Info lengkap: [Nama Halaman] — (URL)" — kalau lebih dari satu, buat daftar bullet, MAKSIMAL 3 link per jawaban.
