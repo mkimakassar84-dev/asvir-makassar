@@ -28,11 +28,13 @@
   .mic-btn { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; touch-action: none; }
 </style>
 </head>
-<body class="flex flex-col bg-sand text-gray-800 overflow-hidden" style="height: 100vh; height: 100svh;">
+<body class="flex flex-col bg-sand text-gray-800" style="min-height: 100vh; min-height: 100svh;">
 
-  <!-- Header: sticky + explicit svh body height so mobile browser chrome (address bar) showing
-       or hiding while scrolling the chat can't push this out of view (a known h-screen/100vh
-       instability on mobile — 100svh stays pinned to the smallest/stable viewport size). -->
+  <!-- Header: sticky to the DOCUMENT (not a fixed-height flex parent) so the whole page is one
+       normal scrollable flow — this is what lets Android/iOS's native "scrolling screenshot"
+       capture the full conversation. The old layout pinned the page to exactly 100svh with
+       overflow-hidden and scrolled only an inner <main> div, which OS-level scroll-capture can't
+       see into (it only detects real document/window scroll). -->
   <header class="sticky top-0 z-10 bg-victory text-sand px-4 py-3 flex items-center justify-between shadow-md shrink-0">
     <div class="flex items-center gap-2.5 min-w-0">
       <img src="./assets/mira-avatar.jpg" alt="MIRA" class="w-9 h-9 rounded-full object-cover shrink-0 border-2 border-sand/40" />
@@ -55,8 +57,9 @@
     </div>
   </header>
 
-  <!-- Chat area -->
-  <main id="chatArea" class="flex-1 overflow-y-auto px-3 py-4 space-y-3">
+  <!-- Chat area: normal document flow (no overflow-y-auto/flex-1) — grows as tall as the
+       conversation, the PAGE scrolls, not this div. -->
+  <main id="chatArea" class="flex-1 px-3 py-4 space-y-3">
     <div class="flex justify-start">
       <div class="max-w-[85%] bg-white border border-sand-border rounded-2xl rounded-tl-sm px-4 py-2.5 shadow-sm text-sm">
         Assalamu'alaikum! Saya <b>MIRA</b> (Makassar Intelligent Response Assistant). Kamu bisa tanya saya soal kinerja dan operasional cabang Makassar, atau kamu juga bisa ngobrol apapun termasuk curhat sama saya loh, bisa ketik atau klik tombol mic untuk bicara. 👋
@@ -64,8 +67,9 @@
     </div>
   </main>
 
-  <!-- Input -->
-  <form id="chatForm" class="shrink-0 border-t border-sand-border bg-white p-3 flex items-end gap-2">
+  <!-- Input: sticky to the bottom of the (now normally-scrolling) document, same visual pinned
+       effect as before but via document-level sticky instead of a fixed-height flex layout. -->
+  <form id="chatForm" class="sticky bottom-0 shrink-0 border-t border-sand-border bg-white p-3 flex items-end gap-2">
     <button
       type="button"
       id="micBtn"
@@ -157,7 +161,10 @@
   }
 
   function scrollToBottom() {
-    chatArea.scrollTop = chatArea.scrollHeight;
+    // The PAGE scrolls now (not an inner chatArea div) — see the layout change in <body>/<main>/
+    // <form> above, done so Android/iOS's native scrolling-screenshot can capture the whole
+    // conversation.
+    window.scrollTo(0, document.documentElement.scrollHeight);
   }
 
   // Pulls a trailing ```chart fenced JSON block out of the model's answer so it never shows up
