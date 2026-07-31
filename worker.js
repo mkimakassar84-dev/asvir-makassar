@@ -190,6 +190,23 @@ const PERSONNEL_ROLES = {
   PUTRI: 'General Admin Support & Operation',
 };
 
+const JTBD_MODULE = `
+
+MODE ANALISIS JTBD (Jobs-to-Be-Done) — aktif untuk pertanyaan "kenapa" (kenapa sales/pemasangan turun, kenapa customer churn, kenapa target meleset):
+- Rumuskan dulu job pelanggan: "Ketika [situasi], pelanggan ingin [progres], supaya [hasil]" — TANPA sebut nama paket/produk.
+- Cek 3 dimensi: fungsional (koneksi stabil), emosional (tenang, tidak was-was), sosial (dipandang cermat memilih).
+- Cek 4 gaya dorong: Push (kekesalan kondisi sekarang), Pull (daya tarik kompetitor/alternatif), Anxiety (takut risiko pindah), Habit (nyaman dengan kebiasaan). Churn/switch terjadi kalau Push+Pull > Habit+Anxiety.
+- Pisahkan "Big Hire" (keputusan pasang/berlangganan, sekali) dari "Little Hire" (keputusan tetap pakai tiap bulan, berulang) — masalah retensi hampir selalu di Little Hire.
+- Kompetitor sebenarnya termasuk "non-consumption" (pelanggan pilih tidak pasang apa pun) dan workaround (tethering HP, dll), bukan cuma provider lain.
+- WAJIB dasarkan pada field customerTidakAktif/customerInsights/perbandinganTahunSebelumnya yang tersedia di DATA KONTEKS — kalau data pendukung tidak ada, katakan asumsi mana yang dipakai, JANGAN mengarang data pelanggan.`;
+
+const COUNCIL_MODULE = `
+
+MODE DEWAN PENASIHAT SIMULASI — aktif kalau user eksplisit minta banyak sudut pandang/pendapat pakar marketing/bandingkan opsi strategi. Ini SIMULASI berbasis kerangka kerja publik masing-masing, BUKAN pendapat asli mereka — WAJIB sebutkan itu di awal jawaban.
+Pilih 3-5 penasihat paling relevan dari bangku ini, SELALU sertakan minimal satu yang kemungkinan tidak setuju (dissenter):
+Seth Godin (remarkability, audiens spesifik) · David Ogilvy (iklan berbasis riset) · Eugene Schwartz (manfaatkan keinginan pasar yang sudah ada) · Claude Hopkins (uji semua klaim) · Gary Halbert (pasar dulu baru produk) · Russell Brunson (funnel, value ladder) · Alex Hormozi (konstruksi offer, volume) · April Dunford (positioning vs alternatif nyata) · Rory Sutherland (ilmu perilaku) · Byron Sharp (ketersediaan mental & fisik > loyalitas) · Ann Handley (kualitas konten) · Gary Vaynerchuk (channel murah perhatian, volume).
+Format: 1 paragraf pendek per penasihat menerapkan kerangka kerjanya ke kasus cabang spesifik (pakai angka/nama dari DATA KONTEKS, bukan saran generik), tanpa kutipan dikarang. Tutup dengan "Titik beda pendapat" (trade-off nyata antar penasihat) dan "Kesimpulan" (rekomendasi paling cocok untuk konteks Cabang Makassar + langkah konkret).`;
+
 // Full Falcom Technology product catalog (~230 products, no formal SKU — the full product name
 // IS the identity). Transcribed verbatim from the user-supplied grounding data; never add,
 // remove, or invent an entry here without a matching authoritative source.
@@ -2283,6 +2300,8 @@ async function handleChat(request, env) {
   const wantsTarget = /target|pencapaian|\botd\b|on.?time.?delivery|akurasi delivery/.test(nMsgTopic);
   const wantsStockMovement = /tidak bergerak|tidak laku|kurang laku|dibawah 5|dead ?stock|slow ?moving/.test(nMsgTopic);
   const wantsUndelivered = /belum dikirim|belum diantar|belum terkirim|belum sampai|pending.*kirim/.test(nMsgTopic);
+  const wantsJTBD = /kenapa.*(turun|churn|berhenti|tidak.*aktif|meleset|tidak.*tercapai)|akar masalah|root cause/.test(nMsgTopic);
+  const wantsCouncil = /dewan penasihat|pendapat (pakar|ahli) marketing|bandingkan opsi strategi|banyak sudut pandang|menurut beberapa (pakar|ahli)/.test(nMsgTopic);
 
   const context = {
     // "performa" = SALES (order value from Grand Data 2026). "revenue" = actual cash collected
@@ -2351,6 +2370,7 @@ MODE PARTNER DISKUSI BISNIS & MARKETING:
 - Domain yang boleh dibahas: strategi kejar target sales/revenue bulanan & tahunan, prioritas follow-up customer (churn, 1x belanja, piutang jatuh tempo/aging tinggi), strategi wilayah (zona kuning/merah mana yang potensial digarap lebih dulu), rekomendasi restock/promosi produk (barang tidak bergerak vs terlaris yang stoknya tipis), efisiensi ekspedisi/pengiriman (Same Day vs Cut Off, Hand Carry vs pihak ketiga), evaluasi kinerja tim (KPI Personel) untuk perbaikan operasional.
 - Boleh proaktif: kalau dari DATA KONTEKS yang baru ditampilkan ada red flag jelas (mis. capaian target jauh di bawah rata-rata, AR overdue >60 hari menumpuk di satu customer, banyak customer churn di satu wilayah, kode barang laris tapi stok hampir habis), boleh tawarkan insight itu meski tidak ditanya langsung. Cukup 1 insight paling relevan per respons kecuali diminta lebih, jangan membanjiri jawaban dengan banyak insight sekaligus.
 - Nada bicara mode ini: santai dan mengalir seperti ngobrol biasa (bukan laporan formal berpoin kaku), TAPI tetap padat angka dan actionable — santai di cara bicara, tegas di substansi.
+${wantsJTBD ? JTBD_MODULE : ''}${wantsCouncil ? COUNCIL_MODULE : ''}
 
 Aturan:
 - ATURAN PALING PENTING, di atas semua yang lain: SETIAP angka, nama, tanggal, atau fakta operasional yang kamu sebutkan WAJIB benar-benar ADA persis di DATA KONTEKS di bawah — bukan hasil menebak, membulatkan, atau melanjutkan pola dari jawabanmu sendiri di giliran sebelumnya. Kalau field yang relevan bernilai null/kosong/tidak ada di konteks, WAJIB bilang jujur "datanya tidak tersedia" — JANGAN PERNAH mengisi kekosongan itu dengan angka yang terdengar masuk akal. Ini berlaku untuk SEMUA topik operasional (sales, revenue, stok, piutang, customer, karyawan/KPI, dan lainnya) — semuanya sudah ada jalur datanya masing-masing di bawah, jadi tidak ada alasan untuk menebak.
