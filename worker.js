@@ -2274,6 +2274,9 @@ async function runSync(env) {
   try {
     const csv = await (await fetch(csvExportUrl(PERFORMANCE_SHEET_ID, GIDS.stock))).text();
     const rows = rowsToObjects(parseCsv(csv), 1); // row 0 is a merged-header banner, row 1 is the real header
+    // Same transient-empty-fetch guard as grandData below — don't let a bad fetch wipe good stock
+    // data.
+    if (!rows.length) throw new Error('stock CSV parsed to 0 rows — likely a transient fetch failure, not a real empty sheet');
     const products = rows
       .filter((r) => r['KODE BARANG'])
       .map((r) => ({
@@ -2299,6 +2302,13 @@ async function runSync(env) {
   try {
     const csv = await (await fetch(csvExportUrl(PERFORMANCE_SHEET_ID, GIDS.grandData))).text();
     const rows = rowsToObjects(parseCsv(csv), 0);
+    // Real incident: Google's CSV export occasionally returns something that parses to 0 rows
+    // (rate-limited/transient response instead of the real sheet) — previously this silently
+    // overwrote the KV cache with an EMPTY transactions/performance dataset, and Gemini started
+    // fabricating plausible-looking but entirely made-up sales/invoice data to fill the gap.
+    // Throwing here instead skips every SHEET_CACHE.put below, so a bad fetch leaves the last
+    // known-good data in place rather than wiping it.
+    if (!rows.length) throw new Error('grandData CSV parsed to 0 rows — likely a transient fetch failure, not a real empty sheet');
     const byMonth = {};
     // byLokasi/byLokasiEkspedisi/byEkspedisiGlobal all map to Set<noInvoice>, not row counters —
     // "invoice/transaksi" must always mean UNIQUE invoices, never raw line-item rows (one invoice
@@ -2678,6 +2688,7 @@ async function runSync(env) {
   try {
     const csv = await (await fetch(csvExportUrl(PERFORMANCE_SHEET_ID, GIDS.revSum))).text();
     const allRows = parseCsv(csv).slice(1);
+    if (!allRows.length) throw new Error('revSum CSV parsed to 0 rows — likely a transient fetch failure, not a real empty sheet');
     const byMonth = {};
     const detail = []; // per-payment records — needed for "kapan X terakhir BAYAR" (payment != sale)
     for (const r of allRows) {
@@ -2704,6 +2715,7 @@ async function runSync(env) {
   try {
     const csv = await (await fetch(csvExportUrl(PERFORMANCE_SHEET_ID, GIDS.poGudang))).text();
     const rows = rowsToObjects(parseCsv(csv), 0);
+    if (!rows.length) throw new Error('poGudang CSV parsed to 0 rows — likely a transient fetch failure, not a real empty sheet');
     const byStatus = {};
     const byMonth = {};
     const items = [];
@@ -2771,6 +2783,7 @@ async function runSync(env) {
   try {
     const csv = await (await fetch(csvExportUrl(PERFORMANCE_SHEET_ID, GIDS.ar))).text();
     const allRows = parseCsv(csv).slice(1); // drop header row
+    if (!allRows.length) throw new Error('AR/piutang CSV parsed to 0 rows — likely a transient fetch failure, not a real empty sheet');
     const byKategori = {};
     const detail = []; // per-invoice rows — needed for "piutang customer X" lookups
     let totalPiutang = 0;
@@ -2815,6 +2828,7 @@ async function runSync(env) {
   }
 
   await env.SHEET_CACHE.put('lastSync', summary.syncedAt);
+  console.log('SYNC_SUMMARY', JSON.stringify(summary));
   return summary;
 }
 
