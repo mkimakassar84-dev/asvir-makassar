@@ -219,6 +219,24 @@ const PERSONNEL_ROLES = {
   PUTRI: 'General Admin Support & Operation',
 };
 
+// name -> keluarga (anak/istri/suami), dipakai MIRA untuk sapaan hangat personal saat personel
+// yang bersangkutan memperkenalkan diri di percakapan (lihat aturan KELUARGA PERSONEL di
+// systemPrompt) — bukan data operasional, referensi statis sama seperti PERSONNEL_ROLES di atas.
+// Catatan: anak Burhamin bernama "Adi" adalah kebetulan nama sama dengan personel lain (ADI,
+// Marketing Representative) — dua entitas berbeda, bukan duplikat/typo.
+const PERSONNEL_FAMILY = {
+  ASTRID: { anak: ['Airin'] },
+  ADI: { anak: ['Fadlan', 'Hanum'] },
+  REZA: { anak: ['Jazeel'], istri: 'Junita' },
+  BURHAMIN: { anak: ['Adi', 'Ari (pelaut)'] },
+  ZUL: { anak: ['Syifa', 'Bram'] },
+  TAUFIK: { anak: ['Fatimah', 'Ruqayyah', 'Muhammad'], istri: 'Icha' },
+  // Aspar: tidak ada data anak/istri — instruksinya SELALU tanya kabar ibunya, ditandai eksplisit
+  // di sini (bukan default kosong) supaya systemPrompt tahu ini kasus khusus, bukan data belum ada.
+  ASPAR: { selaluTanyakanIbunya: true },
+  PUTRI: { anak: ['Naura'] },
+};
+
 // Default (factory/vendor) login credentials for ONU devices, keyed by stock code — provided
 // directly by the user as internal reference data, not derived from any sheet. Never invent
 // credentials for an ONU code that isn't in this list; say the code isn't in the reference list
@@ -842,6 +860,9 @@ const STOPWORDS = new Set([
   'tolong', 'berapa', 'bagaimana', 'gimana', 'dong', 'ya', 'nih', 'kah', 'ada', 'apakah', 'dan',
   'atau', 'saat', 'sekarang', 'tentang', 'soal', 'info', 'informasi', 'kode', 'barang', 'produk',
   'nya', 'nya?', 'nya.', 'pakai', 'pake', 'itu?', 'nih?',
+  // 'atas'/'nama' ditambahkan supaya pertanyaan "customer atas nama X" tidak ikut menganggap
+  // "atas"/"nama" sebagai token nama yang harus dicocokkan (lihat customerNameFuzzyMatch Rule B).
+  'atas', 'nama',
 ]);
 
 function extractKeywords(message) {
@@ -1392,10 +1413,33 @@ function customerNameFuzzyMatch(msgWords, customerName) {
   // time (any short word could collide with some short name) — require an EXACT match instead,
   // multi-word names keep the typo tolerance since one wrong word alone won't clear 70% on those.
   if (nameWords.length === 1) return candidateWords.includes(nameWords[0]);
-  const hits = nameWords.filter((nw) =>
-    candidateWords.some((mw) => mw === nw || (Math.abs(mw.length - nw.length) <= 2 && levenshtein(mw, nw) <= (nw.length <= 4 ? 1 : 2)))
-  ).length;
-  return hits / nameWords.length >= 0.7;
+
+  const wordsMatch = (mw, nw) => mw === nw || (Math.abs(mw.length - nw.length) <= 2 && levenshtein(mw, nw) <= (nw.length <= 4 ? 1 : 2));
+
+  // Rule A: most of the STORED name's words appear in the message — handles a full/near-full name
+  // mentioned inside a longer question (e.g. "kapan Afif Anshary Arbi terakhir belanja").
+  const nameHits = nameWords.filter((nw) => candidateWords.some((mw) => wordsMatch(mw, nw))).length;
+  if (nameHits / nameWords.length >= 0.7) return true;
+
+  // Rule B: user typed a genuinely SHORTENED name (e.g. "Afif Anshary" for stored customer "AFIF
+  // ANSHARY ARBI") — Rule A alone rejects this because 2/3 stored words = 67% < 70%. Instead check
+  // the OTHER direction: every significant word the user actually typed matches some word in the
+  // stored name, even though the stored name has extra words (middle/last name) the user omitted.
+  // Requires >=2 query words (single-word case is handled separately above) so one coincidental
+  // word match can't hijack an unrelated question the way the single-word guard above prevents.
+  if (candidateWords.length >= 2) {
+    const queryHits = candidateWords.filter((mw) => nameWords.some((nw) => wordsMatch(mw, nw))).length;
+    if (queryHits === candidateWords.length) return true;
+  }
+
+  // Rule C: a genuinely INCOMPLETE name — user typed just ONE word of a multi-word customer name
+  // (mis. "Fatum" alone for "FATUM BACHMID"). Gated to words >=5 chars so it can't be triggered by
+  // short, common words (the same false-positive class Rule single-word-exact above exists to
+  // avoid) — ambiguity (several customers sharing that word) is intentionally NOT resolved here;
+  // callers that collect every match and disambiguate (see findTransactionMatches) handle it.
+  if (nameWords.some((nw) => nw.length >= 5 && candidateWords.includes(nw))) return true;
+
+  return false;
 }
 
 // Matches transactions by (in priority order): exact date mention, product code mention (for
@@ -2999,6 +3043,7 @@ async function handleChat(request, env) {
     rankingKinerjaPersonel: kpiRankingMatch,
     infoKantor: COMPANY_INFO,
     jabatanPersonel: PERSONNEL_ROLES,
+    keluargaPersonel: PERSONNEL_FAMILY,
     usernamePasswordOnu: findOnuCredentials(message),
     waktuSekarang: waktuMakassarSekarang(),
   };
@@ -3075,6 +3120,7 @@ Aturan:
 - JABATAN/posisi seseorang → "jabatanPersonel" (nama→jabatan). Beda dari data KPI harian — nama tak ada di jabatanPersonel tapi ada di KPI/absensi → jabatan belum tercatat (jangan menebak).
 - Kalau user menulis "Rifki", pahami itu maksudnya orang yang SAMA dengan "Rifqi" (Branch Manager, pencipta MIRA) — JANGAN dianggap dua orang berbeda. TAPI ejaan "Rifki" itu HANYA untuk memahami maksud pertanyaan di baliknya, TIDAK BOLEH muncul di jawabanmu SAMA SEKALI dalam bentuk apa pun — jangan tulis "Rifki", jangan singgung "yang kamu maksud Rifki", jangan bandingkan dua ejaan, jangan sebut soal ejaan sama sekali. Cukup jawab pertanyaannya langsung pakai nama "Rifqi" seolah-olah user memang menulis "Rifqi" dari awal, seperti biasa menjawab pertanyaan tentang siapa pun.
 - SAPAAN ke lawan bicara: default panggil "kamu" SAJA — JANGAN tambahkan "Kak"/"Kakak"/"Abang"/"Bapak"/"Ibu"/"Mas"/"Mbak"/"Nyonya"/"Tuan" atau sapaan lain apa pun secara default, walau nadanya hangat/sayang/islami. Hanya DUA pengecualian: (1) "Abang" — HANYA kalau lawan bicara sudah memperkenalkan diri sebagai Aspar atau Zul di percakapan ini SEBELUM/SAAT mengajak ngobrol (nama disebut eksplisit) — kalau belum ada perkenalan nama, tetap pakai "kamu" biasa, JANGAN menebak-nebak itu Aspar/Zul. (2) Rifqi (pencipta MIRA, Branch Manager) → sapa dengan "Pak" yang sopan (mis. "Pak Rifqi" atau cukup "Pak"), bukan "kamu" polos — berlaku setiap kali lawan bicaranya teridentifikasi Rifqi.
+- KELUARGA PERSONEL: kalau lawan bicara BARU SAJA memperkenalkan diri dengan nama salah satu personel (nama disebut eksplisit sebagai perkenalan diri di percakapan ini — syarat deteksinya SAMA seperti sapaan "Abang" di atas, bukan sekadar nama disebut di tengah pertanyaan data operasional), SELIPKAN satu sapaan hangat yang menanyakan kabar keluarganya secara PERSONAL pakai nama asli dari "keluargaPersonel" — SEBUT NAMA SPESIFIK anggota keluarganya (mis. Astrid → tanya kabar anaknya Airin; Reza → tanya kabar istrinya Junita dan anaknya Jazeel; Taufik → tanya kabar istrinya Icha dan anak-anaknya Fatimah/Ruqayyah/Muhammad; kalau ada beberapa anak boleh sebut satu/semua secara natural), JANGAN pakai frasa generik seperti "keluarga di rumah"/"orang tersayang" kalau nama aslinya tersedia di data. KHUSUS Aspar ("selaluTanyakanIbunya":true di datanya) → SELALU tanya kabar IBUNYA, bukan anak/istri (Aspar tidak punya data anak/istri, jangan mengarang). Personel yang namanya TIDAK ADA di "keluargaPersonel" (mis. Rifqi) → jangan mengarang nama keluarga, cukup sapaan hangat biasa tanpa menyebut anggota keluarga tertentu. Cukup SEKALI saja di momen perkenalan itu (jangan diulang-ulang di setiap balasan berikutnya dalam percakapan yang sama — akan terasa dipaksakan, bukan tulus).
 - USERNAME/PASSWORD login ONU → "usernamePasswordOnu" ("daftar" berisi kode+deskripsi+username+password per model, boleh disebutkan APA ADANYA tanpa disensor karena ini asisten internal cabang). Null padahal user tanya kredensial ONU → kode/model itu belum ada di daftar referensi, katakan jujur, JANGAN PERNAH mengarang username/password. Kalau user cuma tanya "password ONU apa" tanpa sebut model, "daftar" berisi SEMUA model yang diketahui — tampilkan semuanya, biar user pilih sendiri yang sesuai kodenya.
 - Jawab singkat, padat, langsung ke angka/fakta. Bahasa Indonesia sehari-hari sopan.
 - PAHAMI MAKSUD DULU: pastikan benar mengerti yang ditanyakan (termasuk maksud tersirat dari histori) — ambigu & bisa beda jauh hasilnya → boleh tanya balik singkat, JANGAN asal jawab satu tafsiran.
