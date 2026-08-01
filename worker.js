@@ -1481,13 +1481,19 @@ function findTransactionMatches(message, allTransactions) {
     const customerSet = new Set();
     for (const tx of allTransactions) if (tx.customer) customerSet.add(tx.customer);
     const msgWords = nameWordsOf(message);
-    let hitCustomer = null;
-    for (const c of customerSet) {
-      if (c.length >= 4 && customerNameFuzzyMatch(msgWords, c)) { hitCustomer = c; break; }
-    }
-    matched = hitCustomer ? allTransactions.filter((tx) => tx.customer === hitCustomer).sort(byDateDesc) : [];
-    if (hitCustomer) {
-      note = `Transaksi customer "${hitCustomer}": ${matched.length} baris, diurutkan dari yang PALING BARU (baris pertama = transaksi terakhir).`;
+    // Collect EVERY matching customer, not just the first — a real reported case: "ARIF" silently
+    // matched only one of three real customers (ARIF / ARIF RACHMAWAN / ARIF MAKASSAR) with no
+    // indication the others existed. Multiple distinct hits means the name is genuinely ambiguous.
+    const hitCustomers = [...customerSet].filter((c) => c.length >= 4 && customerNameFuzzyMatch(msgWords, c));
+    if (hitCustomers.length > 1) {
+      matched = [];
+      note = `Nama ini cocok ke BEBERAPA customer berbeda yang benar-benar ada di data: ${hitCustomers.join(', ')} — JANGAN asal pilih salah satu, tanya balik ke user customer mana persisnya yang dimaksud (sebutkan semua nama kandidat ini).`;
+    } else {
+      const hitCustomer = hitCustomers[0] || null;
+      matched = hitCustomer ? allTransactions.filter((tx) => tx.customer === hitCustomer).sort(byDateDesc) : [];
+      if (hitCustomer) {
+        note = `Transaksi customer "${hitCustomer}": ${matched.length} baris, diurutkan dari yang PALING BARU (baris pertama = transaksi terakhir).`;
+      }
     }
   }
 
@@ -1701,11 +1707,12 @@ function findPiutangByCustomer(message, piutangDetail) {
   const customerSet = new Set();
   for (const p of piutangDetail) if (p.customer) customerSet.add(p.customer);
   const msgWords = nameWordsOf(message);
-  let hit = null;
-  for (const c of customerSet) {
-    if (c.length >= 4 && customerNameFuzzyMatch(msgWords, c)) { hit = c; break; }
+  const hits = [...customerSet].filter((c) => c.length >= 4 && customerNameFuzzyMatch(msgWords, c));
+  if (!hits.length) return null;
+  if (hits.length > 1) {
+    return { customerCandidatesAmbiguous: hits, catatan: `Nama ini cocok ke BEBERAPA customer berbeda: ${hits.join(', ')} — tanya balik user mana yang dimaksud, jangan asal pilih satu.` };
   }
-  if (!hit) return null;
+  const hit = hits[0];
   const invoices = piutangDetail.filter((p) => p.customer === hit);
   return {
     customer: hit,
@@ -1729,11 +1736,12 @@ function findPaymentsByCustomer(message, paymentDetail, piutangDetail) {
   const customerSet = new Set();
   for (const p of paymentDetail) if (p.customer) customerSet.add(p.customer);
   const msgWords = nameWordsOf(message);
-  let hit = null;
-  for (const c of customerSet) {
-    if (c.length >= 4 && customerNameFuzzyMatch(msgWords, c)) { hit = c; break; }
+  const hits = [...customerSet].filter((c) => c.length >= 4 && customerNameFuzzyMatch(msgWords, c));
+  if (!hits.length) return null;
+  if (hits.length > 1) {
+    return { customerCandidatesAmbiguous: hits, catatan: `Nama ini cocok ke BEBERAPA customer berbeda: ${hits.join(', ')} — tanya balik user mana yang dimaksud, jangan asal pilih satu.` };
   }
-  if (!hit) return null;
+  const hit = hits[0];
 
   const openInvoices = new Map();
   for (const p of piutangDetail || []) {
@@ -3018,10 +3026,11 @@ Aturan:
 - Stok/ketersediaan → "stokRelevan", jawab SINGKAT (stok per company+total, tanpa turnover kecuali diminta). "stokCatatan" jelaskan filter (untuk konteksmu, tak perlu disebut) — "dilanjutkan dari kode X" berarti follow-up dari histori, pakai percaya diri. Kosong → jujur tidak ditemukan, jangan mengarang stok/gudang/satuan.
 - "Kode barang" dan "kode produk" artinya SAMA (field "kode" di data stok) — jangan bedakan istilahnya. Tanya kode berdasar KATEGORI/SPEK angka (mis. "kode OLT 2 PON", "kode kabel 1 core", "OLT 3 PON") — WAJIB 2 LANGKAH BERURUTAN, jangan langsung jawab: LANGKAH 1) baca satu-satu nama tiap item di "stokRelevan", cari yang ADA KATA PERSIS "3 PON" (atau "3PON") tertulis di namanya — angka+satuan HARUS keduanya cocok persis, "3 PORT"/"3 SFP"/spek lain dengan angka sama TIDAK DIHITUNG cocok (beda satuan = beda spek, WALAU sama-sama OLT dan sama-sama ada angka 3). LANGKAH 2) kalau LANGKAH 1 ketemu → sebut kodenya. Kalau LANGKAH 1 TIDAK ketemu satu pun → WAJIB jawab "OLT 3 PON tidak ada di stok kami" dulu SEBAGAI KALIMAT PERTAMA, baru boleh tawarkan varian PON lain yang BENAR ada sebagai pilihan terpisah (mis. "2 PON: OLTG020" atau "4 PON: OLTG022") — TIDAK PERNAH menyebut kode dengan spek berbeda (mis. OLTG026 "3 PORT") seolah itu jawaban dari "3 PON", bahkan sebagai "mungkin maksudmu ini" — kalau mau menawarkan alternatif ejaan/spek lain, itu HARUS eksplisit dikatakan sebagai spek BEDA, bukan varian dari yang ditanya.
 - Harga/nilai barang → field "harga" di "stokRelevan" (harga satuan Rupiah); "total nilai stok" = harga × stokTotal/stokMKI/stokCFN, tunjukkan cara hitung singkat. "harga" tidak ada di data lain — kalau butuh tapi item tak ada di stokRelevan, jujur tidak tersedia.
-- Tanggal/kode/customer spesifik → "transaksiRelevan" (field "ekspedisi"/"company" tiap baris = cara kirim). "transaksiCatatan" bilang "PALING BARU" → baris PERTAMA = transaksi terakhir. "isRetur" true → sebutkan sebagai retur, bukan penjualan normal.
+- Tanggal/kode/customer spesifik → "transaksiRelevan" (field "ekspedisi"/"company" tiap baris = cara kirim). "transaksiCatatan" bilang "PALING BARU" → baris PERTAMA = transaksi terakhir. "isRetur" true → sebutkan sebagai retur, bukan penjualan normal. "Siapa (yang) belanja/berbelanja pada tanggal X" → JANGAN cuma sebut daftar NAMA customer — WAJIB rinci tiap transaksi dari "transaksiRelevan": nama customer, nomor invoice ("invoice"), kode produk ("kode"), qty, dan amount (kalau baris banyak, boleh kelompokkan per customer/invoice, tapi detail invoice+kode produknya tetap harus ada, jangan cuma nama).
+- "Nama X cocok ke BEBERAPA customer berbeda" di "transaksiCatatan" (atau catatan sejenis di field lain) → JANGAN pilih satu sendiri, tanya balik ke user sebutkan semua nama kandidat yang ada di catatan itu supaya user bisa pilih mana yang dimaksud.
 - INVOICE/TRANSAKSI = INVOICE UNIK bukan jumlah baris, RETUR TIDAK DIHITUNG: satu invoice bisa banyak baris (kode beda, invoice sama) — hitung nilai UNIK di field "invoice", jangan hitung baris array (dobel-hitung produk dalam 1 invoice). Hitung sendiri dari "transaksiRelevan" → buang dulu baris "isRetur":true (retur = pembalikan, bukan transaksi baru). Field yang SUDAH invoice-unik-tanpa-retur (pakai langsung): "performa"/"targetPerformaHarianBulanan" (transaksi/invoiceUnik/bulan), "deliveryOverview" (sameDayCount/cutOffCount/handCarryCount/pihakKetigaCount/byEkspedisi), "wilayahEkspedisiRelevan"/topWilayah (jumlahTransaksi/wilayah), "customerInsights"/"daftarNamaCustomerPerBucket" (invoiceUnik/customer). Pertanyaan retur sendiri → JANGAN pakai field ini (sudah exclude retur), pakai "returRelevan". "amount"/"qty" produk (mis. "topProduk") TETAP per baris (memang benar per unit produk).
 - RETUR khusus (mis. "retur bulan ini", "retur customer X") → "returRelevan" (bisa dipersempit tanggal/customer). "Berapa BANYAK retur" → WAJIB "jumlahInvoiceUnikRetur" (invoice retur beda), JANGAN "jumlahBarisRetur" (baris produk) kecuali diminta rincian per baris. "catatan" jelaskan kriteria deteksi.
-- Piutang (belum dibayar) customer tertentu → WAJIB "piutangRelevan" (rincian per invoice); field umum "piutang" cuma total per kategori umur, tak ada rincian per customer. Beda dari "pembayaranRelevan" (sudah bayar).
+- Piutang (belum dibayar) customer tertentu → WAJIB "piutangRelevan" (rincian per invoice); field umum "piutang" cuma total per kategori umur, tak ada rincian per customer. Beda dari "pembayaranRelevan" (sudah bayar). "piutangRelevan"/"pembayaranRelevan" berisi "customerCandidatesAmbiguous" (bukan "customer"/"invoices" seperti biasa) → nama yang ditanya cocok ke BEBERAPA customer nyata sekaligus, sebutkan semua nama di "customerCandidatesAmbiguous" dan tanya balik yang mana dimaksud, JANGAN pilih satu sendiri.
 - "Customer piutang tertinggi/terbesar" → "piutangCustomerTertinggi" (top10, sudah urut). Null padahal ditanya → kata kunci tak terdeteksi, minta user pertegas.
 - KATEGORI UMUR PIUTANG (AGING) BAKU, WAJIB konsisten: "0-30 Hari", "30-45 Hari", "45-60 Hari", "> 60 Hari" (definisi resmi dashboard dari kolom Aging/hari — BUKAN kategori lama "14-30"/"0-13" yang sudah tak dipakai). Kategori tertentu, ambang bebas (mis. "di atas 90 hari"), ATAU superlatif tanpa angka (mis. "piutang paling lama menunggak"/"terlama"/"terdekat jatuh tempo") → "piutangPerKategoriUmur" ("daftar" = customer+noFaktur+nilaiSisa+agingHari+tanggal, beda dari "piutang.byKategori" yang cuma total tanpa nama) — sebutkan nama customer, bukan cuma total. "kategori" di hasil = salah satu 4 kategori baku, ambang bebas, atau label superlatif ("Paling lama menunggak"/"Paling dekat jatuh tempo").
 - Piutang per company MKI/CFN → "piutangPerCompany", WAJIB sebutkan company diturunkan dari pola nomor faktur (bukan field asli), sesuai catatannya. JANGAN jawab pakai total GABUNGAN dari "piutang". Minta LIST → field "daftar" (per invoice: customer/noFaktur/nilaiSisa/tanggal/kategori), sebutkan nama.
