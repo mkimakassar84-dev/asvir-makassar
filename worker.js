@@ -1401,9 +1401,17 @@ const QUERY_NOISE_WORDS = new Set([
 // (scaled to word length), so "Arsad Ambo Dale" still finds "MUH. ARSYAD AMBO DALLE". Message
 // words are first stripped of generic question/operational words (see QUERY_NOISE_WORDS above)
 // so they never masquerade as a name match.
-function customerNameFuzzyMatch(msgWords, customerName) {
+// Returns how many of the QUERY's significant words this customer name accounts for (0 = no
+// match at all). A real reported bug: querying the exact full name "MUS MULIADI" also matched
+// the totally different, unrelated customer "MULIADI" (a strict single-word substring of the
+// query) via the single-word-exact rule below, and since callers collect EVERY match for
+// disambiguation, this turned an exact, unambiguous query into a false "which one did you mean?"
+// prompt. Returning a coverage COUNT (not just true/false) lets callers keep only the
+// highest-coverage match(es) — "MUS MULIADI" (covers both query words) beats "MULIADI" (covers
+// only one) — and only treat it as genuinely ambiguous when multiple names tie at the top score.
+function customerNameMatchCoverage(msgWords, customerName) {
   const nameWords = nameWordsOf(customerName).filter((w) => w.length >= 3 && !NAME_STOPWORDS.has(w));
-  if (!nameWords.length) return false;
+  if (!nameWords.length) return 0;
   const candidateWords = msgWords.filter((w) => !STOPWORDS.has(w) && !QUERY_NOISE_WORDS.has(w));
   // Single-word customer names (e.g. "MASRI") are especially vulnerable to false positives — one
   // word is the WHOLE name, so a single lucky edit-distance hit already clears the 70% threshold.
@@ -1412,14 +1420,15 @@ function customerNameFuzzyMatch(msgWords, customerName) {
   // SAJA customer..." matched customer "MASRI". Not a word we can just add to a stoplist one at a
   // time (any short word could collide with some short name) — require an EXACT match instead,
   // multi-word names keep the typo tolerance since one wrong word alone won't clear 70% on those.
-  if (nameWords.length === 1) return candidateWords.includes(nameWords[0]);
+  if (nameWords.length === 1) return candidateWords.includes(nameWords[0]) ? 1 : 0;
 
   const wordsMatch = (mw, nw) => mw === nw || (Math.abs(mw.length - nw.length) <= 2 && levenshtein(mw, nw) <= (nw.length <= 4 ? 1 : 2));
+  const queryCoverage = () => candidateWords.filter((mw) => nameWords.some((nw) => wordsMatch(mw, nw))).length;
 
   // Rule A: most of the STORED name's words appear in the message — handles a full/near-full name
   // mentioned inside a longer question (e.g. "kapan Afif Anshary Arbi terakhir belanja").
   const nameHits = nameWords.filter((nw) => candidateWords.some((mw) => wordsMatch(mw, nw))).length;
-  if (nameHits / nameWords.length >= 0.7) return true;
+  if (nameHits / nameWords.length >= 0.7) return queryCoverage();
 
   // Rule B: user typed a genuinely SHORTENED name (e.g. "Afif Anshary" for stored customer "AFIF
   // ANSHARY ARBI") — Rule A alone rejects this because 2/3 stored words = 67% < 70%. Instead check
@@ -1428,18 +1437,35 @@ function customerNameFuzzyMatch(msgWords, customerName) {
   // Requires >=2 query words (single-word case is handled separately above) so one coincidental
   // word match can't hijack an unrelated question the way the single-word guard above prevents.
   if (candidateWords.length >= 2) {
-    const queryHits = candidateWords.filter((mw) => nameWords.some((nw) => wordsMatch(mw, nw))).length;
-    if (queryHits === candidateWords.length) return true;
+    const queryHits = queryCoverage();
+    if (queryHits === candidateWords.length) return queryHits;
   }
 
   // Rule C: a genuinely INCOMPLETE name — user typed just ONE word of a multi-word customer name
   // (mis. "Fatum" alone for "FATUM BACHMID"). Gated to words >=5 chars so it can't be triggered by
   // short, common words (the same false-positive class Rule single-word-exact above exists to
   // avoid) — ambiguity (several customers sharing that word) is intentionally NOT resolved here;
-  // callers that collect every match and disambiguate (see findTransactionMatches) handle it.
-  if (nameWords.some((nw) => nw.length >= 5 && candidateWords.includes(nw))) return true;
+  // callers keep only the max-coverage match(es), so a fuller match elsewhere always wins.
+  if (nameWords.some((nw) => nw.length >= 5 && candidateWords.includes(nw))) return 1;
 
-  return false;
+  return 0;
+}
+
+function customerNameFuzzyMatch(msgWords, customerName) {
+  return customerNameMatchCoverage(msgWords, customerName) > 0;
+}
+
+// Filters customerNames down to only the names tied for the HIGHEST match coverage against the
+// query — use this (not a plain customerNameFuzzyMatch filter) wherever multiple matches trigger
+// a disambiguation prompt, so an exact/fuller match always wins over an unrelated name that only
+// happens to share one word with it.
+function bestCustomerNameMatches(msgWords, customerNames) {
+  const scored = customerNames
+    .map((c) => ({ c, score: customerNameMatchCoverage(msgWords, c) }))
+    .filter((x) => x.score > 0);
+  if (!scored.length) return [];
+  const maxScore = Math.max(...scored.map((x) => x.score));
+  return scored.filter((x) => x.score === maxScore).map((x) => x.c);
 }
 
 // Matches transactions by (in priority order): exact date mention, product code mention (for
@@ -1528,7 +1554,7 @@ function findTransactionMatches(message, allTransactions) {
     // Collect EVERY matching customer, not just the first — a real reported case: "ARIF" silently
     // matched only one of three real customers (ARIF / ARIF RACHMAWAN / ARIF MAKASSAR) with no
     // indication the others existed. Multiple distinct hits means the name is genuinely ambiguous.
-    const hitCustomers = [...customerSet].filter((c) => c.length >= 4 && customerNameFuzzyMatch(msgWords, c));
+    const hitCustomers = bestCustomerNameMatches(msgWords, [...customerSet].filter((c) => c.length >= 4));
     if (hitCustomers.length > 1) {
       matched = [];
       note = `Nama ini cocok ke BEBERAPA customer berbeda yang benar-benar ada di data: ${hitCustomers.join(', ')} — JANGAN asal pilih salah satu, tanya balik ke user customer mana persisnya yang dimaksud (sebutkan semua nama kandidat ini).`;
@@ -1763,7 +1789,7 @@ function findPiutangByCustomer(message, piutangDetail) {
   const customerSet = new Set();
   for (const p of piutangDetail) if (p.customer) customerSet.add(p.customer);
   const msgWords = nameWordsOf(message);
-  const hits = [...customerSet].filter((c) => c.length >= 4 && customerNameFuzzyMatch(msgWords, c));
+  const hits = bestCustomerNameMatches(msgWords, [...customerSet].filter((c) => c.length >= 4));
   if (!hits.length) return null;
   if (hits.length > 1) {
     return { customerCandidatesAmbiguous: hits, catatan: `Nama ini cocok ke BEBERAPA customer berbeda: ${hits.join(', ')} — tanya balik user mana yang dimaksud, jangan asal pilih satu.` };
@@ -1792,7 +1818,7 @@ function findPaymentsByCustomer(message, paymentDetail, piutangDetail) {
   const customerSet = new Set();
   for (const p of paymentDetail) if (p.customer) customerSet.add(p.customer);
   const msgWords = nameWordsOf(message);
-  const hits = [...customerSet].filter((c) => c.length >= 4 && customerNameFuzzyMatch(msgWords, c));
+  const hits = bestCustomerNameMatches(msgWords, [...customerSet].filter((c) => c.length >= 4));
   if (!hits.length) return null;
   if (hits.length > 1) {
     return { customerCandidatesAmbiguous: hits, catatan: `Nama ini cocok ke BEBERAPA customer berbeda: ${hits.join(', ')} — tanya balik user mana yang dimaksud, jangan asal pilih satu.` };
