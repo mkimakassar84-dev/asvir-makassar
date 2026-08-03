@@ -1459,10 +1459,20 @@ function customerNameFuzzyMatch(msgWords, customerName) {
 // query — use this (not a plain customerNameFuzzyMatch filter) wherever multiple matches trigger
 // a disambiguation prompt, so an exact/fuller match always wins over an unrelated name that only
 // happens to share one word with it.
-function bestCustomerNameMatches(msgWords, customerNames) {
-  const scored = customerNames
+function bestCustomerNameMatches(msgWords, customerNames, rawMessage) {
+  const nText = normText(rawMessage || msgWords.join(' '));
+  let scored = customerNames
     .map((c) => ({ c, score: customerNameMatchCoverage(msgWords, c) }))
     .filter((x) => x.score > 0);
+  // Explicit rejection ("Mus Muliadi BUKAN Mus Mulyadi") hard-excludes the negated name even
+  // though its words still literally appear in the message — a real reported follow-up case
+  // where, after MIRA asked the user to pick between two similar names, the REJECTED name kept
+  // tying for the top score since coverage-scoring alone has no concept of negation.
+  scored = scored.filter((x) => {
+    const nameWords = nameWordsOf(x.c).filter((w) => w.length >= 3 && !NAME_STOPWORDS.has(w));
+    if (!nameWords.length) return true;
+    return !new RegExp(`(bukan|tidak|salah)\\s+${nameWords.join('\\s+')}`, 'i').test(nText);
+  });
   if (!scored.length) return [];
   const maxScore = Math.max(...scored.map((x) => x.score));
   return scored.filter((x) => x.score === maxScore).map((x) => x.c);
@@ -1554,7 +1564,7 @@ function findTransactionMatches(message, allTransactions) {
     // Collect EVERY matching customer, not just the first — a real reported case: "ARIF" silently
     // matched only one of three real customers (ARIF / ARIF RACHMAWAN / ARIF MAKASSAR) with no
     // indication the others existed. Multiple distinct hits means the name is genuinely ambiguous.
-    const hitCustomers = bestCustomerNameMatches(msgWords, [...customerSet].filter((c) => c.length >= 4));
+    const hitCustomers = bestCustomerNameMatches(msgWords, [...customerSet].filter((c) => c.length >= 4), message);
     if (hitCustomers.length > 1) {
       matched = [];
       note = `Nama ini cocok ke BEBERAPA customer berbeda yang benar-benar ada di data: ${hitCustomers.join(', ')} — JANGAN asal pilih salah satu, tanya balik ke user customer mana persisnya yang dimaksud (sebutkan semua nama kandidat ini).`;
@@ -1789,7 +1799,7 @@ function findPiutangByCustomer(message, piutangDetail) {
   const customerSet = new Set();
   for (const p of piutangDetail) if (p.customer) customerSet.add(p.customer);
   const msgWords = nameWordsOf(message);
-  const hits = bestCustomerNameMatches(msgWords, [...customerSet].filter((c) => c.length >= 4));
+  const hits = bestCustomerNameMatches(msgWords, [...customerSet].filter((c) => c.length >= 4), message);
   if (!hits.length) return null;
   if (hits.length > 1) {
     return { customerCandidatesAmbiguous: hits, catatan: `Nama ini cocok ke BEBERAPA customer berbeda: ${hits.join(', ')} — tanya balik user mana yang dimaksud, jangan asal pilih satu.` };
@@ -1818,7 +1828,7 @@ function findPaymentsByCustomer(message, paymentDetail, piutangDetail) {
   const customerSet = new Set();
   for (const p of paymentDetail) if (p.customer) customerSet.add(p.customer);
   const msgWords = nameWordsOf(message);
-  const hits = bestCustomerNameMatches(msgWords, [...customerSet].filter((c) => c.length >= 4));
+  const hits = bestCustomerNameMatches(msgWords, [...customerSet].filter((c) => c.length >= 4), message);
   if (!hits.length) return null;
   if (hits.length > 1) {
     return { customerCandidatesAmbiguous: hits, catatan: `Nama ini cocok ke BEBERAPA customer berbeda: ${hits.join(', ')} — tanya balik user mana yang dimaksud, jangan asal pilih satu.` };
@@ -3114,7 +3124,7 @@ Aturan:
 - "Nama X cocok ke BEBERAPA customer berbeda" di "transaksiCatatan" (atau catatan sejenis di field lain) → JANGAN pilih satu sendiri, tanya balik ke user sebutkan semua nama kandidat yang ada di catatan itu supaya user bisa pilih mana yang dimaksud.
 - INVOICE/TRANSAKSI = INVOICE UNIK bukan jumlah baris, RETUR TIDAK DIHITUNG: satu invoice bisa banyak baris (kode beda, invoice sama) — hitung nilai UNIK di field "invoice", jangan hitung baris array (dobel-hitung produk dalam 1 invoice). Hitung sendiri dari "transaksiRelevan" → buang dulu baris "isRetur":true (retur = pembalikan, bukan transaksi baru). Field yang SUDAH invoice-unik-tanpa-retur (pakai langsung): "performa"/"targetPerformaHarianBulanan" (transaksi/invoiceUnik/bulan), "deliveryOverview" (sameDayCount/cutOffCount/handCarryCount/pihakKetigaCount/byEkspedisi), "wilayahEkspedisiRelevan"/topWilayah (jumlahTransaksi/wilayah), "customerInsights"/"daftarNamaCustomerPerBucket" (invoiceUnik/customer). Pertanyaan retur sendiri → JANGAN pakai field ini (sudah exclude retur), pakai "returRelevan". "amount"/"qty" produk (mis. "topProduk") TETAP per baris (memang benar per unit produk).
 - RETUR khusus (mis. "retur bulan ini", "retur customer X") → "returRelevan" (bisa dipersempit tanggal/customer). "Berapa BANYAK retur" → WAJIB "jumlahInvoiceUnikRetur" (invoice retur beda), JANGAN "jumlahBarisRetur" (baris produk) kecuali diminta rincian per baris. "catatan" jelaskan kriteria deteksi.
-- Piutang (belum dibayar) customer tertentu → WAJIB "piutangRelevan" (rincian per invoice); field umum "piutang" cuma total per kategori umur, tak ada rincian per customer. Beda dari "pembayaranRelevan" (sudah bayar). "piutangRelevan"/"pembayaranRelevan" berisi "customerCandidatesAmbiguous" (bukan "customer"/"invoices" seperti biasa) → nama yang ditanya cocok ke BEBERAPA customer nyata sekaligus, sebutkan semua nama di "customerCandidatesAmbiguous" dan tanya balik yang mana dimaksud, JANGAN pilih satu sendiri.
+- Piutang (belum dibayar) customer tertentu → WAJIB "piutangRelevan" (rincian per invoice); field umum "piutang" cuma total per kategori umur GABUNGAN SELURUH CABANG, tak ada rincian per customer — JANGAN PERNAH pakai angka dari "piutang" untuk pertanyaan piutang SATU customer, walau "piutangRelevan" null/kosong (itu berarti customer itu tidak punya piutang tercatat, BUKAN alasan menyamarkan angka total cabang seolah itu piutang orang tersebut — kalau "piutangRelevan" null/kosong, katakan jujur "tidak ada piutang tercatat", titik, jangan tambal pakai field lain). Beda dari "pembayaranRelevan" (sudah bayar). "piutangRelevan"/"pembayaranRelevan" berisi "customerCandidatesAmbiguous" (bukan "customer"/"invoices" seperti biasa) → nama yang ditanya cocok ke BEBERAPA customer nyata sekaligus, sebutkan semua nama di "customerCandidatesAmbiguous" dan tanya balik yang mana dimaksud, JANGAN pilih satu sendiri. User menjawab follow-up MEMILIH salah satu nama (termasuk menolak nama lain, mis. "X bukan Y") → pertanyaan itu SUDAH terjawab lewat "piutangRelevan"/"pembayaranRelevan" yang baru (sistem sudah paham penolakannya), TINGGAL jawab pakai data customer yang dipilih user — jangan tanya ulang atau bingung lagi.
 - "Customer piutang tertinggi/terbesar" → "piutangCustomerTertinggi" (top10, sudah urut). Null padahal ditanya → kata kunci tak terdeteksi, minta user pertegas.
 - KATEGORI UMUR PIUTANG (AGING) BAKU, WAJIB konsisten: "0-30 Hari", "30-45 Hari", "45-60 Hari", "> 60 Hari" (definisi resmi dashboard dari kolom Aging/hari — BUKAN kategori lama "14-30"/"0-13" yang sudah tak dipakai). Kategori tertentu, ambang bebas (mis. "di atas 90 hari"), ATAU superlatif tanpa angka (mis. "piutang paling lama menunggak"/"terlama"/"terdekat jatuh tempo") → "piutangPerKategoriUmur" ("daftar" = customer+noFaktur+nilaiSisa+agingHari+tanggal, beda dari "piutang.byKategori" yang cuma total tanpa nama) — sebutkan nama customer, bukan cuma total. "kategori" di hasil = salah satu 4 kategori baku, ambang bebas, atau label superlatif ("Paling lama menunggak"/"Paling dekat jatuh tempo").
 - Piutang per company MKI/CFN (mis. "piutang CFN", "piutang MKI berapa") → JAWAB LANGSUNG dari "piutangPerCompany" SAJA, mulai dari kalimat PERTAMA — WAJIB sebutkan company diturunkan dari pola nomor faktur (bukan field asli), sesuai catatannya. JANGAN PERNAH sebut/tampilkan angka dari field "piutang" (total/byKategori GABUNGAN MKI+CFN) di jawaban ini SAMA SEKALI, bahkan sebagai pembuka/perbandingan/konteks — user tanya SATU company, bukan gabungan, jangan bertele-tele ke angka gabungan dulu sebelum ke angka yang diminta. SEMUA angka di jawaban (total, jumlah invoice, breakdown aging) WAJIB dari "piutangPerCompany" saja: "totalPiutang"+"jumlahInvoice"=total company itu, "byKategoriUmur"=breakdown aging KHUSUS company itu (bukan dari "piutang.byKategori"). Minta LIST → field "daftar" (per invoice: customer/noFaktur/nilaiSisa/tanggal/kategori), sebutkan nama.
