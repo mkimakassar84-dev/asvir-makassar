@@ -3016,6 +3016,25 @@ async function handleChat(request, env) {
   const returMatch = findReturTransactions(message, allTransactions);
   const wilayahMatch = findWilayahMatches(message, allWilayahEkspedisi);
   const piutangMatch = findPiutangByCustomer(message, piutangData?.detail);
+
+  // Deterministic bypass — see buildStockTemplateAnswer/buildPiutangTemplateAnswer above for why.
+  // Gated tightly to a bare "stok/stock KODE" or "piutang NAMA" message (no extra words) so this
+  // never intercepts a combined/conversational question — those still go through Gemini normally.
+  const bareStockQuery = normText(message).match(/^(?:cek\s+|lihat\s+|ada\s+)?(?:stok|stock)\s+([a-z0-9\-]{3,12})[\s?.!]*$/i);
+  if (bareStockQuery && stokMatch.items.length === 1 && normCode(bareStockQuery[1]) === normCode(stokMatch.items[0].kode)) {
+    return templateSseResponse(buildStockTemplateAnswer(stokMatch.items[0]), env);
+  }
+  const barePiutangQuery = normText(message).match(/^piutang\s+([a-z .]{3,40}?)[\s?.!]*$/i);
+  // Extra safety on top of "exactly one match": the deterministic path has no Gemini step to
+  // hedge or flag a mismatch, so it must NEVER rely on typo-tolerance here — require the resolved
+  // customer's name to literally CONTAIN the exact text the user typed. A real caught case: typing
+  // "MUS MULIADI" fuzzy-resolved to the different, real customer "MUS MULYADI" (typo-tolerant
+  // match) once the actual Muliadi's piutang was paid off and no longer in the candidate pool —
+  // silently showing a different person's data with zero warning. This check rejects that,
+  // falling through to the normal Gemini path instead (which at least can explain/hedge).
+  if (barePiutangQuery && piutangMatch && piutangMatch.customer && normText(piutangMatch.customer).includes(normText(barePiutangQuery[1]).trim())) {
+    return templateSseResponse(buildPiutangTemplateAnswer(piutangMatch), env);
+  }
   const topPiutangMatch = findTopPiutangCustomers(message, piutangData?.detail);
   const piutangKategoriMatch = findPiutangByKategoriUmur(message, piutangData?.detail);
   const piutangCompanyMatch = findPiutangByCompany(message, piutangData?.detail);
@@ -3238,6 +3257,65 @@ ${JSON.stringify(context)}`;
 
   // Proxy the SSE stream through untouched — this is what keeps first-token latency low.
   return new Response(geminiRes.body, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      ...corsHeaders(env),
+    },
+  });
+}
+
+// ==== Deterministic template answers — bypasses Gemini entirely for a narrow set of simple,
+// unambiguous lookups (exact stock code, exact single customer's piutang) where the server has
+// already resolved the answer to real data with zero interpretation needed. Gemini adds real
+// value for language understanding, follow-ups, and synthesis, but for "stok KSFO028"-style
+// questions it's pure risk: several real incidents this session (wrong product substituted,
+// fabricated customer/invoice) happened at the PROSE step even when the underlying data was
+// already 100% correct. These bypasses only fire on a tightly-scoped, simple message shape (see
+// callers) — anything with extra words, combined topics, or follow-up context still goes through
+// Gemini as normal, so conversational flexibility is unaffected.
+function formatRupiah(n) {
+  return `Rp${Math.round(n || 0).toLocaleString('id-ID')}`;
+}
+
+function buildStockTemplateAnswer(item) {
+  const lines = [
+    `Stok **${item.kode}** — ${item.nama}:`,
+    `- Stok MKI: ${item.stokMKI}`,
+    `- Stok CFN: ${item.stokCFN}`,
+    `- Total: **${item.stokTotal}**`,
+  ];
+  if (item.harga) lines.push(`- Harga satuan: ${formatRupiah(item.harga)}`);
+  return lines.join('\n');
+}
+
+function buildPiutangTemplateAnswer(hit) {
+  if (!hit.invoices.length) {
+    return `Tidak ada piutang tercatat untuk customer **${hit.customer}**.`;
+  }
+  const lines = [
+    `Piutang **${hit.customer}**: ${hit.jumlahInvoice} invoice, total sisa **${formatRupiah(hit.totalSisaPiutang)}**.`,
+    '',
+  ];
+  const sorted = [...hit.invoices].sort((a, b) => b.nilaiSisa - a.nilaiSisa);
+  for (const inv of sorted.slice(0, 20)) {
+    lines.push(`- Faktur ${inv.noFaktur} (${inv.tanggal}): ${formatRupiah(inv.nilaiSisa)}, ${inv.kategori}`);
+  }
+  if (sorted.length > 20) lines.push(`(dan ${sorted.length - 20} invoice lainnya tidak ditampilkan)`);
+  return lines.join('\n');
+}
+
+// Mimics the exact shape of one Gemini streamGenerateContent SSE chunk so the SAME frontend
+// parsing code (which reads "data: {...}" lines and extracts candidates[0].content.parts[].text)
+// works unmodified for both a real Gemini stream and a template bypass.
+function templateSseResponse(text, env) {
+  const chunk = {
+    candidates: [{ content: { parts: [{ text }], role: 'model' }, finishReason: 'STOP', index: 0 }],
+    usageMetadata: { promptTokenCount: 0, candidatesTokenCount: 0, totalTokenCount: 0 },
+  };
+  return new Response(`data: ${JSON.stringify(chunk)}\n\n`, {
     status: 200,
     headers: {
       'Content-Type': 'text/event-stream; charset=utf-8',
