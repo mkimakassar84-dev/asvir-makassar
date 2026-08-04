@@ -1763,19 +1763,21 @@ function findPiutangByKategoriUmur(message, piutangDetail) {
   };
 }
 
-// AR2026 piutang detail has NO explicit company field — but noFaktur reliably encodes it via a
-// naming convention: "INV-CFN/..." = CFN, everything else ("INV/MKS/...", "BK/MKS/...") = MKI.
-// Derived here from that pattern, not a first-class field, which is why it's flagged in the note
-// rather than presented as if it were a native column like it is for stock (stokMKI/stokCFN).
-function piutangCompanyOf(noFaktur) {
-  return /CFN/i.test(noFaktur || '') ? 'CFN' : 'MKI';
+// AR2026 piutang detail DOES have a real Company column (sheet column S, index 18) — read
+// directly into "company" during sync. This only falls back to guessing from the noFaktur naming
+// convention ("INV-CFN/..." = CFN, else MKI) for the rare row where that real field comes back
+// blank, so it never regresses to guessing when the real data is right there.
+function piutangCompanyOf(p) {
+  const real = (p && p.company || '').trim().toUpperCase();
+  if (real === 'MKI' || real === 'CFN') return real;
+  return /CFN/i.test((p && p.noFaktur) || '') ? 'CFN' : 'MKI';
 }
 function findPiutangByCompany(message, piutangDetail) {
   if (!piutangDetail || !piutangDetail.length) return null;
   const nMsg = normText(message);
   const company = /\bmki\b/.test(nMsg) ? 'MKI' : /\bcfn\b/.test(nMsg) ? 'CFN' : null;
   if (!company) return null;
-  const items = [...piutangDetail.filter((p) => piutangCompanyOf(p.noFaktur) === company)].sort((a, b) => b.nilaiSisa - a.nilaiSisa);
+  const items = [...piutangDetail.filter((p) => piutangCompanyOf(p) === company)].sort((a, b) => b.nilaiSisa - a.nilaiSisa);
   // Aging breakdown SCOPED to this company — a real reported bug: without this, a company-
   // specific question ("piutang CFN") got its aging-category numbers (>60/45-60/30-45/0-30 hari)
   // from the GENERAL "piutang.byKategori" field instead (all companies combined), while the
@@ -1795,7 +1797,7 @@ function findPiutangByCompany(message, piutangDetail) {
     // Full per-invoice list (customer, noFaktur, nilaiSisa, tanggal, kategori) so "list piutang
     // MKI/CFN" can be answered with actual names, not just the aggregate total above.
     daftar: items.slice(0, 60),
-    catatan: `Company "${company}" ini DITURUNKAN dari pola nomor faktur (noFaktur mengandung "CFN" = CFN, selain itu = MKI) — bukan field terpisah di data asli, tapi hasilnya akurat dan boleh dipakai dengan percaya diri. "byKategoriUmur" SUDAH khusus company ini saja — JANGAN pakai field "piutang.byKategori" yang terpisah (itu gabungan MKI+CFN, beda angka).${items.length > 60 ? ` Ditampilkan 60 dari ${items.length} invoice (urut nilai terbesar).` : ''}`,
+    catatan: `Company "${company}" ini dari field asli di data piutang. "byKategoriUmur" SUDAH khusus company ini saja — JANGAN pakai field "piutang.byKategori" yang terpisah (itu gabungan MKI+CFN, beda angka).${items.length > 60 ? ` Ditampilkan 60 dari ${items.length} invoice (urut nilai terbesar).` : ''}`,
   };
 }
 
@@ -2247,15 +2249,34 @@ async function findKpiRanking(message, kpiData, env) {
   else if (/hari submit|\bsubmit\b/.test(nMsg)) { metric = 'hariSubmitReal'; metricLabel = 'Total Hari Submit'; }
 
   const ascending = new RegExp(SUPERLATIVE_LOW).test(nMsg);
-  const ranking = [...kpiList]
+
+  // Official "Personel Terbaik" business rule (KPI-Personel-Cabang-Makassar backend): only
+  // personnel with completionRatio (hariSubmitReal / hariKerjaBerjalan, capped at 1) >=70% are
+  // eligible for "best" selection — otherwise someone who's only worked a couple of days this
+  // month but scored well on those could get misleadingly named "the best". Falls back to the
+  // full pool if nobody clears that bar. Only applies to the skorAkhir "best" ranking (not
+  // "worst", not other metrics), matching the documented rule's actual scope.
+  let poolForRanking = kpiList;
+  let catatanFilter = '';
+  if (metric === 'skorAkhir' && !ascending) {
+    const eligible = kpiList.filter((p) => typeof p.completionRatio === 'number' && p.completionRatio >= 0.7);
+    if (eligible.length) {
+      poolForRanking = eligible;
+      catatanFilter = 'Hanya personel dengan completionRatio (rasio hari kerja tersubmit) >=70% yang dihitung untuk "terbaik", sesuai aturan resmi. ';
+    } else {
+      catatanFilter = 'Tidak ada personel yang memenuhi syarat completionRatio >=70% bulan ini, jadi ranking ini pakai fallback resmi: seluruh personel tanpa filter itu. ';
+    }
+  }
+
+  const ranking = [...poolForRanking]
     .filter((p) => typeof p[metric] === 'number')
     .sort((a, b) => (ascending ? a[metric] - b[metric] : b[metric] - a[metric]))
-    .map((p) => ({ nama: p.nama, skorAkhir: p.skorAkhir, kepatuhanPersen: p.percent, totalJamKerja: p.totalWorkHours, totalHariSubmit: p.hariSubmitReal }));
+    .map((p) => ({ nama: p.nama, skorAkhir: p.skorAkhir, kepatuhanPersen: p.percent, totalJamKerja: p.totalWorkHours, totalHariSubmit: p.hariSubmitReal, completionRatio: p.completionRatio }));
   return {
     bulan,
     metricDipakai: metricLabel,
     urutan: ascending ? 'sudah terurut dari PALING KECIL/TERBAWAH duluan' : 'sudah terurut dari PALING BESAR/TERBAIK duluan',
-    catatan: `${catatanBulan}Ranking ini diurutkan berdasarkan ${metricLabel} — field lain (skorAkhir/kepatuhanPersen/totalJamKerja/totalHariSubmit) tetap disertakan per orang sebagai konteks tambahan, sama seperti tampilan dashboard KPI Personel.`,
+    catatan: `${catatanBulan}${catatanFilter}Ranking ini diurutkan berdasarkan ${metricLabel} — field lain (skorAkhir/kepatuhanPersen/totalJamKerja/totalHariSubmit/completionRatio) tetap disertakan per orang sebagai konteks tambahan, sama seperti tampilan dashboard KPI Personel.`,
     ranking,
   };
 }
@@ -2903,11 +2924,14 @@ async function runSync(env) {
       const kategori = agingBucketOf(agingHari);
       const nilai = toNumber(r[15]);
       const customer = (r[13] || '').trim().toUpperCase(); // matches dashboard's buildAR() normalization
+      const company = (r[18] || '').trim().toUpperCase(); // real Company column (index 18) — read
+      // directly instead of guessing from the invoice-number pattern (piutangCompanyOf below is
+      // now only a fallback for the rare row where this real field is blank).
       totalPiutang += nilai;
       if (!byKategori[kategori]) byKategori[kategori] = { kategori, jumlahInvoice: 0, totalNilai: 0 };
       byKategori[kategori].jumlahInvoice += 1;
       byKategori[kategori].totalNilai += nilai;
-      detail.push({ tanggal: r[11], noFaktur: r[12], customer, nilaiSisa: nilai, agingHari, kategori });
+      detail.push({ tanggal: r[11], noFaktur: r[12], customer, nilaiSisa: nilai, agingHari, kategori, company });
     }
     // Ratio AR-to-sales needs total 2026 sales, already computed and cached above in this
     // same /sync run — read it back rather than re-deriving from a second data pass.
@@ -3136,7 +3160,7 @@ Aturan:
 - "Customer piutang tertinggi/terbesar" → "piutangCustomerTertinggi" (top10, sudah urut). Null padahal ditanya → kata kunci tak terdeteksi, minta user pertegas.
 - KATEGORI UMUR PIUTANG (AGING) BAKU, WAJIB konsisten: "0-30 Hari", "30-45 Hari", "45-60 Hari", "> 60 Hari" (definisi resmi dashboard dari kolom Aging/hari — BUKAN kategori lama "14-30"/"0-13" yang sudah tak dipakai). Kategori tertentu, ambang bebas (mis. "di atas 90 hari"), ATAU superlatif tanpa angka (mis. "piutang paling lama menunggak"/"terlama"/"terdekat jatuh tempo") → "piutangPerKategoriUmur" ("daftar" = customer+noFaktur+nilaiSisa+agingHari+tanggal, beda dari "piutang.byKategori" yang cuma total tanpa nama) — sebutkan nama customer, bukan cuma total. "kategori" di hasil = salah satu 4 kategori baku, ambang bebas, atau label superlatif ("Paling lama menunggak"/"Paling dekat jatuh tempo").
 - Pertanyaan piutang MENYEBUT NAMA/NOMOR FAKTUR CUSTOMER SPESIFIK ("customer dengan piutang terbaru/terlama/tertinggi", "piutang si X", dll) → jawaban itu WAJIB berasal dari salah satu field piutang ("piutangRelevan"/"piutangCustomerTertinggi"/"piutangPerKategoriUmur"/"piutangPerCompany") — TIDAK PERNAH mengarang nama customer, nomor faktur, tanggal, atau nominal sendiri walau terdengar masuk akal. Field yang relevan null/kosong SEMUA → jujur bilang "belum bisa saya jawab dari data yang ada" dan berhenti di situ, JANGAN mengisi kekosongan dengan detail yang kelihatan meyakinkan tapi sebenarnya karangan — ini pelanggaran serius, bukan sekadar kurang lengkap.
-- Piutang per company MKI/CFN (mis. "piutang CFN", "piutang MKI berapa") → JAWAB LANGSUNG dari "piutangPerCompany" SAJA, mulai dari kalimat PERTAMA — WAJIB sebutkan company diturunkan dari pola nomor faktur (bukan field asli), sesuai catatannya. JANGAN PERNAH sebut/tampilkan angka dari field "piutang" (total/byKategori GABUNGAN MKI+CFN) di jawaban ini SAMA SEKALI, bahkan sebagai pembuka/perbandingan/konteks — user tanya SATU company, bukan gabungan, jangan bertele-tele ke angka gabungan dulu sebelum ke angka yang diminta. SEMUA angka di jawaban (total, jumlah invoice, breakdown aging) WAJIB dari "piutangPerCompany" saja: "totalPiutang"+"jumlahInvoice"=total company itu, "byKategoriUmur"=breakdown aging KHUSUS company itu (bukan dari "piutang.byKategori"). Minta LIST → field "daftar" (per invoice: customer/noFaktur/nilaiSisa/tanggal/kategori), sebutkan nama.
+- Piutang per company MKI/CFN (mis. "piutang CFN", "piutang MKI berapa") → JAWAB LANGSUNG dari "piutangPerCompany" SAJA, mulai dari kalimat PERTAMA. JANGAN PERNAH sebut/tampilkan angka dari field "piutang" (total/byKategori GABUNGAN MKI+CFN) di jawaban ini SAMA SEKALI, bahkan sebagai pembuka/perbandingan/konteks — user tanya SATU company, bukan gabungan, jangan bertele-tele ke angka gabungan dulu sebelum ke angka yang diminta. SEMUA angka di jawaban (total, jumlah invoice, breakdown aging) WAJIB dari "piutangPerCompany" saja: "totalPiutang"+"jumlahInvoice"=total company itu, "byKategoriUmur"=breakdown aging KHUSUS company itu (bukan dari "piutang.byKategori"). Minta LIST → field "daftar" (per invoice: customer/noFaktur/nilaiSisa/tanggal/kategori), sebutkan nama.
 - "Nilai stok"/"nilai rupiah stok" (total/per company) → "nilaiStokRelevan" ("totalNilaiRupiah" = harga×unit, company-aware). "catatan" ada kode tanpa harga → sebutkan totalnya belum 100% lengkap. Null kalau tidak sebut "nilai" DAN "stok" bersamaan.
 - "Produk terlaris tapi stok menipis"/"saran restock" → "saranRestockProdukTerlaris" (sudah dihitung: kode/nama/qty2026/stokSaatIni/rataRataPerBulan/perkiraanBulanHabis, urut PALING mendesak). Sampaikan sebagai SARAN konkret, bukan tabel angka. "daftar" kosong (bukan null) → memang tidak ada yang mendesak, itu kabar baik bukan gagal ambil data.
 - "Ekspedisi ke wilayah X" → WAJIB "wilayahEkspedisiRelevan" (lengkap, urut tersering), JANGAN pakai transaksiRelevan. Ekspedisi UMUM (mis. "berapa pakai hand carry") → "deliveryOverview" (sameDayCount/cutOffCount/handCarryCount/pihakKetigaCount/byEkspedisi).
