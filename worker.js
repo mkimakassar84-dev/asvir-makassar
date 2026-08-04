@@ -1906,9 +1906,41 @@ function findPaymentsByCustomer(message, paymentDetail, piutangDetail) {
 // consistent with what "Sales"/"Revenue" questions report separately. No month mentioned →
 // defaults to the whole year to date (matches the dashboard's own "Total Sales 2026 (s.d. hari
 // ini)" convention) rather than returning nothing.
-function findPencapaianRingkasan(message, performance, revenueMonthly, totalSales2026, totalRevenue2026) {
+function findPencapaianRingkasan(message, performance, revenueMonthly, totalSales2026, totalRevenue2026, allTransactions, paymentDetail) {
   const nMsg = normText(message);
   if (!/pencapaian/.test(nMsg)) return null;
+
+  // Specific date/date-range ("pencapaian tanggal 3 Agustus", "pencapaian kemarin") — same
+  // bundling requested for month/year, just computed directly from raw rows since there's no
+  // precomputed daily aggregate to reuse (mirrors ringkasanTanggalTransaksi/pembayaranPerTanggal's
+  // own day-level logic so the numbers stay consistent with what those fields report separately).
+  const rangeMention = extractDateRangeMention(message);
+  const dateMention = !rangeMention ? extractAnyDateMention(message) : null;
+  if (rangeMention || dateMention) {
+    const inRange = (d) => {
+      if (!d) return false;
+      if (rangeMention) {
+        return d.getMonth() + 1 === rangeMention.month && d.getFullYear() === rangeMention.year
+          && d.getDate() >= rangeMention.startDay && d.getDate() <= rangeMention.endDay;
+      }
+      return d.getDate() === dateMention.day && d.getMonth() + 1 === dateMention.month && d.getFullYear() === dateMention.year;
+    };
+    const txs = (allTransactions || []).filter((tx) => inRange(parseFlexibleDate(tx.tanggal)));
+    const totalSales = txs.reduce((s, tx) => s + tx.amount, 0);
+    const totalInvoiceUnik = new Set(txs.filter((tx) => !tx.isRetur).map((tx) => tx.invoice)).size;
+    const pays = (paymentDetail || []).filter((p) => inRange(parseFlexibleDate(p.tanggal)));
+    const totalRevenue = pays.reduce((s, p) => s + p.amount, 0);
+    return {
+      periode: rangeMention
+        ? `${rangeMention.startDay}-${rangeMention.endDay}/${rangeMention.month}/${rangeMention.year}`
+        : `${dateMention.day}/${dateMention.month}/${dateMention.year}`,
+      totalSales,
+      totalInvoiceUnik,
+      totalRevenue,
+      catatan: '"totalSales"/"totalInvoiceUnik" dari data penjualan tanggal/rentang ini (invoice unik, retur dikecualikan), "totalRevenue" dari data pelunasan tanggal/rentang yang sama — JANGAN dihitung ulang manual, sudah dijumlahkan.',
+    };
+  }
+
   const monthMention = extractMonthMention(message);
   if (monthMention) {
     const key = `${monthMention.year}-${String(monthMention.month).padStart(2, '0')}`;
@@ -3077,7 +3109,7 @@ async function handleChat(request, env) {
   const restockMatch = findRestockCandidates(message, topProductsRaw ? JSON.parse(topProductsRaw).byQty : null, allStock);
   const revenueData = revenueRaw ? JSON.parse(revenueRaw) : null;
   const perfData = perfRaw ? JSON.parse(perfRaw) : null;
-  const pencapaianMatch = findPencapaianRingkasan(message, perfData?.performance, revenueData?.monthly, perfData?.totalSales2026, revenueData?.total2026);
+  const pencapaianMatch = findPencapaianRingkasan(message, perfData?.performance, revenueData?.monthly, perfData?.totalSales2026, revenueData?.total2026, allTransactions, revenueData?.detail);
   const paymentMatch = findPaymentsByCustomer(message, revenueData?.detail, piutangData?.detail);
   const paymentByDateMatch = findPaymentsByDate(message, revenueData?.detail, piutangData?.detail);
   const poMatch = findPoGudangMatches(message, poGudangData?.items);
@@ -3191,7 +3223,7 @@ Aturan:
 - Jumlah spesifik diminta (mis. "10 wilayah terbesar") → berikan SEMUA sesuai jumlah itu kalau tersedia, jangan dipotong.
 - WAKTU: semua tanggal/jam di data dan semua perhitungan "hari ini"/"kemarin"/"bulan ini" WAJIB pakai zona waktu Makassar (WITA, GMT+8) — bukan zona waktu server. "Hari ini" berarti hari ini di Makassar, "kemarin" = kemarin di Makassar, dst. Kalau user tanya "sales/pembayaran/piutang/delivery hari ini" atau "kemarin" atau "2 hari lalu", ini SUDAH bisa dijawab dari data yang tersedia (field-field transaksi/pembayaran sudah difilter sesuai tanggal itu kalau relevan) — JANGAN bilang "belum bisa" atau "data berbasis bulanan" hanya karena tidak persis sebulan penuh, cek dulu field yang sesuai topiknya.
 - "Sekarang jam berapa?"/"hari ini tanggal berapa?"/pertanyaan waktu saat ini → SALIN PERSIS jam/tanggal dari field "waktuSekarang", KATA PER KATA — field ini FINAL, SUDAH WITA (bukan UTC), JANGAN dihitung ulang/dikonversi/digeser lagi dengan cara apa pun, JANGAN pakai jam dari pengetahuanmu sendiri, JANGAN bilang tidak tahu.
-- "Pencapaian" (mis. "pencapaian 2026", "pencapaian Agustus", "pencapaian" tanpa periode) → WAJIB jawab dari "pencapaianRingkasan" SAJA, dan WAJIB sebutkan KETIGANYA SEKALIGUS dalam satu jawaban (bukan cuma satu lalu tunggu ditanya lagi): "totalSales" (penjualan), "totalRevenue" (pelunasan/uang masuk), DAN "totalInvoiceUnik" — pakai field "periode" persis sebagai label periodenya. JANGAN hitung ulang manual dari field lain (mis. "performa"/"revenue"/"transaksiRelevan") — angka di "pencapaianRingkasan" sudah final untuk periode itu, dan JANGAN pernah sebut angka BEDA untuk pertanyaan yang sama walau ditanya ulang/dikoreksi user — kalau user meragukan angkanya, cek ulang field ini dulu (bukan langsung menyetujui koreksi user tanpa verifikasi), field ini sumber kebenarannya.
+- "Pencapaian" (mis. "pencapaian 2026", "pencapaian Agustus", "pencapaian tanggal 3", "pencapaian kemarin", "pencapaian" tanpa periode) → WAJIB jawab dari "pencapaianRingkasan" SAJA, dan WAJIB sebutkan KETIGANYA SEKALIGUS dalam satu jawaban (bukan cuma satu lalu tunggu ditanya lagi): "totalSales" (penjualan), "totalRevenue" (pelunasan/uang masuk), DAN "totalInvoiceUnik" — pakai field "periode" persis sebagai label periodenya. JANGAN hitung ulang manual dari field lain (mis. "performa"/"revenue"/"transaksiRelevan") — angka di "pencapaianRingkasan" sudah final untuk periode itu, dan JANGAN pernah sebut angka BEDA untuk pertanyaan yang sama walau ditanya ulang/dikoreksi user — kalau user meragukan angkanya, cek ulang field ini dulu (bukan langsung menyetujui koreksi user tanpa verifikasi), field ini sumber kebenarannya.
 - TERBAIK/TERBURUK/TERTINGGI/TERENDAH/TERBAWAH (semua topik): cek dulu field-nya DAFTAR LENGKAP atau TOP-N terpotong sebelum jawab versi terbalik dari sebuah ranking. DAFTAR LENGKAP ("ditampilkan"=="totalCustomer", atau "rankingKinerjaPersonel"/"zonaWilayahRelevan.wilayah") → aman baca dari BAWAH untuk "terendah". TOP-N SAJA ("topProduk"/"topProdukPerBulan"/"topWilayah"/"customerInsights.topByFrekuensi"/"topBySales" top-20, "piutangCustomerTertinggi.top10") → JANGAN ambil item terbawah lalu bilang "terendah" (itu cuma peringkat ke-10/20, bukan benar-benar terendah) — jujur soal keterbatasan ini, tawarkan alternatif kalau ada (mis. "stokTidakBergerakDanKurangLaku" untuk "produk paling tidak laku").
 - TERBARU/TERAKHIR (kejadian paling baru) vs TERLAMA/TERDAHULU (kejadian paling lama/dulu), di SEMUA topik bertanggal (transaksi, pembayaran, piutang, absensi, dst): data terkait SUDAH diurutkan dari yang PALING BARU duluan (lihat nama/catatan tiap field, mis. "transaksiCatatan" bilang "PALING BARU" = baris pertama, "pembayaranTerbaruDulu"/"pembayaranYangMelunasiTerbaruDulu" sudah urut dari nama field-nya) — "terbaru"/"terakhir" = baris PERTAMA, "terlama"/"terdahulu" = baris TERAKHIR dari daftar itu. Sebelum bilang sesuatu "terlama", cek dulu daftar itu LENGKAP atau cuma dipotong/dibatasi (sama seperti aturan TERBAIK/TERENDAH di atas) — kalau dipotong, jujur soal keterbatasan itu, jangan mengarang seolah baris terakhir yang tampil = benar-benar paling lama.
 - TERDEKAT/TERJAUH: pahami dari KONTEKS pertanyaan field mana yang relevan (bukan kata baku satu field khusus) — mis. "piutang jatuh tempo terdekat"/"paling baru menunggak" = "agingHari" TERKECIL di antara yang belum lunas, "piutang paling lama menunggak"/"terjauh dari lunas" = "agingHari" TERBESAR (lihat "piutangPerKategoriUmur"). Sistem ini TIDAK punya data jarak lokasi/geografis (koordinat, KM, dst) — kalau user memang menanyakan jarak lokasi/wilayah secara harfiah, katakan jujur data itu tidak tersedia, jangan mengarang angka jarak.
