@@ -953,21 +953,37 @@ function findStockMatches(message, allStock, history) {
   }
   const wantsReady = /ready|tersedia|stok|stock|\bada\b/.test(nMsgStock);
 
+  // EXACT code match first, checked in isolation — a real reported bug: "stock KSFO028" (a real,
+  // exact, valid code) also matched "KSFO020" via the levenshtein typo-tolerance a few lines down
+  // (edit-distance 1 apart), and the WRONG product/stock got shown. That tolerance makes sense for
+  // human names (a typo is still the same person) but is actively dangerous for systematically
+  // numbered codes, where a one-digit difference is almost always a DIFFERENT, equally-real
+  // product, not a typo of the one asked for. So: if any keyword exactly equals a real code,
+  // restrict to ONLY exact matches and skip the fuzzy/substring fallback below entirely.
   let matched = allStock.filter((p) => {
     const nKode = normCode(p.kode);
-    const nNama = normText(p.nama);
     return effectiveKeywords.some((kw) => {
-      const nkw = normText(kw);
       const ckw = normCode(kw);
-      if (ckw.length >= 3 && nKode.includes(ckw)) return true;
-      if (nkw.length >= 3 && nNama.includes(nkw)) return true;
-      if (ckw.length >= 4 && ckw.length <= 12 && levenshtein(ckw, nKode) <= 2) return true;
-      // Typo tolerance on the product NAME too (previously only the code got this) — mis. "splicr"
-      // still finds "Fusion Splicer ...".
-      if (nkw.length >= 4 && nNama.split(/\s+/).some((nw) => fuzzyWordEquals(nkw, nw))) return true;
-      return false;
+      return ckw.length >= 3 && nKode === ckw;
     });
   });
+  if (!matched.length) {
+    matched = allStock.filter((p) => {
+      const nKode = normCode(p.kode);
+      const nNama = normText(p.nama);
+      return effectiveKeywords.some((kw) => {
+        const nkw = normText(kw);
+        const ckw = normCode(kw);
+        if (ckw.length >= 3 && nKode.includes(ckw)) return true;
+        if (nkw.length >= 3 && nNama.includes(nkw)) return true;
+        if (ckw.length >= 4 && ckw.length <= 12 && levenshtein(ckw, nKode) <= 2) return true;
+        // Typo tolerance on the product NAME too (previously only the code got this) — mis. "splicr"
+        // still finds "Fusion Splicer ...".
+        if (nkw.length >= 4 && nNama.split(/\s+/).some((nw) => fuzzyWordEquals(nkw, nw))) return true;
+        return false;
+      });
+    });
+  }
 
   // Keywords existed but matched no real product — likely a follow-up referring back to whatever
   // was just discussed ("ada stok gak?") rather than a genuinely new, unmatched search. Retry
