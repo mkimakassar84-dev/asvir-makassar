@@ -237,6 +237,47 @@ const PERSONNEL_FAMILY = {
   PUTRI: { anak: ['Naura'] },
 };
 
+// Legacy/archival receivables carried over from 2015-2025, transcribed verbatim from the user's
+// "Piutang Lampau (2015-2025).xlsx" (30 customers, one column per year). This is a STATIC
+// historical snapshot — it is NOT synced from any sheet and does not change on its own, unlike
+// the live AR 2026 data (data:piutang). Kept separate on purpose: mixing it into the live AR
+// totals would silently inflate every current-year piutang figure across the whole dashboard.
+// Its real purpose is that these are FAR older than anything in AR 2026 (whose oldest is ~2026),
+// so any "piutang terlama" question must consider these first — see findPiutangLampau below.
+const PIUTANG_LAMPAU_TAHUN = [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025];
+const PIUTANG_LAMPAU = [
+  { kodePelanggan: 'MKS - 011', nama: 'FAIZAL RAHIM . H ( PT. RAHIM )', perTahun: { 2021: 3590250 }, totalPiutang: 3590250, tahunTerlama: 2021 },
+  { kodePelanggan: 'MKS - 13', nama: 'TOKO ASIA JAYA / RAHMAN PARU', perTahun: { 2017: 121920000 }, totalPiutang: 121920000, tahunTerlama: 2017 },
+  { kodePelanggan: 'MKS - 423', nama: 'CITRA TV KABEL', perTahun: { 2020: 4927500 }, totalPiutang: 4927500, tahunTerlama: 2020 },
+  { kodePelanggan: 'MKS - 471', nama: 'ANCA', perTahun: { 2023: 2860000 }, totalPiutang: 2860000, tahunTerlama: 2023 },
+  { kodePelanggan: 'MKS - 494', nama: 'ROSWATI.HJ / ILHAM', perTahun: { 2024: 11372550 }, totalPiutang: 11372550, tahunTerlama: 2024 },
+  { kodePelanggan: 'MKS-134', nama: 'RAHIM, H . AMRUN', perTahun: { 2021: 4780000 }, totalPiutang: 4780000, tahunTerlama: 2021 },
+  { kodePelanggan: 'MKS-141', nama: 'AHMAD SODIK', perTahun: { 2023: 12685350 }, totalPiutang: 12685350, tahunTerlama: 2023 },
+  { kodePelanggan: 'MKS-2071', nama: 'LA SAPA / DARWIS', perTahun: { 2017: 10616200 }, totalPiutang: 10616200, tahunTerlama: 2017 },
+  { kodePelanggan: 'MKS-2120', nama: 'LIDYA CELL', perTahun: { 2025: 11070000 }, totalPiutang: 11070000, tahunTerlama: 2025 },
+  { kodePelanggan: 'MKS-66', nama: 'AMRUN', perTahun: { 2022: 3660000, 2023: 4900000 }, totalPiutang: 8560000, tahunTerlama: 2022 },
+  { kodePelanggan: 'MKS0170', nama: 'ARI KURNIAWAN', perTahun: { 2015: 15680000 }, totalPiutang: 15680000, tahunTerlama: 2015 },
+  { kodePelanggan: 'MKS0285', nama: 'DARWIS BUGIS', perTahun: { 2015: 3040000, 2016: 28700000 }, totalPiutang: 31740000, tahunTerlama: 2015 },
+  { kodePelanggan: 'MKS0513', nama: 'IR. RUDI RANTEPASANG', perTahun: { 2016: 2500000 }, totalPiutang: 2500000, tahunTerlama: 2016 },
+  { kodePelanggan: 'MKS0535', nama: 'ISMAIL WASUPONDA', perTahun: { 2018: 2525000 }, totalPiutang: 2525000, tahunTerlama: 2018 },
+  { kodePelanggan: 'MKS0575', nama: 'JONNY ROBERT  / TK. TIMUR SENTOSA', perTahun: { 2017: 289511125, 2018: 38942500 }, totalPiutang: 328453625, tahunTerlama: 2017 },
+  { kodePelanggan: 'MKS0758', nama: 'OPI TORAJA', perTahun: { 2019: 17399000 }, totalPiutang: 17399000, tahunTerlama: 2019 },
+  { kodePelanggan: 'MKS1007', nama: 'TK. ANEKA JAYA PINRANG', perTahun: { 2015: 12252401, 2016: 23560000, 2017: 2887500 }, totalPiutang: 38699901, tahunTerlama: 2015 },
+  { kodePelanggan: 'MKS1059', nama: 'TK. TERATAI TOLI-TOLI', perTahun: { 2023: 5100000 }, totalPiutang: 5100000, tahunTerlama: 2023 },
+  { kodePelanggan: 'MKS1083', nama: 'TV KABEL SEVEN VISION', perTahun: { 2016: 2810000 }, totalPiutang: 2810000, tahunTerlama: 2016 },
+  { kodePelanggan: 'MKS1157', nama: 'YUSUF MANNI', perTahun: { 2021: 121972395.5, 2022: 107907375 }, totalPiutang: 229879770.5, tahunTerlama: 2021 },
+  { kodePelanggan: 'MKS1159', nama: 'YUSUF PALU', perTahun: { 2018: 4025000 }, totalPiutang: 4025000, tahunTerlama: 2018 },
+  { kodePelanggan: 'MKS1412', nama: 'REZA RANTEPAO', perTahun: { 2016: 3060000 }, totalPiutang: 3060000, tahunTerlama: 2016 },
+  { kodePelanggan: 'MKS1450', nama: 'PT. PINISI SULAWESI', perTahun: { 2016: 2120000 }, totalPiutang: 2120000, tahunTerlama: 2016 },
+  { kodePelanggan: 'MKS1581', nama: 'TK. ZIGMA', perTahun: { 2015: 6442500, 2016: 1750000, 2017: 60000 }, totalPiutang: 8252500, tahunTerlama: 2015 },
+  { kodePelanggan: 'MKS1771', nama: 'IRWIN DONGGALA', perTahun: { 2015: 3500000 }, totalPiutang: 3500000, tahunTerlama: 2015 },
+  { kodePelanggan: 'MKS1783', nama: 'MOCHTAR PATTY', perTahun: { 2017: 17033000 }, totalPiutang: 17033000, tahunTerlama: 2017 },
+  { kodePelanggan: 'MKS18', nama: 'EDY', perTahun: { 2025: 2100000 }, totalPiutang: 2100000, tahunTerlama: 2025 },
+  { kodePelanggan: 'MKS1808', nama: 'HIKMAH AHMAD / KARYA BERSAUDARA', perTahun: { 2023: 8579500 }, totalPiutang: 8579500, tahunTerlama: 2023 },
+  { kodePelanggan: 'MKS1844', nama: 'TOKO SINAR MAJU PALU', perTahun: { 2016: 7280000 }, totalPiutang: 7280000, tahunTerlama: 2016 },
+  { kodePelanggan: 'MKS241', nama: 'ICHSAN KENDARI', perTahun: { 2025: 1900000 }, totalPiutang: 1900000, tahunTerlama: 2025 },
+];
+
 // Default (factory/vendor) login credentials for ONU devices, keyed by stock code — provided
 // directly by the user as internal reference data, not derived from any sheet. Never invent
 // credentials for an ONU code that isn't in this list; say the code isn't in the reference list
@@ -1724,6 +1765,64 @@ function agingBucketOf(days) {
 // age-category bucket. Distinct from "piutang.byKategori" (totals only, no names) and from
 // findPiutangByCustomer (single named customer) — this was the missing piece for "who's IN each
 // bucket", not just how much each bucket totals.
+// Legacy 2015-2025 receivables lookup (see PIUTANG_LAMPAU above). Fires on explicitly-historical
+// wording, on any mention of a year in that range, on a named customer from that list, OR on a
+// bare "piutang terlama"-type question — that last case matters most: without it, "piutang paling
+// lama" would only ever see AR 2026 and answer with a ~200-day-old invoice while genuinely
+// decade-old debt sits in this list unmentioned.
+function findPiutangLampau(message) {
+  const nMsg = normText(message);
+  if (!/piutang|tagihan|tunggak|menunggak|utang|hutang/.test(nMsg)) return null;
+
+  const mentionsHistoris = /lampau|lama sekali|masa lalu|tahun lalu|bertahun|legacy|warisan|lawas|tahun-tahun|sebelum 2026|2015|2016|2017|2018|2019|2020|2021|2022|2023|2024|2025/.test(nMsg);
+  const wantsOldest = new RegExp(SUPERLATIVE_HIGH).test(nMsg) || /terlama|paling lama|tertua|paling tua|paling awal/.test(nMsg);
+  const msgWords = nameWordsOf(message);
+  const namedHit = PIUTANG_LAMPAU.filter((e) => e.nama.length >= 4 && customerNameFuzzyMatch(msgWords, e.nama));
+  if (!mentionsHistoris && !wantsOldest && !namedHit.length) return null;
+
+  // A specific year mentioned narrows the list to just that year's outstanding entries.
+  const yearMatch = nMsg.match(/\b(20(?:1[5-9]|2[0-5]))\b/);
+  if (yearMatch) {
+    const tahun = Number(yearMatch[1]);
+    const items = PIUTANG_LAMPAU.filter((e) => e.perTahun[tahun])
+      .map((e) => ({ kodePelanggan: e.kodePelanggan, nama: e.nama, nilai: e.perTahun[tahun] }))
+      .sort((a, b) => b.nilai - a.nilai);
+    return {
+      mode: 'perTahun',
+      tahun,
+      jumlahPelanggan: items.length,
+      totalNilai: items.reduce((s, x) => s + x.nilai, 0),
+      daftar: items,
+      catatan: `Piutang lampau tahun ${tahun} (arsip 2015-2025, TERPISAH dari piutang AR 2026 yang berjalan — JANGAN dijumlahkan dengan angka piutang 2026).`,
+    };
+  }
+
+  if (namedHit.length) {
+    return {
+      mode: 'perPelanggan',
+      daftar: namedHit.map((e) => ({ kodePelanggan: e.kodePelanggan, nama: e.nama, perTahun: e.perTahun, totalPiutang: e.totalPiutang, tahunTerlama: e.tahunTerlama })),
+      catatan: 'Piutang LAMPAU (arsip 2015-2025) untuk pelanggan ini — TERPISAH dari piutang AR 2026 berjalan, jangan dijumlahkan dengan angka 2026.',
+    };
+  }
+
+  // Default: the whole archive, oldest-year first (what "piutang terlama" actually needs).
+  const sorted = [...PIUTANG_LAMPAU].sort((a, b) => a.tahunTerlama - b.tahunTerlama || b.totalPiutang - a.totalPiutang);
+  const byYear = {};
+  for (const e of PIUTANG_LAMPAU) {
+    for (const [th, val] of Object.entries(e.perTahun)) byYear[th] = (byYear[th] || 0) + val;
+  }
+  return {
+    mode: 'ringkasan',
+    rentangTahun: `${PIUTANG_LAMPAU_TAHUN[0]}-${PIUTANG_LAMPAU_TAHUN[PIUTANG_LAMPAU_TAHUN.length - 1]}`,
+    tahunPalingLama: sorted[0].tahunTerlama,
+    totalSeluruhnya: PIUTANG_LAMPAU.reduce((s, e) => s + e.totalPiutang, 0),
+    jumlahPelanggan: PIUTANG_LAMPAU.length,
+    totalPerTahun: byYear,
+    daftarUrutTerlama: sorted.map((e) => ({ kodePelanggan: e.kodePelanggan, nama: e.nama, tahunTerlama: e.tahunTerlama, perTahun: e.perTahun, totalPiutang: e.totalPiutang })),
+    catatan: 'Arsip piutang lampau 2015-2025, sudah diurutkan dari TAHUN PALING LAMA duluan. Ini data historis STATIS dan TERPISAH dari piutang AR 2026 yang berjalan — JANGAN dijumlahkan dengan total piutang 2026, dan JANGAN sebut ini sebagai piutang tahun berjalan.',
+  };
+}
+
 function findPiutangByKategoriUmur(message, piutangDetail) {
   if (!piutangDetail || !piutangDetail.length) return null;
   const nMsg = normText(message);
@@ -3109,6 +3208,7 @@ async function handleChat(request, env) {
   }
   const topPiutangMatch = findTopPiutangCustomers(message, piutangData?.detail);
   const piutangKategoriMatch = findPiutangByKategoriUmur(message, piutangData?.detail);
+  const piutangLampauMatch = findPiutangLampau(message);
   const piutangCompanyMatch = findPiutangByCompany(message, piutangData?.detail);
   const stockValueMatch = findStockValueSummary(message, allStock);
   const restockMatch = findRestockCandidates(message, topProductsRaw ? JSON.parse(topProductsRaw).byQty : null, allStock);
@@ -3178,6 +3278,7 @@ async function handleChat(request, env) {
     piutangRelevan: piutangMatch,
     piutangCustomerTertinggi: topPiutangMatch,
     piutangPerKategoriUmur: piutangKategoriMatch,
+    piutangLampau2015sd2025: piutangLampauMatch,
     piutangPerCompany: piutangCompanyMatch,
     nilaiStokRelevan: stockValueMatch,
     saranRestockProdukTerlaris: restockMatch,
@@ -3251,6 +3352,7 @@ Aturan:
 - Piutang (belum dibayar) customer tertentu → WAJIB "piutangRelevan" (rincian per invoice); field umum "piutang" cuma total per kategori umur GABUNGAN SELURUH CABANG, tak ada rincian per customer — JANGAN PERNAH pakai angka dari "piutang" untuk pertanyaan piutang SATU customer, walau "piutangRelevan" null/kosong (itu berarti customer itu tidak punya piutang tercatat, BUKAN alasan menyamarkan angka total cabang seolah itu piutang orang tersebut — kalau "piutangRelevan" null/kosong, katakan jujur "tidak ada piutang tercatat", titik, jangan tambal pakai field lain). Beda dari "pembayaranRelevan" (sudah bayar). "piutangRelevan"/"pembayaranRelevan" berisi "customerCandidatesAmbiguous" (bukan "customer"/"invoices" seperti biasa) → nama yang ditanya cocok ke BEBERAPA customer nyata sekaligus, sebutkan semua nama di "customerCandidatesAmbiguous" dan tanya balik yang mana dimaksud, JANGAN pilih satu sendiri. User menjawab follow-up MEMILIH salah satu nama (termasuk menolak nama lain, mis. "X bukan Y") → pertanyaan itu SUDAH terjawab lewat "piutangRelevan"/"pembayaranRelevan" yang baru (sistem sudah paham penolakannya), TINGGAL jawab pakai data customer yang dipilih user — jangan tanya ulang atau bingung lagi.
 - "Customer piutang tertinggi/terbesar" → "piutangCustomerTertinggi" (top10, sudah urut). Null padahal ditanya → kata kunci tak terdeteksi, minta user pertegas.
 - KATEGORI UMUR PIUTANG (AGING) BAKU, WAJIB konsisten: "0-30 Hari", "30-45 Hari", "45-60 Hari", "> 60 Hari" (definisi resmi dashboard dari kolom Aging/hari — BUKAN kategori lama "14-30"/"0-13" yang sudah tak dipakai). Kategori tertentu, ambang bebas (mis. "di atas 90 hari"), ATAU superlatif tanpa angka (mis. "piutang paling lama menunggak"/"terlama"/"terdekat jatuh tempo") → "piutangPerKategoriUmur" ("daftar" = customer+noFaktur+nilaiSisa+agingHari+tanggal, beda dari "piutang.byKategori" yang cuma total tanpa nama) — sebutkan nama customer, bukan cuma total. "kategori" di hasil = salah satu 4 kategori baku, ambang bebas, atau label superlatif ("Paling lama menunggak"/"Paling dekat jatuh tempo").
+- PIUTANG LAMPAU 2015-2025 → "piutangLampau2015sd2025" (arsip historis 30 pelanggan, TERPISAH dari AR 2026 berjalan). ATURAN PALING PENTING: pertanyaan "piutang TERLAMA"/"paling lama"/"tertua"/"paling awal" WAJIB dijawab dari field INI dulu kalau isinya ada — piutang di sini umurnya BERTAHUN-TAHUN (mulai 2015), jadi SELALU jauh lebih lama daripada apa pun di "piutangPerKategoriUmur" (AR 2026, paling lama cuma ratusan hari). JANGAN jawab "terlama" pakai data 2026 kalau field ini terisi. Baca "mode": "ringkasan" → pakai "tahunPalingLama" + "daftarUrutTerlama" (SUDAH urut dari tahun paling lama duluan, sebutkan nama + tahunnya). "perTahun" → satu tahun spesifik yang ditanya ("tahun"+"daftar"+"totalNilai"). "perPelanggan" → piutang lampau satu/beberapa pelanggan yang namanya disebut. JANGAN PERNAH menjumlahkan angka field ini dengan total piutang AR 2026 (dua periode beda, hasilnya menyesatkan) — sebutkan terpisah dan jelaskan ini piutang lama/warisan tahun sebelumnya.
 - Pertanyaan piutang MENYEBUT NAMA/NOMOR FAKTUR CUSTOMER SPESIFIK ("customer dengan piutang terbaru/terlama/tertinggi", "piutang si X", dll) → jawaban itu WAJIB berasal dari salah satu field piutang ("piutangRelevan"/"piutangCustomerTertinggi"/"piutangPerKategoriUmur"/"piutangPerCompany") — TIDAK PERNAH mengarang nama customer, nomor faktur, tanggal, atau nominal sendiri walau terdengar masuk akal. Field yang relevan null/kosong SEMUA → jujur bilang "belum bisa saya jawab dari data yang ada" dan berhenti di situ, JANGAN mengisi kekosongan dengan detail yang kelihatan meyakinkan tapi sebenarnya karangan — ini pelanggaran serius, bukan sekadar kurang lengkap.
 - Piutang per company MKI/CFN (mis. "piutang CFN", "piutang MKI berapa") → JAWAB LANGSUNG dari "piutangPerCompany" SAJA, mulai dari kalimat PERTAMA — WAJIB sebutkan company diturunkan dari pola nomor faktur (bukan field asli), sesuai catatannya. JANGAN PERNAH sebut/tampilkan angka dari field "piutang" (total/byKategori GABUNGAN MKI+CFN) di jawaban ini SAMA SEKALI, bahkan sebagai pembuka/perbandingan/konteks — user tanya SATU company, bukan gabungan, jangan bertele-tele ke angka gabungan dulu sebelum ke angka yang diminta. SEMUA angka di jawaban (total, jumlah invoice, breakdown aging) WAJIB dari "piutangPerCompany" saja: "totalPiutang"+"jumlahInvoice"=total company itu, "byKategoriUmur"=breakdown aging KHUSUS company itu (bukan dari "piutang.byKategori"). Minta LIST → field "daftar" (per invoice: customer/noFaktur/nilaiSisa/tanggal/kategori), sebutkan nama.
 - "Nilai stok"/"nilai rupiah stok" (total/per company) → "nilaiStokRelevan" ("totalNilaiRupiah" = harga×unit, company-aware). "catatan" ada kode tanpa harga → sebutkan totalnya belum 100% lengkap. Null kalau tidak sebut "nilai" DAN "stok" bersamaan.
