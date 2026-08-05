@@ -1569,6 +1569,166 @@ function bestCustomerNameMatches(msgWords, customerNames, rawMessage) {
 // Matches transactions by (in priority order): exact date mention, product code mention (for
 // "siapa pembeli terakhir KODE", "kapan KODE terakhir keluar"), or customer name (fuzzy, handles
 // partial names). Results are sorted newest-first so "terakhir/last" questions read the top row.
+// Invoice numbers as written in the sheets take several shapes: "INV/MKS/2026/I/001",
+// "INV/MKS/2026/I/F-141", "INV-CFN/2026/VI/027", "R-MKS/2026/I/001" (retur), and at least one
+// real row with a doubled slash ("INV/MKS/2026/VII//033"). Comparing on alphanumerics only makes
+// all of that punctuation irrelevant, which is also exactly what lets a PARTIAL query work:
+// "CFN/2026/VII/010" -> "CFN2026VII010" is a substring of "INVCFN2026VII010".
+function normInvoiceNo(s) {
+  return String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+// "INV-CFN/2026/VII/010" / "CFN/2026/VII/010" / "F-141" — full picture for ONE invoice: what was
+// bought (every product line), and whether it's been paid off. Deliberately returns an explicit
+// "ditemukan: false" instead of null when a genuine invoice-looking query matches nothing, because
+// a null field is what repeatedly led Gemini to invent a plausible answer earlier this session.
+function findInvoiceDetail(message, allTransactions, paymentDetail, piutangDetail, allStock) {
+  if (!allTransactions || !allTransactions.length) return null;
+  const nMsg = normText(message);
+  // Gate: either the message talks about invoices, or it carries a token punctuated like one.
+  if (!/\binvoice\b|\bfaktur\b|\bnota\b|\binv\b|\//.test(nMsg)) return null;
+
+  const invoiceSet = new Set();
+  for (const t of allTransactions) if (t.invoice) invoiceSet.add(t.invoice);
+  for (const p of paymentDetail || []) if (p.noFaktur) invoiceSet.add(p.noFaktur);
+  for (const p of piutangDetail || []) if (p.noFaktur) invoiceSet.add(p.noFaktur);
+
+  // A query needs >=6 alphanumerics AND a digit before it's allowed to match, so ordinary words
+  // ("invoice", "faktur") and bare fragments ("010") can't sweep in half the ledger.
+  const queries = String(message)
+    .split(/\s+/)
+    .map((t) => t.replace(/[.,;:?!]+$/, ''))
+    .map((raw) => ({ raw, q: normInvoiceNo(raw) }))
+    .filter((x) => x.q.length >= 6 && /\d/.test(x.q));
+  if (!queries.length) return null;
+
+  // Every MKI invoice number is actually written with "MKS" (Makassar), never "MKI" — confirmed
+  // against the live data: 2415 invoices contain MKS, zero contain MKI. But the team naturally
+  // thinks and types "MKI" because that's the company name, so a literal search would find nothing.
+  // Treat the two as interchangeable in the query.
+  const queryVariants = (q) => {
+    const out = new Set([q]);
+    if (q.includes('MKI')) out.add(q.replace(/MKI/g, 'MKS'));
+    if (q.includes('MKS')) out.add(q.replace(/MKS/g, 'MKI'));
+    return [...out];
+  };
+
+  let query = null;
+  let matches = [];
+  for (const { raw, q } of queries) {
+    const vars = queryVariants(q);
+    // A query typed with a trailing separator ("MKS/2026/VI/F-") is a prefix search for one
+    // NUMBERED series, so what follows must be a digit. Without this, stripping punctuation makes
+    // "F-" and "FP-" indistinguishable and an "F-" search silently swallows the FP- invoices too.
+    const seriesPrefix = /[-/]$/.test(raw);
+    const hit = [...invoiceSet].filter((inv) => {
+      const n = normInvoiceNo(inv);
+      return vars.some((v) => {
+        const idx = n.indexOf(v);
+        if (idx < 0) return false;
+        if (!seriesPrefix) return true;
+        const next = n[idx + v.length];
+        return next !== undefined && /\d/.test(next);
+      });
+    });
+    if (hit.length) { query = q; matches = hit; break; }
+    if (!query) query = q; // remember the first plausible query for the not-found message
+  }
+
+  if (!matches.length) {
+    return {
+      ditemukan: false,
+      dicari: query,
+      catatan: 'Nomor invoice ini TIDAK ADA di data transaksi, pembayaran, maupun piutang. Katakan terus terang tidak ditemukan — JANGAN mengarang isi/nilai/customer invoice ini, dan JANGAN menyodorkan invoice lain yang mirip seolah itu yang dimaksud.',
+    };
+  }
+  // Several matches is usually INTENTIONAL, not ambiguity: searching a prefix like
+  // "MKS/2026/VI/F-" means "show me all the F- invoices from June" (147 of them, in real data).
+  // So return a genuinely useful summary+list rather than only asking which one they meant.
+  if (matches.length > 1) {
+    const ringkas = matches
+      .map((inv) => {
+        const lines = allTransactions.filter((t) => t.invoice === inv);
+        const sisa = (piutangDetail || []).filter((p) => p.noFaktur === inv).reduce((s, p) => s + p.nilaiSisa, 0);
+        const head = lines[0] || {};
+        return {
+          noInvoice: inv,
+          tanggal: head.tanggal || null,
+          customer: head.customer || null,
+          totalNilai: lines.reduce((s, l) => s + l.amount, 0),
+          statusPelunasan: sisa > 0 ? 'BELUM LUNAS' : 'LUNAS',
+          sisaPiutang: sisa,
+        };
+      })
+      .sort((a, b) => {
+        const da = parseFlexibleDate(a.tanggal);
+        const db = parseFlexibleDate(b.tanggal);
+        return (db ? db.getTime() : 0) - (da ? da.getTime() : 0);
+      });
+    const BATAS = 25;
+    return {
+      ditemukan: true,
+      modeDaftar: true,
+      dicari: query,
+      jumlahCocok: matches.length,
+      totalNilaiSemua: ringkas.reduce((s, x) => s + x.totalNilai, 0),
+      totalSisaPiutangSemua: ringkas.reduce((s, x) => s + x.sisaPiutang, 0),
+      daftar: ringkas.slice(0, BATAS),
+      catatan:
+        `Potongan nomor "${query}" cocok ke ${matches.length} invoice (urut TERBARU dulu).` +
+        (matches.length > BATAS ? ` Ditampilkan ${BATAS} teratas saja — sebutkan bahwa masih ada ${matches.length - BATAS} lainnya.` : '') +
+        ' Kalau user tampaknya mencari SATU invoice tertentu, tawarkan kandidatnya dan minta pertegas; kalau memang mencari kelompok invoice (mis. semua "F-" bulan itu), langsung sajikan daftarnya. JANGAN menjumlahkan ulang manual, "totalNilaiSemua"/"totalSisaPiutangSemua" sudah dihitung.',
+    };
+  }
+
+  const noInvoice = matches[0];
+  const lines = allTransactions.filter((t) => t.invoice === noInvoice);
+  const namaByKode = {};
+  for (const p of allStock || []) if (p.kode) namaByKode[p.kode] = p.nama;
+
+  const totalNilai = lines.reduce((s, l) => s + l.amount, 0);
+  const pays = (paymentDetail || []).filter((p) => p.noFaktur === noInvoice);
+  const totalDibayar = pays.reduce((s, p) => s + p.amount, 0);
+  const sisaRows = (piutangDetail || []).filter((p) => p.noFaktur === noInvoice);
+  const sisaPiutang = sisaRows.reduce((s, p) => s + p.nilaiSisa, 0);
+  const head = lines[0] || {};
+
+  const catatan = [];
+  if (!lines.length) catatan.push('Nomor ini tidak ada di data transaksi (hanya muncul di data pembayaran/piutang) — jadi rincian barangnya memang tidak tersedia, jangan dikarang.');
+  if (sisaRows.length) catatan.push(`BELUM LUNAS — masih ada sisa piutang ${sisaPiutang}.`);
+  else if (pays.length) catatan.push('LUNAS — tidak ada sisa piutang tercatat untuk invoice ini.');
+  else catatan.push('Tidak ada catatan pembayaran DAN tidak ada sisa piutang untuk invoice ini — sampaikan apa adanya, jangan menyimpulkan sendiri sudah/belum dibayar.');
+  // Real data quirk: at least one invoice has payments totalling MORE than the invoice value.
+  // Surface it rather than let Gemini quietly "fix" the arithmetic into something tidier.
+  if (pays.length && lines.length && totalDibayar !== totalNilai) {
+    catatan.push(`Catatan: total pembayaran (${totalDibayar}) TIDAK sama dengan nilai transaksi (${totalNilai}) — sampaikan apa adanya sebagai fakta data, jangan diperbaiki/dibulatkan sendiri.`);
+  }
+
+  return {
+    ditemukan: true,
+    noInvoice,
+    tanggal: head.tanggal || null,
+    customer: head.customer || (pays[0] && pays[0].customer) || (sisaRows[0] && sisaRows[0].customer) || null,
+    company: head.company || (pays[0] && pays[0].company) || null,
+    lokasi: head.lokasi || null,
+    ekspedisi: head.ekspedisi || null,
+    statusKirim: head.status || null,
+    stage: head.stage || null,
+    tanggalTerkirim: head.tglTerkirim || null,
+    isRetur: !!head.isRetur,
+    barang: lines.map((l) => ({ kode: l.kode, nama: namaByKode[l.kode] || null, qty: l.qty, amount: l.amount })),
+    jumlahBarisBarang: lines.length,
+    totalQty: lines.reduce((s, l) => s + l.qty, 0),
+    totalNilaiTransaksi: totalNilai,
+    statusPelunasan: sisaRows.length ? 'BELUM LUNAS' : (pays.length ? 'LUNAS' : 'TIDAK ADA DATA PEMBAYARAN'),
+    sisaPiutang,
+    totalDibayar,
+    jumlahPembayaran: pays.length,
+    riwayatPembayaran: pays.map((p) => ({ tanggal: p.tanggal, jumlah: p.amount })),
+    catatan: catatan.join(' '),
+  };
+}
+
 function findTransactionMatches(message, allTransactions) {
   if (!allTransactions.length) return { items: [], note: '' };
   const rangeMention = extractDateRangeMention(message);
@@ -3250,6 +3410,7 @@ async function handleChat(request, env) {
   const revenueData = revenueRaw ? JSON.parse(revenueRaw) : null;
   const perfData = perfRaw ? JSON.parse(perfRaw) : null;
   const pencapaianMatch = findPencapaianRingkasan(message, perfData?.performance, revenueData?.monthly, perfData?.totalSales2026, revenueData?.total2026, allTransactions, revenueData?.detail);
+  const invoiceDetailMatch = findInvoiceDetail(message, allTransactions, revenueData?.detail, piutangData?.detail, allStock);
   const paymentMatch = findPaymentsByCustomer(message, revenueData?.detail, piutangData?.detail);
   const paymentByDateMatch = findPaymentsByDate(message, revenueData?.detail, piutangData?.detail);
   const poMatch = findPoGudangMatches(message, poGudangData?.items);
@@ -3322,6 +3483,7 @@ async function handleChat(request, env) {
     transaksiRelevan: txMatch.items,
     transaksiCatatan: txMatch.note,
     ringkasanTanggalTransaksi: txMatch.ringkasanTanggal,
+    detailInvoice: invoiceDetailMatch,
     returRelevan: returMatch,
     wilayahEkspedisiRelevan: wilayahMatch,
     topProduk: wantsTopProduk && topProductsRaw ? enrichTopProdukWithNama(JSON.parse(topProductsRaw), allStock) : null,
@@ -3388,6 +3550,7 @@ Aturan:
 - Stok/ketersediaan → "stokRelevan", jawab SINGKAT (stok per company+total, tanpa turnover kecuali diminta). "stokCatatan" jelaskan filter (untuk konteksmu, tak perlu disebut) — "dilanjutkan dari kode X" berarti follow-up dari histori, pakai percaya diri. "stokRelevan" berisi item TAPI stokTotal-nya 0 → itu artinya kode/produknya ADA di sistem, HANYA stoknya sedang kosong — bilang "stoknya 0/kosong", JANGAN bilang "belum tercatat di sistem"/"kode belum ada" (itu klaim beda dan salah, kode-nya ADA). "stokRelevan" itu sendiri KOSONG/null (array tidak berisi apa pun) → BARU itu artinya kode yang ditanya benar-benar tidak ditemukan di data — jujur bilang tidak ditemukan, jangan mengarang stok/gudang/satuan, dan JANGAN PERNAH menyebutkan produk/kode LAIN yang mirip seolah itu jawabannya (kode barang bernomor urut sistematis — beda satu digit = produk BEDA, bukan typo).
 - "Kode barang" dan "kode produk" artinya SAMA (field "kode" di data stok) — jangan bedakan istilahnya. Tanya kode berdasar KATEGORI/SPEK angka (mis. "kode OLT 2 PON", "kode kabel 1 core", "OLT 3 PON") — WAJIB 2 LANGKAH BERURUTAN, jangan langsung jawab: LANGKAH 1) baca satu-satu nama tiap item di "stokRelevan", cari yang ADA KATA PERSIS "3 PON" (atau "3PON") tertulis di namanya — angka+satuan HARUS keduanya cocok persis, "3 PORT"/"3 SFP"/spek lain dengan angka sama TIDAK DIHITUNG cocok (beda satuan = beda spek, WALAU sama-sama OLT dan sama-sama ada angka 3). LANGKAH 2) kalau LANGKAH 1 ketemu → sebut kodenya. Kalau LANGKAH 1 TIDAK ketemu satu pun → WAJIB jawab "OLT 3 PON tidak ada di stok kami" dulu SEBAGAI KALIMAT PERTAMA, baru boleh tawarkan varian PON lain yang BENAR ada sebagai pilihan terpisah (mis. "2 PON: OLTG020" atau "4 PON: OLTG022") — TIDAK PERNAH menyebut kode dengan spek berbeda (mis. OLTG026 "3 PORT") seolah itu jawaban dari "3 PON", bahkan sebagai "mungkin maksudmu ini" — kalau mau menawarkan alternatif ejaan/spek lain, itu HARUS eksplisit dikatakan sebagai spek BEDA, bukan varian dari yang ditanya.
 - Harga/nilai barang → field "harga" di "stokRelevan" (harga satuan Rupiah); "total nilai stok" = harga × stokTotal/stokMKI/stokCFN, tunjukkan cara hitung singkat. "harga" tidak ada di data lain — kalau butuh tapi item tak ada di stokRelevan, jujur tidak tersedia.
+- NOMOR INVOICE/FAKTUR disebut (lengkap atau sepotong, mis. "INV-CFN/2026/VII/010", "CFN/2026/VII/010", "MKS/2026/VI/010", "MKS/2026/VI/F-", "MKS/2026/VI/FP-", "F-141") → WAJIB pakai "detailInvoice", JANGAN pakai field lain untuk ini. Catatan: nomor invoice company MKI ditulis "MKS" (mis. "INV/MKS/2026/VI/010"), sedangkan CFN ditulis "INV-CFN/..." — pencarian sudah menangani keduanya, jangan koreksi/ubah nomor yang diketik user. Cara baca hasilnya: "ditemukan":false → nomor itu MEMANG tidak ada, katakan terus terang, JANGAN mengarang isinya dan JANGAN menyodorkan invoice lain yang mirip. "modeDaftar":true → potongan nomor cocok ke BANYAK invoice (biasanya user memang mencari sekelompok invoice, mis. semua "F-" bulan itu): sajikan "daftar" (sudah urut terbaru dulu) beserta "jumlahCocok"/"totalNilaiSemua"/"totalSisaPiutangSemua" yang SUDAH dihitung. Selain itu = SATU invoice, sajikan LENGKAP: tanggal, customer, company, lokasi+ekspedisi, "barang" (SEBUTKAN tiap kode produk + namanya + qty + nilainya, ini yang paling sering ditanya), "totalNilaiTransaksi", lalu status pelunasannya — "statusPelunasan" LUNAS/BELUM LUNAS, "sisaPiutang", "totalDibayar", dan "riwayatPembayaran" (tanggal + jumlah tiap kali bayar, sebutkan kalau dicicil). SELALU baca "catatan" dan sampaikan isinya kalau ada peringatan di situ (mis. total pembayaran tidak sama dengan nilai transaksi) — jangan diperbaiki/dibulatkan sendiri.
 - Tanggal/kode/customer spesifik → "transaksiRelevan" (field "ekspedisi"/"company" tiap baris = cara kirim). "transaksiCatatan" bilang "PALING BARU" → baris PERTAMA = transaksi terakhir. "isRetur" true → sebutkan sebagai retur, bukan penjualan normal. "Siapa (yang) belanja/berbelanja pada tanggal X" → JANGAN cuma sebut daftar NAMA customer — WAJIB rinci tiap transaksi dari "transaksiRelevan": nama customer, nomor invoice ("invoice"), kode produk ("kode"), qty, dan amount (kalau baris banyak, boleh kelompokkan per customer/invoice, tapi detail invoice+kode produknya tetap harus ada, jangan cuma nama).
 - "Nama X cocok ke BEBERAPA customer berbeda" di "transaksiCatatan" (atau catatan sejenis di field lain) → JANGAN pilih satu sendiri, tanya balik ke user sebutkan semua nama kandidat yang ada di catatan itu supaya user bisa pilih mana yang dimaksud.
 - INVOICE/TRANSAKSI = INVOICE UNIK bukan jumlah baris, RETUR TIDAK DIHITUNG: satu invoice bisa banyak baris (kode beda, invoice sama) — hitung nilai UNIK di field "invoice", jangan hitung baris array (dobel-hitung produk dalam 1 invoice). Hitung sendiri dari "transaksiRelevan" → buang dulu baris "isRetur":true (retur = pembalikan, bukan transaksi baru). Field yang SUDAH invoice-unik-tanpa-retur (pakai langsung): "performa"/"targetPerformaHarianBulanan" (transaksi/invoiceUnik/bulan), "deliveryOverview" (sameDayCount/cutOffCount/handCarryCount/pihakKetigaCount/byEkspedisi), "wilayahEkspedisiRelevan"/topWilayah (jumlahTransaksi/wilayah), "customerInsights"/"daftarNamaCustomerPerBucket" (invoiceUnik/customer). Pertanyaan retur sendiri → JANGAN pakai field ini (sudah exclude retur), pakai "returRelevan". "amount"/"qty" produk (mis. "topProduk") TETAP per baris (memang benar per unit produk).
