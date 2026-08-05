@@ -2196,6 +2196,63 @@ function findPaymentsByCustomer(message, paymentDetail, piutangDetail) {
 // consistent with what "Sales"/"Revenue" questions report separately. No month mentioned →
 // defaults to the whole year to date (matches the dashboard's own "Total Sales 2026 (s.d. hari
 // ini)" convention) rather than returning nothing.
+// "Sales MKI bulan ini", "revenue CFN hari ini", "invoice MKI kemarin" — one company, any period.
+// Both source datasets already carry a real "company" field per row, so this is a straight filter
+// rather than anything inferred. Piutang is deliberately NOT included: it's a running balance, not
+// a flow you can sum over a period, and "piutangPerCompany" already answers it correctly.
+function findCompanyPeriodBreakdown(message, allTransactions, revenueDetail) {
+  if (!allTransactions || !allTransactions.length) return null;
+  const nMsg = normText(message);
+  const company = /\bmki\b/.test(nMsg) ? 'MKI' : /\bcfn\b/.test(nMsg) ? 'CFN' : null;
+  if (!company) return null;
+  // Only for flow measures — a bare "piutang CFN" must stay with piutangPerCompany.
+  if (!/\bsales\b|penjualan|jualan|omzet|omset|\brevenue\b|pendapatan|pelunasan|dibayar|\binvoice\b|faktur|transaksi|\bqty\b|kuantitas|unit/.test(nMsg)) return null;
+
+  // Period, most specific first: explicit range, then a single date (incl. "hari ini"/"kemarin"),
+  // then a month, then a year, else year-to-date.
+  const range = extractDateRangeMention(message);
+  const tanggal = !range ? extractAnyDateMention(message) : null;
+  const bulan = !range && !tanggal ? extractMonthMention(message) : null;
+  const tahunIni = nowMakassar().getFullYear();
+  let periode;
+  let cocokTanggal;
+  if (range) {
+    periode = `${range.startDay}-${range.endDay}/${range.month}/${range.year}`;
+    cocokTanggal = (d) => d && d.getFullYear() === range.year && d.getMonth() + 1 === range.month && d.getDate() >= range.startDay && d.getDate() <= range.endDay;
+  } else if (tanggal) {
+    periode = `${tanggal.day}/${tanggal.month}/${tanggal.year}`;
+    cocokTanggal = (d) => d && d.getFullYear() === tanggal.year && d.getMonth() + 1 === tanggal.month && d.getDate() === tanggal.day;
+  } else if (bulan) {
+    periode = `${bulan.month}/${bulan.year} (satu bulan penuh)`;
+    cocokTanggal = (d) => d && d.getFullYear() === bulan.year && d.getMonth() + 1 === bulan.month;
+  } else {
+    periode = `${tahunIni} (sepanjang tahun s.d. hari ini)`;
+    cocokTanggal = (d) => d && d.getFullYear() === tahunIni;
+  }
+
+  const txRows = allTransactions.filter(
+    (t) => (t.company || '').trim().toUpperCase() === company && cocokTanggal(parseFlexibleDate(t.tanggal))
+  );
+  const revRows = (revenueDetail || []).filter(
+    (r) => (r.company || '').trim().toUpperCase() === company && cocokTanggal(parseFlexibleDate(r.tanggal))
+  );
+
+  return {
+    company,
+    periode,
+    sales: txRows.reduce((s, t) => s + t.amount, 0),
+    invoiceUnik: new Set(txRows.filter((t) => !t.isRetur).map((t) => t.invoice)).size,
+    totalQty: txRows.reduce((s, t) => s + t.qty, 0),
+    jumlahBarisTransaksi: txRows.length,
+    revenue: revRows.reduce((s, r) => s + r.amount, 0),
+    jumlahPembayaran: revRows.length,
+    catatan:
+      `Semua angka SUDAH khusus company ${company} untuk periode "${periode}" dan sudah dijumlahkan — JANGAN dihitung ulang manual, dan JANGAN dicampur dengan angka gabungan MKI+CFN dari field lain. ` +
+      '"sales"/"invoiceUnik" dari data penjualan (invoiceUnik sudah exclude retur), "revenue" dari data pelunasan — dua sumber berbeda, wajar kalau angkanya tidak sama. ' +
+      'Untuk PIUTANG per company JANGAN pakai field ini, pakai "piutangPerCompany" (piutang itu saldo berjalan, bukan angka periode).',
+  };
+}
+
 // "Sisa target" — how much is still missing, for all three tracked measures at once (Sales,
 // Revenue, Invoice Unik). Scope follows the question: mention a year and it answers year-to-date
 // against the full-year target; otherwise it answers for a month (the one named, else the current
@@ -3473,6 +3530,7 @@ async function handleChat(request, env) {
   const perfData = perfRaw ? JSON.parse(perfRaw) : null;
   const pencapaianMatch = findPencapaianRingkasan(message, perfData?.performance, revenueData?.monthly, perfData?.totalSales2026, revenueData?.total2026, allTransactions, revenueData?.detail);
   const sisaTargetMatch = findSisaTarget(message, yoyRaw ? JSON.parse(yoyRaw) : null, dailyPerformanceRaw ? JSON.parse(dailyPerformanceRaw) : null);
+  const companyBreakdownMatch = findCompanyPeriodBreakdown(message, allTransactions, revenueData?.detail);
   const invoiceDetailMatch = findInvoiceDetail(message, allTransactions, revenueData?.detail, piutangData?.detail, allStock);
   const paymentMatch = findPaymentsByCustomer(message, revenueData?.detail, piutangData?.detail);
   const paymentByDateMatch = findPaymentsByDate(message, revenueData?.detail, piutangData?.detail);
@@ -3524,6 +3582,7 @@ async function handleChat(request, env) {
     performa: perfData,
     pencapaianRingkasan: pencapaianMatch,
     sisaTarget: sisaTargetMatch,
+    perCompanyPeriode: companyBreakdownMatch,
     // Only the compact monthly totals go in by default — the full per-payment detail is never
     // sent wholesale, only the customer-matched subset via pembayaranRelevan.
     revenue: revenueData ? { monthly: revenueData.monthly, total2026: revenueData.total2026 } : null,
@@ -3603,6 +3662,7 @@ Aturan:
 - Jumlah spesifik diminta (mis. "10 wilayah terbesar") → berikan SEMUA sesuai jumlah itu kalau tersedia, jangan dipotong.
 - WAKTU: semua tanggal/jam di data dan semua perhitungan "hari ini"/"kemarin"/"bulan ini" WAJIB pakai zona waktu Makassar (WITA, GMT+8) — bukan zona waktu server. "Hari ini" berarti hari ini di Makassar, "kemarin" = kemarin di Makassar, dst. Kalau user tanya "sales/pembayaran/piutang/delivery hari ini" atau "kemarin" atau "2 hari lalu", ini SUDAH bisa dijawab dari data yang tersedia (field-field transaksi/pembayaran sudah difilter sesuai tanggal itu kalau relevan) — JANGAN bilang "belum bisa" atau "data berbasis bulanan" hanya karena tidak persis sebulan penuh, cek dulu field yang sesuai topiknya.
 - "Sekarang jam berapa?"/"hari ini tanggal berapa?"/pertanyaan waktu saat ini → SALIN PERSIS jam/tanggal dari field "waktuSekarang", KATA PER KATA — field ini FINAL, SUDAH WITA (bukan UTC), JANGAN dihitung ulang/dikonversi/digeser lagi dengan cara apa pun, JANGAN pakai jam dari pengetahuanmu sendiri, JANGAN bilang tidak tahu.
+- PERTANYAAN PER COMPANY (MKI atau CFN) soal sales/penjualan/omzet, revenue/pendapatan/pelunasan, invoice/faktur/transaksi, atau qty — periode apa pun ("hari ini", "kemarin", tanggal tertentu, "bulan ini", nama bulan, rentang tanggal, setahun) → WAJIB jawab dari "perCompanyPeriode" SAJA. Field ini SUDAH difilter khusus company + periode yang ditanya (pakai "company" dan "periode" di dalamnya persis sebagai label jawabanmu). DILARANG mencampur/menambal dengan angka GABUNGAN MKI+CFN dari field lain ("performa", "revenue", "ringkasanTanggalTransaksi", "pencapaianRingkasan") — itu cakupan berbeda dan hasilnya menyesatkan. Jawab HANYA ukuran yang ditanya (tanya sales → sebut sales; tanya invoice → sebut invoiceUnik), boleh tambahkan ukuran lain sebagai konteks singkat kalau relevan. PIUTANG per company TIDAK ada di field ini — pakai "piutangPerCompany" (piutang itu saldo berjalan, bukan angka periode; jangan paksakan "piutang hari ini" jadi angka harian).
 - "SISA TARGET"/"kekurangan target"/"kurang berapa lagi" → WAJIB jawab dari "sisaTarget" SAJA. FORMAT JAWABAN WAJIB TIGA POIN, ketiganya HARUS ada walau user cuma tanya singkat — JANGAN pernah cuma menjawab satu atau dua (ini kesalahan nyata yang pernah terjadi: user tanya sisa target, MIRA cuma sebut Revenue saja):
   1. **Sales** — sisa Rp… (dari "sisaTarget.sales.sisa")
   2. **Revenue** — sisa Rp… (dari "sisaTarget.revenue.sisa")
