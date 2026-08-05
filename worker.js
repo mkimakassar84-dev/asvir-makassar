@@ -2196,6 +2196,68 @@ function findPaymentsByCustomer(message, paymentDetail, piutangDetail) {
 // consistent with what "Sales"/"Revenue" questions report separately. No month mentioned →
 // defaults to the whole year to date (matches the dashboard's own "Total Sales 2026 (s.d. hari
 // ini)" convention) rather than returning nothing.
+// "Sisa target" — how much is still missing, for all three tracked measures at once (Sales,
+// Revenue, Invoice Unik). Scope follows the question: mention a year and it answers year-to-date
+// against the full-year target; otherwise it answers for a month (the one named, else the current
+// one). Targets come from two different places on purpose — Sales/Revenue share one Rupiah target
+// per month from the Sales SUM sheet, while the invoice target is a separate operational figure.
+function findSisaTarget(message, yoy, dailyPerfTargets) {
+  const nMsg = normText(message);
+  const wants = /sisa\s*target|kekurangan\s*target|target.*(kurang|sisa)|(kurang|sisa).*target|berapa lagi.*(target|capai)|kurang berapa/.test(nMsg);
+  if (!wants) return null;
+  if (!yoy || !Array.isArray(yoy.months) || !yoy.months.length) return null;
+
+  const perf = Array.isArray(dailyPerfTargets) ? dailyPerfTargets : [];
+  const hitung = (target, realisasi) => ({
+    target: Math.round(target || 0),
+    realisasi: Math.round(realisasi || 0),
+    sisa: Math.max(0, Math.round((target || 0) - (realisasi || 0))),
+    kelebihan: Math.max(0, Math.round((realisasi || 0) - (target || 0))),
+    sudahTercapai: (realisasi || 0) >= (target || 0),
+    persenTercapai: target ? Math.round(((realisasi || 0) / target) * 1000) / 10 : null,
+  });
+
+  const tahunIni = nowMakassar().getFullYear();
+
+  if (/\btahun\b|setahun|tahunan|se-?tahun/.test(nMsg)) {
+    // Invoice has no recorded annual target — only a single manual monthly figure — so the yearly
+    // one is derived (monthly x 12) and flagged as such rather than presented as if it were
+    // recorded somewhere.
+    const targetInvoiceBulanan = perf.length ? perf[perf.length - 1].targetInvoice : null;
+    const realisasiInvoice = perf.reduce((s, m) => s + (m.invoiceUnik || 0), 0);
+    return {
+      lingkup: 'tahunan',
+      periode: `${tahunIni} (realisasi s.d. hari ini vs target setahun penuh)`,
+      sales: hitung(yoy.totalTarget, yoy.totalSales2026),
+      revenue: hitung(yoy.totalTarget, yoy.totalRev2026),
+      invoiceUnik: targetInvoiceBulanan
+        ? { ...hitung(targetInvoiceBulanan * 12, realisasiInvoice), catatanTarget: `Target setahun ini DITURUNKAN dari target bulanan ${targetInvoiceBulanan} invoice x 12 bulan — bukan angka tahunan yang tercatat langsung, sebutkan itu apa adanya.` }
+        : null,
+      catatan: 'Target Rupiah SATU angka dipakai untuk Sales DAN Revenue (memang begitu di sumbernya, bukan salah baca). Semua "sisa" SUDAH dihitung — jangan hitung ulang manual.',
+    };
+  }
+
+  // Monthly: the month named in the question, otherwise the current one.
+  const mm = extractMonthMention(message);
+  const monthIdx = mm ? mm.month - 1 : nowMakassar().getMonth();
+  const year = mm ? mm.year : tahunIni;
+  const row = yoy.months.find((m) => m.monthIdx === monthIdx);
+  const key = `${year}-${String(monthIdx + 1).padStart(2, '0')}`;
+  const perfRow = perf.find((m) => m.bulan === key);
+
+  if (!row) return null;
+  return {
+    lingkup: 'bulanan',
+    periode: `${row.label} ${year}`,
+    sales: hitung(row.targetSalesRevenue, row.sales2026),
+    revenue: hitung(row.targetSalesRevenue, row.rev2026),
+    invoiceUnik: perfRow ? hitung(perfRow.targetInvoice, perfRow.invoiceUnik) : null,
+    catatan:
+      'Target Rupiah SATU angka dipakai untuk Sales DAN Revenue (memang begitu di sumbernya). Semua "sisa" SUDAH dihitung — jangan hitung ulang manual. ' +
+      (perfRow ? '' : 'Data invoice untuk bulan ini belum ada, jadi sisa target invoice tidak bisa dihitung — katakan apa adanya, jangan dikarang.'),
+  };
+}
+
 function findPencapaianRingkasan(message, performance, revenueMonthly, totalSales2026, totalRevenue2026, allTransactions, paymentDetail) {
   const nMsg = normText(message);
   if (!/pencapaian/.test(nMsg)) return null;
@@ -3410,6 +3472,7 @@ async function handleChat(request, env) {
   const revenueData = revenueRaw ? JSON.parse(revenueRaw) : null;
   const perfData = perfRaw ? JSON.parse(perfRaw) : null;
   const pencapaianMatch = findPencapaianRingkasan(message, perfData?.performance, revenueData?.monthly, perfData?.totalSales2026, revenueData?.total2026, allTransactions, revenueData?.detail);
+  const sisaTargetMatch = findSisaTarget(message, yoyRaw ? JSON.parse(yoyRaw) : null, dailyPerformanceRaw ? JSON.parse(dailyPerformanceRaw) : null);
   const invoiceDetailMatch = findInvoiceDetail(message, allTransactions, revenueData?.detail, piutangData?.detail, allStock);
   const paymentMatch = findPaymentsByCustomer(message, revenueData?.detail, piutangData?.detail);
   const paymentByDateMatch = findPaymentsByDate(message, revenueData?.detail, piutangData?.detail);
@@ -3460,6 +3523,7 @@ async function handleChat(request, env) {
     // (Rev SUM "Pelunasan") — these are different metrics per the dashboard, don't conflate them.
     performa: perfData,
     pencapaianRingkasan: pencapaianMatch,
+    sisaTarget: sisaTargetMatch,
     // Only the compact monthly totals go in by default — the full per-payment detail is never
     // sent wholesale, only the customer-matched subset via pembayaranRelevan.
     revenue: revenueData ? { monthly: revenueData.monthly, total2026: revenueData.total2026 } : null,
@@ -3539,6 +3603,11 @@ Aturan:
 - Jumlah spesifik diminta (mis. "10 wilayah terbesar") → berikan SEMUA sesuai jumlah itu kalau tersedia, jangan dipotong.
 - WAKTU: semua tanggal/jam di data dan semua perhitungan "hari ini"/"kemarin"/"bulan ini" WAJIB pakai zona waktu Makassar (WITA, GMT+8) — bukan zona waktu server. "Hari ini" berarti hari ini di Makassar, "kemarin" = kemarin di Makassar, dst. Kalau user tanya "sales/pembayaran/piutang/delivery hari ini" atau "kemarin" atau "2 hari lalu", ini SUDAH bisa dijawab dari data yang tersedia (field-field transaksi/pembayaran sudah difilter sesuai tanggal itu kalau relevan) — JANGAN bilang "belum bisa" atau "data berbasis bulanan" hanya karena tidak persis sebulan penuh, cek dulu field yang sesuai topiknya.
 - "Sekarang jam berapa?"/"hari ini tanggal berapa?"/pertanyaan waktu saat ini → SALIN PERSIS jam/tanggal dari field "waktuSekarang", KATA PER KATA — field ini FINAL, SUDAH WITA (bukan UTC), JANGAN dihitung ulang/dikonversi/digeser lagi dengan cara apa pun, JANGAN pakai jam dari pengetahuanmu sendiri, JANGAN bilang tidak tahu.
+- "SISA TARGET"/"kekurangan target"/"kurang berapa lagi" → WAJIB jawab dari "sisaTarget" SAJA. FORMAT JAWABAN WAJIB TIGA POIN, ketiganya HARUS ada walau user cuma tanya singkat — JANGAN pernah cuma menjawab satu atau dua (ini kesalahan nyata yang pernah terjadi: user tanya sisa target, MIRA cuma sebut Revenue saja):
+  1. **Sales** — sisa Rp… (dari "sisaTarget.sales.sisa")
+  2. **Revenue** — sisa Rp… (dari "sisaTarget.revenue.sisa")
+  3. **Invoice Unik** — sisa … invoice (dari "sisaTarget.invoiceUnik.sisa")
+  Angka "sisa" adalah jawaban UTAMA tiap poin; boleh tambahkan "target"/"realisasi"/"persenTercapai" sebagai konteks singkat. Ikuti "lingkup"+"periode" apa adanya: "bulanan" = kekurangan bulan itu saja, "tahunan" = kekurangan tahun berjalan terhadap target setahun penuh — JANGAN tukar-tukar lingkupnya. "sudahTercapai":true → jangan bilang "kurang", bilang SUDAH TERCAPAI dan sebutkan "kelebihan"-nya. Field bernilai null (mis. "invoiceUnik" null) → katakan datanya belum ada untuk periode itu, JANGAN dikarang. Ada "catatanTarget" → sampaikan juga (mis. target invoice tahunan itu turunan dari target bulanan x 12, bukan angka tercatat). SEMUA angka sudah dihitung — JANGAN hitung/kurangi ulang manual.
 - "Pencapaian" (mis. "pencapaian 2026", "pencapaian Agustus", "pencapaian tanggal 3", "pencapaian kemarin", "pencapaian" tanpa periode) → WAJIB jawab dari "pencapaianRingkasan" SAJA, dan WAJIB sebutkan KETIGANYA SEKALIGUS dalam satu jawaban (bukan cuma satu lalu tunggu ditanya lagi): "totalSales" (penjualan), "totalRevenue" (pelunasan/uang masuk), DAN "totalInvoiceUnik" — pakai field "periode" persis sebagai label periodenya. JANGAN hitung ulang manual dari field lain (mis. "performa"/"revenue"/"transaksiRelevan") — angka di "pencapaianRingkasan" sudah final untuk periode itu, dan JANGAN pernah sebut angka BEDA untuk pertanyaan yang sama walau ditanya ulang/dikoreksi user — kalau user meragukan angkanya, cek ulang field ini dulu (bukan langsung menyetujui koreksi user tanpa verifikasi), field ini sumber kebenarannya.
 - TERBAIK/TERBURUK/TERTINGGI/TERENDAH/TERBAWAH (semua topik): cek dulu field-nya DAFTAR LENGKAP atau TOP-N terpotong sebelum jawab versi terbalik dari sebuah ranking. DAFTAR LENGKAP ("ditampilkan"=="totalCustomer", atau "rankingKinerjaPersonel"/"zonaWilayahRelevan.wilayah") → aman baca dari BAWAH untuk "terendah". TOP-N SAJA ("topProduk"/"topProdukPerBulan"/"topWilayah"/"customerInsights.topByFrekuensi"/"topBySales" top-20, "piutangCustomerTertinggi.top10") → JANGAN ambil item terbawah lalu bilang "terendah" (itu cuma peringkat ke-10/20, bukan benar-benar terendah) — jujur soal keterbatasan ini, tawarkan alternatif kalau ada (mis. "stokTidakBergerakDanKurangLaku" untuk "produk paling tidak laku").
 - TERBARU/TERAKHIR (kejadian paling baru) vs TERLAMA/TERDAHULU (kejadian paling lama/dulu), di SEMUA topik bertanggal (transaksi, pembayaran, piutang, absensi, dst): data terkait SUDAH diurutkan dari yang PALING BARU duluan (lihat nama/catatan tiap field, mis. "transaksiCatatan" bilang "PALING BARU" = baris pertama, "pembayaranTerbaruDulu"/"pembayaranYangMelunasiTerbaruDulu" sudah urut dari nama field-nya) — "terbaru"/"terakhir" = baris PERTAMA, "terlama"/"terdahulu" = baris TERAKHIR dari daftar itu. Sebelum bilang sesuatu "terlama", cek dulu daftar itu LENGKAP atau cuma dipotong/dibatasi (sama seperti aturan TERBAIK/TERENDAH di atas) — kalau dipotong, jujur soal keterbatasan itu, jangan mengarang seolah baris terakhir yang tampil = benar-benar paling lama.
