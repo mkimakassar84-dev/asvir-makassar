@@ -30,6 +30,37 @@
 </head>
 <body class="flex flex-col bg-sand text-gray-800 overflow-hidden" style="height: 100vh; height: 100svh;">
 
+  <!-- Login gate. Covers everything until a valid access code is stored, so the chat UI is never
+       usable (and no request is ever sent) without one. The real enforcement is server-side in
+       worker.js — this overlay is just the way in. -->
+  <div id="loginScreen" class="fixed inset-0 z-50 bg-sand flex-col items-center justify-center px-6 hidden">
+    <img src="./assets/mira-avatar.jpg" alt="MIRA" class="w-20 h-20 rounded-full object-cover border-4 border-victory/30 shadow-lg mb-4" />
+    <h2 class="text-xl font-bold text-victory mb-1">MIRA</h2>
+    <p class="text-sm text-gray-600 text-center mb-6">Asisten Virtual MKI Makassar</p>
+
+    <form id="loginForm" class="w-full max-w-xs flex flex-col gap-3">
+      <label for="accessCodeInput" class="text-sm font-medium text-gray-700">Masukkan kode akses kamu</label>
+      <input
+        id="accessCodeInput"
+        type="text"
+        inputmode="text"
+        autocomplete="off"
+        autocapitalize="characters"
+        spellcheck="false"
+        placeholder="Contoh: NAMA84"
+        class="w-full border border-sand-border rounded-xl px-4 py-3 text-center text-lg tracking-wide uppercase focus:outline-none focus:ring-2 focus:ring-victory/40 bg-white"
+      />
+      <button type="submit" id="loginBtn" class="w-full bg-victory text-white rounded-xl py-3 font-semibold shadow-sm active:bg-victory-dark disabled:opacity-60">
+        Masuk
+      </button>
+      <p id="loginMsg" class="text-sm text-center min-h-[1.25rem]"></p>
+    </form>
+
+    <p class="text-xs text-gray-500 text-center mt-6 max-w-xs">
+      Kode cukup dimasukkan sekali di HP ini. Kalau lupa kodemu, hubungi Pak Rifqi.
+    </p>
+  </div>
+
   <!-- Header: sticky + explicit svh body height so mobile browser chrome (address bar) showing
        or hiding while scrolling the chat can't push this out of view. NOTE: this app-shell layout
        (fixed-height body, #chatArea as the ONLY scrolling element) means Android/iOS's native
@@ -110,6 +141,68 @@
   const statusText = document.getElementById('statusText');
   const statusDot = document.getElementById('statusDot');
 
+  // ==== Access gate ====
+  // The code lives in localStorage so it survives closing the app / restarting the phone — the
+  // whole point is that each person types it once on their own handset and never again. Cleared
+  // only on an explicit 401 from the server (code revoked/changed).
+  const ACCESS_CODE_KEY = 'miraAccessCode';
+  const loginScreen = document.getElementById('loginScreen');
+  const loginForm = document.getElementById('loginForm');
+  const loginBtn = document.getElementById('loginBtn');
+  const loginMsg = document.getElementById('loginMsg');
+  const accessCodeInput = document.getElementById('accessCodeInput');
+
+  function getAccessCode() {
+    try { return localStorage.getItem(ACCESS_CODE_KEY) || ''; } catch { return ''; }
+  }
+  function setAccessCode(code) {
+    try { localStorage.setItem(ACCESS_CODE_KEY, code); } catch { /* private mode — session-only */ }
+  }
+  function clearAccessCode() {
+    try { localStorage.removeItem(ACCESS_CODE_KEY); } catch { /* nothing to clear */ }
+  }
+
+  function showLogin(msg) {
+    loginScreen.classList.remove('hidden');
+    loginScreen.classList.add('flex');
+    loginMsg.textContent = msg || '';
+    loginMsg.className = 'text-sm text-center min-h-[1.25rem] text-victory';
+    accessCodeInput.value = '';
+  }
+  function hideLogin() {
+    loginScreen.classList.add('hidden');
+    loginScreen.classList.remove('flex');
+  }
+
+  loginForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const code = accessCodeInput.value.trim().toUpperCase();
+    if (!code) return;
+    loginBtn.disabled = true;
+    loginMsg.className = 'text-sm text-center min-h-[1.25rem] text-gray-500';
+    loginMsg.textContent = 'Mengecek…';
+    try {
+      const res = await fetch(`${API_BASE}/auth`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accessCode: code }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.ok) {
+        setAccessCode(code);
+        hideLogin();
+        refreshStatus();
+      } else {
+        loginMsg.className = 'text-sm text-center min-h-[1.25rem] text-red-600';
+        loginMsg.textContent = data.pesan || 'Kode akses tidak dikenali.';
+      }
+    } catch {
+      loginMsg.className = 'text-sm text-center min-h-[1.25rem] text-red-600';
+      loginMsg.textContent = 'Gagal terhubung. Cek koneksi internetmu ya.';
+    } finally {
+      loginBtn.disabled = false;
+    }
+  });
 
   const WELCOME_HTML = `
     <div class="flex justify-start">
@@ -481,8 +574,16 @@
       const res = await fetch(`${API_BASE}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, history: historyToSend }),
+        body: JSON.stringify({ message, history: historyToSend, accessCode: getAccessCode() }),
       });
+
+      // 401 = the stored code is no longer valid (revoked, or changed on the server). Clear it and
+      // send them back to the login screen rather than leaving them stuck on a dead session.
+      if (res.status === 401) {
+        clearAccessCode();
+        showLogin('Sesi kamu sudah berakhir. Masukkan kode akses lagi ya.');
+        throw new Error('Kode akses tidak berlaku lagi.');
+      }
 
       if (!res.ok || !res.body) {
         const errBody = await res.json().catch(() => ({}));
@@ -615,7 +716,13 @@
       statusDot.className = 'w-2.5 h-2.5 rounded-full bg-red-400 shrink-0';
     }
   }
-  refreshStatus();
+  // Gate on startup: no stored code = login screen, and nothing else runs until it's satisfied.
+  if (getAccessCode()) {
+    hideLogin();
+    refreshStatus();
+  } else {
+    showLogin('');
+  }
 
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js'));

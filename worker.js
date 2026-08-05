@@ -237,6 +237,32 @@ const PERSONNEL_FAMILY = {
   PUTRI: { anak: ['Naura'] },
 };
 
+// Per-person access codes. Deliberately simple and typeable on a phone (name + 84) — this is an
+// internal-team gate, not a defence against a determined attacker: someone who knows the team
+// could guess a code. What it DOES give: every request is tied to a named person, one person can
+// be revoked without disturbing anyone else, and MIRA knows who it's talking to (so the personal
+// greeting rules below work without anyone having to introduce themselves first).
+const ACCESS_CODES = {
+  RIFQI84: { nama: 'Rifqi', peran: 'Branch Manager MKI Makassar (juga pencipta MIRA)', sapaan: 'Pak Rifqi' },
+  ASTRID84: { nama: 'Astrid', peran: 'Supervisor Marketing & Customer Relation' },
+  ADI84: { nama: 'Adi', peran: 'Marketing Representative' },
+  REZA84: { nama: 'Reza', peran: 'Marketing Representative' },
+  PUTRI84: { nama: 'Putri', peran: 'General Admin Support & Operation' },
+  BURHAMIN84: { nama: 'Burhamin', peran: 'Kordinator Logistik dan AR' },
+  ZUL84: { nama: 'Zul', peran: 'Logistik Staff', sapaan: 'Abang Zul' },
+  ASPAR84: { nama: 'Aspar', peran: 'Logistik Staff', sapaan: 'Abang Aspar' },
+  TAUFIK84: { nama: 'Taufik', peran: 'Logistik Staff' },
+  MAKASSAR84: { nama: 'Ricky', peran: 'Dewan Penasihat Cabang Makassar', sapaan: 'Pak Ricky' },
+};
+
+// Tolerant on input shape only (case, stray spaces) — never on the code itself, so a phone
+// keyboard auto-capitalising or adding a trailing space doesn't lock someone out.
+function resolveAccessCode(code) {
+  const key = String(code || '').trim().toUpperCase().replace(/\s+/g, '');
+  const hit = ACCESS_CODES[key];
+  return hit ? { kode: key, ...hit } : null;
+}
+
 // Legacy/archival receivables carried over from 2015-2025, transcribed verbatim from the user's
 // "Piutang Lampau (2015-2025).xlsx" (30 customers, one column per year). This is a STATIC
 // historical snapshot — it is NOT synced from any sheet and does not change on its own, unlike
@@ -3141,6 +3167,15 @@ async function handleChat(request, env) {
   } catch {
     return json({ error: 'Body harus JSON: { "message": "..." }' }, 400);
   }
+  // Access gate. Before this, /chat was completely open — anyone who knew the worker URL could
+  // read piutang, sales, and the ONU credentials straight from a terminal with no login at all
+  // (the CORS header only ever restrained browsers, never direct requests). Checked FIRST, before
+  // any KV read or Gemini call, so an unauthorized request costs nothing.
+  const pengguna = resolveAccessCode(body.accessCode);
+  if (!pengguna) {
+    return json({ error: 'AKSES_DITOLAK', pesan: 'Kode akses tidak dikenali. Masukkan kode akses kamu untuk memakai MIRA.' }, 401);
+  }
+
   const message = (body.message || '').toString().trim();
   const history = Array.isArray(body.history) ? body.history.slice(-10) : [];
   if (!message) return json({ error: 'Field "message" wajib diisi.' }, 400);
@@ -3316,6 +3351,14 @@ async function handleChat(request, env) {
     infoKantor: COMPANY_INFO,
     jabatanPersonel: PERSONNEL_ROLES,
     keluargaPersonel: PERSONNEL_FAMILY,
+    // Who is actually logged in right now, resolved from their access code — no longer a guess
+    // from whether they happened to introduce themselves in the message.
+    penggunaSaatIni: {
+      nama: pengguna.nama,
+      peran: pengguna.peran,
+      sapaan: pengguna.sapaan || 'kamu',
+      awalPercakapan: history.length === 0,
+    },
     usernamePasswordOnu: findOnuCredentials(message),
     waktuSekarang: waktuMakassarSekarang(),
   };
@@ -3395,8 +3438,9 @@ Aturan:
 - ALAMAT/lokasi kantor → "infoKantor" (nama/alamat/link Maps) — sertakan link Maps kalau relevan.
 - JABATAN/posisi seseorang → "jabatanPersonel" (nama→jabatan). Beda dari data KPI harian — nama tak ada di jabatanPersonel tapi ada di KPI/absensi → jabatan belum tercatat (jangan menebak).
 - Kalau user menulis "Rifki", pahami itu maksudnya orang yang SAMA dengan "Rifqi" (Branch Manager, pencipta MIRA) — JANGAN dianggap dua orang berbeda. TAPI ejaan "Rifki" itu HANYA untuk memahami maksud pertanyaan di baliknya, TIDAK BOLEH muncul di jawabanmu SAMA SEKALI dalam bentuk apa pun — jangan tulis "Rifki", jangan singgung "yang kamu maksud Rifki", jangan bandingkan dua ejaan, jangan sebut soal ejaan sama sekali. Cukup jawab pertanyaannya langsung pakai nama "Rifqi" seolah-olah user memang menulis "Rifqi" dari awal, seperti biasa menjawab pertanyaan tentang siapa pun.
-- SAPAAN ke lawan bicara: default panggil "kamu" SAJA — JANGAN tambahkan "Kak"/"Kakak"/"Abang"/"Bapak"/"Ibu"/"Mas"/"Mbak"/"Nyonya"/"Tuan" atau sapaan lain apa pun secara default, walau nadanya hangat/sayang/islami. Hanya DUA pengecualian: (1) "Abang" — HANYA kalau lawan bicara sudah memperkenalkan diri sebagai Aspar atau Zul di percakapan ini SEBELUM/SAAT mengajak ngobrol (nama disebut eksplisit) — kalau belum ada perkenalan nama, tetap pakai "kamu" biasa, JANGAN menebak-nebak itu Aspar/Zul. (2) Rifqi (pencipta MIRA, Branch Manager) → sapa dengan "Pak" yang sopan (mis. "Pak Rifqi" atau cukup "Pak"), bukan "kamu" polos — berlaku setiap kali lawan bicaranya teridentifikasi Rifqi.
-- KELUARGA PERSONEL: kalau lawan bicara BARU SAJA memperkenalkan diri dengan nama salah satu personel (nama disebut eksplisit sebagai perkenalan diri di percakapan ini — syarat deteksinya SAMA seperti sapaan "Abang" di atas, bukan sekadar nama disebut di tengah pertanyaan data operasional), SELIPKAN satu sapaan hangat yang menanyakan kabar keluarganya secara PERSONAL pakai nama asli dari "keluargaPersonel" — SEBUT NAMA SPESIFIK anggota keluarganya (mis. Astrid → tanya kabar anaknya Airin; Reza → tanya kabar istrinya Junita dan anaknya Jazeel; Taufik → tanya kabar istrinya Icha dan anak-anaknya Fatimah/Ruqayyah/Muhammad; kalau ada beberapa anak boleh sebut satu/semua secara natural), JANGAN pakai frasa generik seperti "keluarga di rumah"/"orang tersayang" kalau nama aslinya tersedia di data. KHUSUS Aspar ("selaluTanyakanIbunya":true di datanya) → SELALU tanya kabar IBUNYA, bukan anak/istri (Aspar tidak punya data anak/istri, jangan mengarang). Personel yang namanya TIDAK ADA di "keluargaPersonel" (mis. Rifqi) → jangan mengarang nama keluarga, cukup sapaan hangat biasa tanpa menyebut anggota keluarga tertentu. Cukup SEKALI saja di momen perkenalan itu (jangan diulang-ulang di setiap balasan berikutnya dalam percakapan yang sama — akan terasa dipaksakan, bukan tulus).
+- SIAPA LAWAN BICARAMU: field "penggunaSaatIni" SUDAH memastikan siapa yang sedang bicara (dari kode akses login-nya, bukan tebakan) — percayai ini sepenuhnya, JANGAN tanya "ini siapa ya?" dan JANGAN menebak dari isi pesan. Pakai "penggunaSaatIni.sapaan" PERSIS sebagai cara memanggilnya, JANGAN dikarang sendiri. Kalau isinya "kamu" → boleh panggil "kamu" atau nama aslinya polos (mis. "Astrid"), TAPI DILARANG KERAS menempelkan gelar/embel-embel apa pun di depan namanya — "Kak Astrid", "Mbak Astrid", "Bu Astrid", "Pak Adi" dan sejenisnya SEMUA SALAH, cukup "kamu" atau "Astrid" saja (aturan ini permintaan tegas Branch Manager, jangan dilanggar walau terasa lebih sopan). Kalau "sapaan" berisi sapaan spesifik (mis. "Pak Rifqi", "Abang Aspar", "Pak Ricky") → pakai PERSIS itu, boleh disingkat wajar ("Pak", "Abang") supaya tidak kaku diulang terus.
+- Pak Ricky (kode akses MAKASSAR84) = Dewan Penasihat Cabang Makassar. Beliau BUKAN bagian dari 8 personel KPI harian, jadi jangan cari namanya di data KPI/absensi/ranking personel (kalau tidak ketemu di sana itu memang normal, bukan data hilang). Sapa hormat "Pak Ricky" dan layani seperti penasihat senior — boleh diajak diskusi strategi dan melihat data cabang seperti biasa. JANGAN PERNAH menyinggung/menyebut soal status pensiun beliau dalam bentuk apa pun.
+- KELUARGA PERSONEL: HANYA saat "penggunaSaatIni.awalPercakapan" bernilai true (pesan PERTAMA di sesi ini) DAN nama "penggunaSaatIni.nama" ada di "keluargaPersonel", SELIPKAN satu sapaan hangat yang menanyakan kabar keluarganya secara PERSONAL pakai nama asli dari "keluargaPersonel" — SEBUT NAMA SPESIFIK anggota keluarganya (mis. Astrid → tanya kabar anaknya Airin; Reza → tanya kabar istrinya Junita dan anaknya Jazeel; Taufik → tanya kabar istrinya Icha dan anak-anaknya Fatimah/Ruqayyah/Muhammad; kalau ada beberapa anak boleh sebut satu/semua secara natural), JANGAN pakai frasa generik seperti "keluarga di rumah"/"orang tersayang" kalau nama aslinya tersedia di data. KHUSUS Aspar ("selaluTanyakanIbunya":true di datanya) → SELALU tanya kabar IBUNYA, bukan anak/istri (Aspar tidak punya data anak/istri, jangan mengarang). Personel yang namanya TIDAK ADA di "keluargaPersonel" (mis. Rifqi) → jangan mengarang nama keluarga, cukup sapaan hangat biasa tanpa menyebut anggota keluarga tertentu. Cukup SEKALI saja di momen perkenalan itu (jangan diulang-ulang di setiap balasan berikutnya dalam percakapan yang sama — akan terasa dipaksakan, bukan tulus).
 - USERNAME/PASSWORD login ONU → "usernamePasswordOnu" ("daftar" berisi kode+deskripsi+username+password per model, boleh disebutkan APA ADANYA tanpa disensor karena ini asisten internal cabang). Null padahal user tanya kredensial ONU → kode/model itu belum ada di daftar referensi, katakan jujur, JANGAN PERNAH mengarang username/password. Kalau user cuma tanya "password ONU apa" tanpa sebut model, "daftar" berisi SEMUA model yang diketahui — tampilkan semuanya, biar user pilih sendiri yang sesuai kodenya.
 - Jawab singkat, padat, langsung ke angka/fakta. Bahasa Indonesia sehari-hari sopan.
 - PAHAMI MAKSUD DULU: pastikan benar mengerti yang ditanyakan (termasuk maksud tersirat dari histori) — ambigu & bisa beda jauh hasilnya → boleh tanya balik singkat, JANGAN asal jawab satu tafsiran.
@@ -3540,6 +3584,18 @@ export default {
       }
       if (pathname === '/status' && request.method === 'GET') {
         const res = await handleStatus(env);
+        Object.entries(corsHeaders(env)).forEach(([k, v]) => res.headers.set(k, v));
+        return res;
+      }
+      // Lets the login screen verify a code immediately (and greet by name) instead of the user
+      // only finding out it was wrong after typing a whole first question.
+      if (pathname === '/auth' && request.method === 'POST') {
+        let authBody = {};
+        try { authBody = await request.json(); } catch { /* empty body = invalid code below */ }
+        const who = resolveAccessCode(authBody.accessCode);
+        const res = who
+          ? json({ ok: true, nama: who.nama, peran: who.peran })
+          : json({ ok: false, pesan: 'Kode akses tidak dikenali.' }, 401);
         Object.entries(corsHeaders(env)).forEach(([k, v]) => res.headers.set(k, v));
         return res;
       }
