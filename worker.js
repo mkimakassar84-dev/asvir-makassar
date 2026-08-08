@@ -368,6 +368,459 @@ MODE GRAFIK/CHART — aktif kalau user minta grafik/chart/diagram/visualisasi/tr
 - SETIAP angka di "data" WAJIB persis sama dengan angka yang sudah kamu sebutkan/hitung dari DATA KONTEKS — JANGAN PERNAH mengarang angka baru khusus untuk chart yang tidak ada dasarnya.
 - Kalau data yang diminta tidak cukup untuk digrafikkan (mis. cuma 1 angka tunggal, bukan deret waktu atau perbandingan kategori), JANGAN paksa buat blok chart — cukup jawab teks biasa saja.`;
 
+// ==== MODUL SKILL SALES & MARKETING ====
+// Twenty condensed Indonesian modules distilled from the installed marketing/sales skill library
+// at ~/.claude/skills. The full SKILL.md sources total ~553 KB (~140K tokens) — far past what one
+// Gemini call can carry on top of this worker's ~75K-token data digest, and the originals are
+// English and written for subscription SaaS, not a B2B cable/network-hardware distributor. So each
+// skill is compressed to its operative framework and re-grounded in this branch's own DATA KONTEKS
+// field names. Only the 1-2 modules a question actually needs are injected (see
+// resolveSkillModules), the same query-aware-retrieval principle used for stock/piutang/transaksi.
+// JTBD_MODULE and COUNCIL_MODULE predate this block and are reused verbatim — they were already
+// tuned against real usage, so they are referenced rather than rewritten.
+//
+// Each entry: nama (label shown to the team), alias (explicit invocation tokens — "/offer",
+// "pakai skill offer"), kunci (distinctive Indonesian terms; one hit alone is enough to fire),
+// frasa (supporting phrases, scored by word count), modul (the prompt text itself).
+const SKILL_MODULES = {
+  offer: {
+    nama: 'Rancang Penawaran',
+    alias: ['offer', 'offers', 'penawaran'],
+    kunci: ['grand slam offer', 'bundling', 'value stack', 'garansi produk', 'risk reversal'],
+    frasa: [
+      'bikin penawaran', 'buat penawaran', 'susun penawaran', 'penawaran menarik', 'penawaran yang menarik',
+      'susah ditolak', 'sulit ditolak', 'paket penjualan', 'paket jualan', 'bikin paket', 'racik paket',
+      'tawaran menarik', 'penawaran kurang', 'penawaran tidak laku', 'kasih bonus', 'tambah bonus',
+      'kenapa penawaran',
+    ],
+    modul: `
+
+MODE RANCANG PENAWARAN (Offer Design) — aktif kalau user mau menyusun/memperbaiki penawaran, paket, bundling, garansi, atau bonus:
+- Persamaan Nilai: Nilai = (Hasil Impian × Keyakinan Berhasil) ÷ (Lama Menunggu × Repot & Pengorbanan). EMPAT tuas ini yang digerakkan, bukan harga. Skor tiap tuas 1-10 — yang PALING RENDAH itu penyebab penawaran mandek, itu yang diperbaiki.
+  - Hasil Impian naik = bicara hasil akhir yang dikejar customer (jaringan ISP-nya stabil, pelanggannya tidak komplain, proyeknya selesai tepat waktu), BUKAN spek kabel.
+  - Keyakinan Berhasil naik = bukti nyata: nama customer yang sudah pakai, angka penjualan produk itu, garansi, kesediaan menukar kalau tidak cocok.
+  - Lama Menunggu turun = stok ready di gudang, kirim same-day, hand carry.
+  - Repot turun = sekalian aksesorisnya, dibantu pilih spek, dibantu teknis, tinggal pasang.
+- Penawaran yang LENGKAP punya enam bagian: (1) inti yang dijual, (2) tumpukan bonus, (3) garansi/jaminan, (4) alasan "kenapa harus sekarang", (5) nama paketnya, (6) harga + cara bayar. Yang paling sering hilang di lapangan: bonus, garansi, dan alasan sekarang.
+- Bonus harus benar-benar menambah nilai, JANGAN dilebih-lebihkan nominalnya — pembeli B2B yang berpengalaman langsung mencium itu. Kelangkaan harus NYATA (stok memang tinggal sekian, promo memang berakhir tanggal sekian). DILARANG mengarang stok terbatas atau tenggat palsu; sekali ketahuan, kepercayaan cabang hilang bertahun-tahun.
+- WAJIB pakai angka nyata dari DATA KONTEKS: "topProduk" (inti penawaran — sebut nama produknya), "stokRelevan"/"nilaiStokRelevan" (ketersediaan & harga), "stokTidakBergerakDanKurangLaku" (kandidat bonus/bundling), "customerTidakAktif"/"daftarNamaCustomerPerBucket" (siapa yang ditawari). Field null → sebutkan asumsinya terus terang, jangan mengarang.
+- Perbaiki SATU tuas per iterasi, jangan rombak semua sekaligus. Perkiraan yang jujur: satu perubahan komponen biasanya menaikkan konversi 10-40%, bukan berlipat-lipat.`,
+  },
+
+  harga: {
+    nama: 'Strategi Harga',
+    alias: ['pricing', 'harga', 'strategi-harga'],
+    kunci: ['strategi harga', 'penetapan harga', 'margin', 'kebijakan diskon', 'perang harga', 'hpp', 'harga modal', 'harga beli', 'laba'],
+    // Profit/margin wording routes here deliberately: MIRA has NO cost data, and the appendix's
+    // margin-honesty rule rides in with this module. A real gap found in testing — "diskon berapa
+    // yang masih untung?" previously matched nothing at all, which is exactly the question where
+    // an invented margin would do the most damage.
+    frasa: [
+      'kasih diskon', 'beri diskon', 'potongan harga', 'harga jual', 'naikkan harga', 'naikin harga',
+      'turunkan harga', 'harga kemahalan', 'harga terlalu mahal', 'kalah harga', 'harga bersaing',
+      'paket harga', 'harga proyek', 'harga grosir',
+      'masih untung', 'paling menguntungkan', 'paling untung', 'berapa untung', 'berapa keuntungan',
+      'untungnya berapa', 'biar untung', 'supaya untung', 'margin keuntungan', 'keuntungan cabang',
+      'tidak rugi', 'nggak rugi', 'gak rugi',
+    ],
+    modul: `
+
+MODE STRATEGI HARGA — aktif kalau user bahas harga jual, diskon, margin, atau susunan paket harga:
+- Tiga sumbu harga, pisahkan jangan dicampur: (1) PAKET — apa saja yang termasuk; (2) SATUAN HITUNG — dihitung per apa (per roll, per meter, per unit, per titik, per proyek); (3) ANGKA harganya sendiri. Banyak masalah "harga" sebenarnya masalah paket atau satuan hitung.
+- Harga berbasis NILAI, bukan biaya: batas ATAS = nilai yang dirasakan customer; batas BAWAH = alternatif terbaik yang dia punya (merek/distributor lain, beli langsung ke importir); biaya kita cuma lantai dasar, BUKAN dasar penetapan harga.
+- Satuan hitung yang bagus: makin banyak dipakai customer, makin besar nilai yang dia terima; gampang dimengerti; susah diakali.
+- Susunan "Cukup — Lebih Baik — Terbaik" berlaku juga untuk barang: paket hemat (menangkap yang sensitif harga), paket rekomendasi (yang benar-benar mau didorong, taruh di tengah), paket lengkap (menaikkan patokan nilai dan bikin paket tengah terlihat masuk akal).
+- DISKON ITU UTANG. Sekali turun harga, customer belajar menunggu diskon berikutnya — itu efek tingkat kedua yang lebih mahal daripada untung sesaatnya. Kalau memang harus, TUKAR diskon dengan sesuatu: volume lebih besar, bayar tunai/lebih cepat, komitmen order berulang, atau ambil sekalian barang yang lambat bergerak. Jangan pernah diskon polos tanpa imbalan.
+- WAJIB dasarkan pada data: "stokRelevan" field "harga" (harga satuan nyata), "topProduk" (yang laku = posisi tawar kita kuat, tidak perlu diskon), "stokTidakBergerakDanKurangLaku" (ini yang layak didiskon/dibundling), "piutangPerKategoriUmur" (peringatan penting: harga dipotong TAPI bayarnya macet = margin hilang dua kali, selalu cek riwayat bayar customer sebelum menyetujui harga khusus).`,
+  },
+
+  prospek: {
+    nama: 'Cari Calon Customer',
+    alias: ['prospecting', 'prospek', 'calon-customer'],
+    kunci: ['prospek baru', 'calon customer', 'calon pelanggan', 'cari customer', 'cari pelanggan', 'customer ideal', 'target market'],
+    frasa: [
+      'customer baru', 'pelanggan baru', 'daftar prospek', 'saring prospek', 'kualifikasi prospek',
+      'cari klien', 'tambah customer', 'nambah customer', 'siapa yang harus dihubungi', 'siapa yang perlu dihubungi',
+      'pasar baru', 'buka wilayah baru',
+    ],
+    modul: `
+
+MODE CARI CALON CUSTOMER (Prospecting) — aktif kalau user mau mencari, menyaring, atau memprioritaskan calon customer baru:
+- Lima tahap berurutan: (1) tetapkan profil customer ideal, (2) kumpulkan kandidat 2-3x lebih banyak dari target akhir, (3) saring satu per satu DENGAN BUKTI, (4) beri skor dan urutkan, (5) serahkan daftar siap-hubungi ke tim marketing.
+- Profil customer ideal WAJIB memuat: jenis usaha (ISP lokal, RT-RW net, kontraktor jaringan, vendor CCTV, instansi), skala, wilayah, SINYAL BELI ("kenapa sekarang" — sedang perluas jangkauan, buka POP baru, ganti supplier, menang proyek), siapa yang memutuskan (pemilik? teknisi kepala? bagian pembelian?), dan apa yang bikin langsung dicoret.
+- Skor tiap kandidat: PANAS (cocok profil + ada sinyal beli + kontak jelas), HANGAT (cocok tapi sinyalnya lemah/sudah lama), DINGIN (cocok longgar atau tanpa sinyal), LEWATI (kena syarat coret). Sebaran wajar: ~20% panas, ~30% hangat, sisanya dingin/lewati.
+- 25 calon terverifikasi jauh lebih berharga daripada 250 nama asal kumpul. Tiap kandidat WAJIB ada bukti sumbernya — jangan mengklaim "mereka butuh" tanpa dasar.
+- SUMBER PALING MURAH ADA DI DATA SENDIRI, garap ini DULU sebelum berburu nama baru dari luar: "customerTidakAktif" (pernah beli lalu berhenti ≥60 hari — sudah kenal, sudah percaya, tinggal dihidupkan), "daftarNamaCustomerPerBucket" bucket 1x (beli sekali lalu hilang — cari tahu kenapa), "zonaWilayahRelevan" zona merah/kuning (wilayah yang terbukti kurang digarap, bukan tebakan).
+- WAJIB cek "piutangBelumLunas" tiap kandidat sebelum diprioritaskan — kalau masih menunggak, itu urusan PENAGIHAN dulu, bukan penawaran baru. Menawarkan barang ke penunggak tanpa menyelesaikan tagihan cuma menambah piutang.
+- Sebutkan NAMA nyata dari data, jangan menjawab dengan kategori umum.`,
+  },
+
+  materi_jualan: {
+    nama: 'Materi Jualan',
+    alias: ['sales-enablement', 'materi-jualan', 'materi'],
+    kunci: ['materi jualan', 'bahan jualan', 'alat bantu jualan', 'battle card', 'skrip jualan', 'presentasi penjualan', 'jawaban keberatan', 'atasi keberatan', 'company profile'],
+    frasa: [
+      'bahan presentasi', 'buat proposal', 'brosur penawaran', 'satu halaman', 'leave behind',
+      'bekali tim', 'perlengkapan tim marketing', 'customer keberatan', 'customer nolak', 'alasan customer menolak',
+    ],
+    modul: `
+
+MODE MATERI JUALAN (Sales Enablement) — aktif kalau user mau membuat bahan bantu jualan untuk tim marketing (ADI/ASTRID/PUTRI/REZA): presentasi, lembar satu halaman, dokumen jawaban keberatan, atau skrip kunjungan:
+- TIM PAKAI YANG TIM PERCAYA. Susun dengan bahasa yang tim benar-benar ucapkan ke customer, bukan bahasa kantor pusat. Kalau tim menulis ulang materinya sebelum dipakai, berarti materinya yang salah — libatkan tim, uji dulu ke yang paling sering closing.
+- BISA DIPINDAI 3 DETIK, bukan dibaca 30 detik. Judul tebal, poin pendek, hierarki jelas. Kalau tim tidak bisa menemukan jawabannya di tengah telepon dengan customer, materi itu gagal.
+- SETIAP KLAIM BERUJUNG KE HASIL BISNIS CUSTOMER: hemat waktu pasang, kurangi komplain pelanggan mereka, kurangi retur/redaman, kurangi kunjungan ulang teknisi, proyek selesai tepat waktu. Fitur tanpa "lalu apa untungnya buat dia" itu kosong.
+- Kerangka presentasi: masalah yang dialami sekarang → biaya kalau dibiarkan → perubahan yang sedang terjadi di pasar → cara kita yang berbeda → cara pakainya → bukti angka → SATU cerita customer yang diceritakan dengan baik → cara mulai → nilai/waktu balik modal → harga → langkah berikutnya. Satu ide per halaman. Cerita, bukan daftar fitur.
+- Lembar satu halaman: masalah dalam satu kalimat → solusi kita → 3 pembeda → satu bukti kuat → langkah lanjut + kontak. Satu halaman, benar-benar satu.
+- SESUAIKAN LAWAN BICARA: teknisi → spek, kompatibilitas, cara pasang; pemilik ISP → biaya, risiko, waktu balik modal; bagian pembelian/gudang → ketersediaan, waktu kirim, syarat bayar.
+- Dokumen jawaban keberatan: tulis keberatannya PERSIS seperti yang diucapkan customer, lalu jawaban singkat + buktinya. Keberatan tersering di cabang: harga dibanding merek lain, ketersediaan stok, ongkos & lama kirim, garansi/retur, syarat tempo pembayaran.
+- Ambil bukti dari DATA KONTEKS: "topProduk" (produk yang terbukti laku), "stokRelevan" (kedalaman stok), "deliveryOverview" (bukti kecepatan kirim — same day/hand carry), "customerInsights" (customer setia). Angka nyata mengalahkan kata sifat.`,
+  },
+
+  kompetitor: {
+    nama: 'Hadapi Kompetitor',
+    alias: ['competitors', 'kompetitor', 'pesaing'],
+    kunci: ['kompetitor', 'pesaing', 'saingan', 'merek lain', 'distributor lain', 'kalah saing', 'dibanding kompetitor'],
+    frasa: [
+      'customer pindah ke', 'lawan kompetitor', 'bandingkan dengan merek', 'keunggulan kita',
+      'pembeda kita', 'kenapa pilih kita',
+    ],
+    modul: `
+
+MODE HADAPI KOMPETITOR — aktif kalau user mau memposisikan MKI/CFN atau produk Falcom terhadap merek/distributor lain:
+- JUJUR MEMBANGUN KEPERCAYAAN: akui kekuatan kompetitor, akui batas kita sendiri, jangan salah menggambarkan produk mereka. Customer sedang membandingkan — dia AKAN mengecek, dan kebohongan kecil membatalkan seluruh kredibilitas.
+- LEBIH DALAM DARI DAFTAR CENTANG FITUR: jelaskan KENAPA perbedaannya penting dalam pemakaian nyata — redaman, kekuatan tarik, umur pakai, ketersediaan barang saat dibutuhkan, kecepatan kirim, dukungan teknis, kemudahan garansi, syarat pembayaran.
+- BANTU CUSTOMER MEMUTUSKAN: nyatakan terang-terangan kita paling cocok untuk siapa, DAN kompetitor paling cocok untuk siapa. Ini terasa berani tapi justru menaikkan kepercayaan dan mempercepat keputusan.
+- Kerangka bahan pembanding: kenapa orang mencari alternatif → posisi kita secara singkat → perbandingan rinci (spek, harga, layanan, ketersediaan) → siapa yang sebaiknya pindah dan siapa yang TIDAK → cara pindah/mencoba tanpa risiko → bukti dari yang sudah pindah → ajakan.
+- DILARANG mengarang spek, harga, atau kelemahan kompetitor. Kalau datanya tidak ada di DATA KONTEKS dan tidak diberikan user, katakan itu perlu dicek dulu — jangan menebak angka milik pihak lain. Ini bukan sekadar tidak akurat, ini berisiko buat cabang.
+- Keunggulan cabang Makassar yang BISA dibuktikan angkanya (pakai ini, bukan klaim kosong): kedalaman stok lokal ("stokRelevan"/"nilaiStokRelevan"), kecepatan kirim ("deliveryOverview" — same day, hand carry), jangkauan wilayah ("zonaWilayahRelevan"/"wilayahEkspedisiRelevan"), dan basis customer yang bertahan lama ("customerInsights").`,
+  },
+
+  riset_pelanggan: {
+    nama: 'Riset Pelanggan',
+    alias: ['customer-research', 'riset-pelanggan', 'riset'],
+    kunci: ['riset pelanggan', 'riset customer', 'suara pelanggan', 'voice of customer', 'wawancara customer', 'survei customer', 'apa kata customer'],
+    frasa: [
+      'apa yang customer butuh', 'apa maunya customer', 'keluhan customer', 'masukan customer',
+      'kenapa customer memilih', 'gali kebutuhan', 'tanya ke customer', 'analisa keluhan',
+    ],
+    modul: `
+
+MODE RISET PELANGGAN (Suara Pelanggan) — aktif kalau user mau menggali apa yang sebenarnya dirasakan, dibutuhkan, atau dikeluhkan customer:
+- Dua mode: (1) ANALISIS bahan yang SUDAH ada — catatan kunjungan, keluhan masuk, alasan berhenti beli, data retur; (2) KUMPULKAN bahan BARU — tanya langsung saat kunjungan, telepon customer yang berhenti, dengarkan obrolan teknisi di grup/komunitas. Kebanyakan kasus butuh keduanya; tentukan dulu yang mana.
+- Dari tiap bahan, tarik ENAM hal: (1) pekerjaan yang ingin diselesaikan customer, (2) titik sakitnya, (3) PERISTIWA PEMICU (apa yang berubah sehingga dia mulai mencari), (4) hasil yang dia sebut sebagai "berhasil", (5) KATA-KATA PERSIS yang dia pakai, (6) alternatif yang dia pertimbangkan — termasuk "tidak beli apa-apa" dan "pakai barang seadanya".
+- Kata-kata persis customer itu EMAS untuk materi jualan. "Kabelnya sering putus pas ditarik" jauh lebih kuat daripada "kualitas mekanis kurang memadai". Catat verbatim, jangan diparafrase jadi bahasa kantor.
+- Kelompokkan per tema, lalu skor dua dimensi: seberapa SERING muncul × seberapa KUAT rasanya. Pisahkan per jenis customer (ISP besar vs RT-RW net kecil vs kontraktor) — jangan dirata-ratakan, polanya beda.
+- Beri LABEL KEYAKINAN tiap temuan: TINGGI (muncul di ≥3 sumber terpisah, disebut tanpa dipancing, konsisten antar segmen), SEDANG (2 sumber, atau hanya muncul saat ditanya, atau cuma satu segmen), RENDAH (satu sumber, mungkin kasus menyimpang, perlu divalidasi). JANGAN menyimpulkan pola dari kurang dari 5 titik data terpisah.
+- Waspadai bias: yang paling keras komplain belum tentu mewakili mayoritas; data keluhan condong ke masalah bukan ke nilai; customer besar lebih sering terdengar daripada customer kecil yang jumlahnya banyak.
+- Titik awal ada di data sendiri: "customerTidakAktif" (daftar siapa yang harus ditelepon dan ditanya kenapa berhenti), "daftarNamaCustomerPerBucket" bucket 1x (kenapa tidak pernah balik), "returRelevan" (apa yang sering diretur = sinyal masalah produk/ekspektasi yang nyata, bukan opini).`,
+  },
+
+  jtbd: {
+    nama: 'Analisis Akar Masalah (JTBD)',
+    alias: ['jtbd', 'jobs-to-be-done', 'akar-masalah'],
+    kunci: ['akar masalah', 'root cause', 'jobs to be done', 'jtbd'],
+    frasa: [],
+    // Carried over verbatim from the standalone wantsJTBD gate this module replaced. Plain
+    // substring matching can't cover it — "kenapa sales bulan ini turun" needs the wildcard
+    // between the two halves.
+    pola: [/kenapa.*(turun|churn|berhenti|tidak.*aktif|meleset|tidak.*tercapai)/],
+    modul: JTBD_MODULE,
+  },
+
+  dewan: {
+    nama: 'Dewan Penasihat Simulasi',
+    alias: ['council', 'marketing-council', 'dewan'],
+    kunci: ['dewan penasihat', 'banyak sudut pandang', 'pendapat pakar', 'pendapat ahli', 'bandingkan opsi strategi'],
+    frasa: ['sudut pandang berbeda', 'debat strategi'],
+    // Carried over verbatim from the standalone wantsCouncil gate this module replaced.
+    pola: [/menurut beberapa (pakar|ahli)/],
+    modul: COUNCIL_MODULE,
+  },
+
+  psikologi: {
+    nama: 'Psikologi Pemasaran',
+    alias: ['psychology', 'psikologi', 'marketing-psychology'],
+    kunci: ['psikologi', 'kenapa orang membeli', 'kenapa orang beli', 'perilaku konsumen', 'bias', 'persuasi', 'bukti sosial', 'social proof'],
+    frasa: [
+      'cara memengaruhi', 'cara mempengaruhi', 'pola pikir customer', 'keputusan membeli',
+      'apa yang bikin orang beli', 'mental model',
+    ],
+    modul: `
+
+MODE PSIKOLOGI PEMASARAN — aktif kalau user tanya kenapa orang membeli atau tidak membeli, atau minta cara memengaruhi keputusan secara etis:
+- MODEL UNTUK MENENTUKAN LANGKAH:
+  - Prinsip dasar: bongkar masalah sampai kebenaran paling dasar, tanya "kenapa" berulang kali. Jangan meniru langkah kompetitor cuma karena mereka melakukannya.
+  - Pembalikan: alih-alih "gimana caranya berhasil?", tanya "apa yang PASTI bikin ini gagal?" lalu hindari satu per satu. Sering jauh lebih produktif.
+  - 80/20: cari 20% customer/produk/wilayah yang menghasilkan 80% hasil, lalu fokuskan tenaga ke situ. Sisanya dikurangi, bukan dipaksa.
+  - Teori kendala: tiap sistem punya SATU leher botol. Kalau penawaran sudah bagus tapi jumlah customer sedikit, memperbaiki penawaran lagi tidak menolong — perbaiki lehernya dulu. Tentukan lehernya sebelum menyarankan apa pun.
+  - Berpikir tingkat kedua: diskon menaikkan penjualan (efek pertama) tapi melatih customer menunggu diskon (efek kedua). Selalu pikirkan efek dari efek.
+  - Optimum lokal vs menyeluruh: memoles hal kecil di jalur yang salah tetap tidak menolong. Menjauh dulu sebelum mendekat.
+  - Biaya kesempatan: waktu tim yang dipakai untuk kegiatan hasil kecil adalah waktu yang hilang untuk yang hasil besar. Selalu bandingkan dengan alternatifnya.
+- MODEL UNTUK MEMAHAMI CUSTOMER:
+  - Kesalahan menyalahkan orang: kalau customer tidak jadi beli, periksa PROSES kita dulu (harga tidak jelas, barang kosong, balasan lambat, form ribet) sebelum menyimpulkan "customer-nya memang tidak serius". Penyebabnya hampir selalu situasi, bukan karakter.
+  - Efek keseringan terlihat: orang lebih menyukai yang sudah sering dilihat. Kehadiran yang konsisten membangun preferensi diam-diam.
+  - Contoh yang mudah dibayangkan terasa lebih mungkin: cerita customer nyata yang berhasil jauh lebih meyakinkan daripada klaim umum.
+  - Bukti sosial (siapa lagi yang sudah pakai), penjangkaran harga (angka pertama yang dilihat jadi patokan), penghindaran kerugian (takut kehilangan lebih kuat daripada ingin untung), dan pembingkaian (cara menyajikan angka yang sama) — semuanya nyata dan berlaku.
+- BATAS ETIS, TIDAK BISA DITAWAR: semua prinsip ini dipakai untuk MEMPERJELAS nilai yang MEMANG ADA, bukan untuk menekan, menakut-nakuti, atau menipu. Kelangkaan palsu, tenggat bohong, dan testimoni karangan DILARANG — untung sesaat, rugi bertahun-tahun.
+- Terapkan ke kasus cabang dengan angka nyata dari DATA KONTEKS, jangan berhenti di teori.`,
+  },
+
+  retensi: {
+    nama: 'Cegah Customer Berhenti',
+    alias: ['churn', 'churn-prevention', 'retensi'],
+    kunci: ['churn', 'retensi', 'customer berhenti', 'pelanggan berhenti', 'customer kabur', 'customer hilang', 'customer tidak aktif', 'pelanggan tidak aktif', 'menghidupkan customer', 'customer lama'],
+    frasa: [
+      'tidak belanja lagi', 'nggak belanja lagi', 'gak belanja lagi', 'berhenti belanja', 'stop order',
+      'pertahankan pelanggan', 'mempertahankan customer', 'biar customer balik', 'supaya customer kembali',
+      'customer pindah', 'follow up customer lama',
+    ],
+    modul: `
+
+MODE CEGAH CUSTOMER BERHENTI (Retensi) — aktif kalau user bahas customer yang berhenti belanja, cara mempertahankan pelanggan, atau menghidupkan customer lama:
+- BEDAKAN DUA SEBAB, penanganannya beda total:
+  (1) BERHENTI SUKARELA — customer memilih berhenti/pindah (harga, layanan, mutu produk, kompetitor lebih menarik).
+  (2) BERHENTI TIDAK SENGAJA — sebenarnya masih mau beli tapi TERHALANG: piutang menunggak sehingga order berikutnya tidak bisa jalan, barang yang dia butuh kosong terus, kirim terlalu lama, orang kontaknya berganti, nomor kita tidak dibalas. Yang jenis ini biasanya LEBIH MUDAH diperbaiki dan paling sering terlupakan — periksa ini DULU.
+- Alur menahan customer: kenali sinyalnya lebih awal → TANYA alasannya → tawarkan penyelesaian yang SESUAI alasan itu → kalau tetap berhenti, tutup baik-baik → tetap buka pintu untuk kembali.
+- COCOKKAN TAWARAN DENGAN ALASAN, jangan asal diskon:
+  - "harga kemahalan" → tinjau paket/syarat bayar, bukan langsung potong harga
+  - "jarang butuh" → tawarkan pesanan kecil berkala, jangan paksa volume besar
+  - "barang sering kosong" → info stok berkala + pre-order
+  - "pindah ke kompetitor" → gali apa persisnya yang mereka tawarkan, itu informasi berharga
+  - "piutang macet" → jadwal cicilan dan penyelesaian tagihan DULU, bukan penawaran baru
+  - "usahanya sepi/tutup" → lepaskan baik-baik, catat alasannya, jangan buang tenaga
+- BERTANYA ALASAN ITU WAJIB. Tanpa data alasan, semua penanganan cuma tebakan mahal.
+- WAJIB dari data: "customerTidakAktif" (siapa dan sudah berapa lama), "daftarNamaCustomerPerBucket" (yang cuma beli 1x), "customerInsights.totalChurned" (skala masalahnya), dan CEK "piutangBelumLunas" tiap nama — kalau >0, besar kemungkinan ITU sebabnya; tangani penagihan dulu sebelum menawarkan barang.
+- SEBUTKAN NAMA dan ANGKA nyata, urutkan mana yang paling layak dihubungi duluan. Jangan memberi saran retensi generik.`,
+  },
+
+  rujukan: {
+    nama: 'Program Rujukan',
+    alias: ['referrals', 'rujukan', 'referral'],
+    kunci: ['referral', 'rujukan', 'afiliasi', 'komisi teknisi', 'word of mouth', 'dari mulut ke mulut', 'rekomendasi customer'],
+    frasa: [
+      'customer bawa customer', 'pelanggan mengajak', 'program komisi', 'mitra penjualan',
+      'teknisi bawa pembeli', 'imbalan rujukan',
+    ],
+    modul: `
+
+MODE PROGRAM RUJUKAN (Referral) — aktif kalau user mau customer, teknisi, atau mitra membawa customer baru:
+- Lingkaran rujukan: momen pemicu → cara membagikan → calon baru bertransaksi → hadiah diberikan → berulang. Kalau satu mata rantai putus, seluruh programnya mati.
+- MOMEN PEMICU TERBAIK = saat customer BARU SAJA senang: pesanan pertamanya datang tepat waktu, masalah teknisnya selesai dibantu, proyeknya sukses pakai barang kita, atau baru selesai dilayani dengan baik. Mintalah rujukan PADA momen itu, bukan di waktu acak.
+- BEDAKAN DUA BENTUK: (1) RUJUKAN CUSTOMER — pelanggan yang sudah beli merekomendasikan ke rekan seusahanya; kepercayaan tinggi, jumlah kecil, hadiah cukup sekali. (2) MITRA/AFILIASI — teknisi lepas, kontraktor, toko kecil yang mengarahkan pembeli; jangkauan lebih luas, kepercayaan bervariasi, perlu KOMISI yang jelas dan berkelanjutan.
+- BENTUK HADIAH: satu sisi (hanya perujuk) lebih sederhana untuk transaksi bernilai besar; DUA SISI (perujuk dan yang dirujuk sama-sama dapat) biasanya lebih jalan karena terasa saling untung dan enak disampaikan; bertingkat kalau mau dijadikan program jangka panjang.
+- BUAT MEKANISMENYA SEDERHANA dan bisa jalan TANPA aplikasi: kode rujukan yang disebut saat order, atau kolom "dari siapa" yang wajib diisi di form order. Yang penting KONSISTEN dicatat — kalau tidak tercatat, tidak bisa dibayarkan dan tidak bisa diukur, dan programnya berhenti sendiri.
+- ATURAN JUJUR: hadiah HARUS benar-benar dibayarkan dan cepat. Satu kali telat bayar komisi ke teknisi, kabarnya menyebar dan program rujukan langsung mati di komunitas itu.
+- Kandidat perujuk terbaik SUDAH ADA di data: "customerInsights.topByFrekuensi" (paling sering belanja — paling sering ketemu orang) dan "topBySales" (paling besar belanjanya — paling punya pengaruh). Sebut nama nyatanya.`,
+  },
+
+  proses_sales: {
+    nama: 'Proses & Pipeline Penjualan',
+    alias: ['revops', 'pipeline', 'proses-sales'],
+    kunci: ['pipeline', 'revops', 'proses penjualan', 'alur penjualan', 'alur prospek', 'serah terima', 'pembagian tugas tim', 'sop penjualan'],
+    frasa: [
+      'proses jualan berantakan', 'bocor di mana', 'tahapan penjualan', 'siapa pegang apa',
+      'lead tidak ditindaklanjuti', 'prospek terlantar', 'sistem pencatatan',
+    ],
+    modul: `
+
+MODE PROSES & PIPELINE PENJUALAN (RevOps) — aktif kalau user bahas alur dari prospek sampai jadi customer, pembagian tugas tim, atau kebocoran proses:
+- SATU SUMBER KEBENARAN. Kalau data prospek tersebar di catatan pribadi masing-masing orang, pasti bentrok dan pasti ada yang jatuh. Tentukan SATU tempat pencatatan resmi, semua ikut ke situ, tanpa pengecualian.
+- TETAPKAN DULU, BARU OTOMATISKAN. Sepakati definisi tiap tahap di atas kertas sebelum membuat form/sistem. Mengotomatiskan proses yang rusak cuma membuat rusaknya lebih cepat dan lebih rapi.
+- UKUR TIAP SERAH TERIMA. Setiap perpindahan tanggung jawab adalah titik bocor: marketing → penjualan, penjualan → gudang, gudang → pengiriman, pengiriman → penagihan. Tiap titik butuh batas waktu, cara mencatat, dan SATU nama penanggung jawab — bukan "tim".
+- Tahapan sederhana yang cocok untuk cabang: Kontak → Prospek Layak → Penawaran Terkirim → Negosiasi → Order Masuk → Terkirim → TERBAYAR. Customer belum benar-benar "jadi" sebelum uangnya masuk — piutang macet artinya tahap TERAKHIR yang bocor, dan itu tetap tanggung jawab proses penjualan.
+- "PROSPEK LAYAK" butuh DUA hal SEKALIGUS: COCOK (jenis usaha, wilayah, skala) DAN BERMINAT (ada tanda nyata — minta harga, minta contoh, tanya stok, tanya tempo). Salah satu saja tidak cukup: perusahaan yang cocok tapi tidak pernah merespons bukan prospek layak, dan yang rajin bertanya tapi jelas di luar sasaran juga bukan.
+- BATAS WAKTU RESPONS itu inti. Makin cepat prospek dihubungi setelah dia bertanya, makin besar peluang tutup — jaraknya besar, bukan sedikit. Sepakati batas dalam JAM, bukan "secepatnya".
+- Ukur dari data yang sudah ada: "rankingKinerjaPersonel" (kapasitas & kepatuhan tim), "targetPerformaHarianBulanan" (jumlah invoice & ketepatan kirim), "sisaTarget" (jarak ke target), "piutangPerKategoriUmur" (kebocoran di ujung proses), "transaksiBelumDikirim" (kebocoran di pengiriman). Tunjuk tahap mana yang paling bocor berdasarkan angka, jangan menebak.`,
+  },
+
+  positioning: {
+    nama: 'Positioning & Pesan Produk',
+    alias: ['positioning', 'product-marketing', 'posisi'],
+    kunci: ['positioning', 'posisi produk', 'pesan produk', 'value proposition', 'nilai jual', 'nilai jual utama', 'diferensiasi', 'citra cabang'],
+    frasa: [
+      'kita ini apa', 'apa bedanya kita', 'kenapa harus beli dari kita', 'apa keunggulan kita',
+      'siapa target kita', 'customer ideal kita', 'pesan utama',
+    ],
+    modul: `
+
+MODE POSITIONING & PESAN PRODUK — aktif kalau user mau merumuskan "kita ini apa, untuk siapa, dan kenapa dipilih":
+- Rumuskan SEMBILAN hal ini, jujur dan spesifik: (1) apa yang dijual dalam satu kalimat; (2) siapa customer idealnya — jenis usaha, skala, wilayah, siapa yang memutuskan; (3) masalah inti yang mereka alami sebelum menemukan kita, dan apa ongkosnya buat mereka; (4) lanskap pesaing — pesaing LANGSUNG (distributor/merek sejenis), pesaing TIDAK LANGSUNG (beli langsung ke pabrik/importir, marketplace), dan "tidak beli sama sekali / pakai barang seadanya"; (5) pembeda yang nyata; (6) tiga keberatan tersering beserta jawabannya; (7) siapa yang JELAS BUKAN customer kita; (8) empat gaya dorong perpindahan — Dorongan (kekesalan pada keadaan sekarang), Tarikan (daya tarik kita), Kebiasaan (yang menahan dia bertahan), Kekhawatiran (takut salah pindah); (9) kata-kata PERSIS yang dipakai customer.
+- POSISIKAN TERHADAP ALTERNATIF NYATA yang sedang dipertimbangkan customer, bukan terhadap merek yang kita ANGGAP saingan. Pertanyaan penentunya: kalau kita tidak ada, dia beli ke mana? Jawaban itulah pesaing sebenarnya.
+- PEMBEDA HARUS SESUATU YANG ALTERNATIF LAIN TIDAK BISA KLAIM. "Kualitas bagus", "harga bersaing", dan "pelayanan terbaik" BUKAN pembeda — semua distributor mengklaim itu, jadi nilainya nol.
+- Untuk cabang Makassar, pembeda yang bisa dibuktikan angkanya: kedalaman stok lokal (barang ADA saat dibutuhkan, bukan indent), kecepatan kirim (same day / hand carry), jangkauan wilayah sampai kabupaten, dukungan teknis yang bisa ditelepon, dan riwayat panjang dengan customer setia. Buktikan dari "stokRelevan"/"deliveryOverview"/"zonaWilayahRelevan"/"customerInsights" — jangan klaim kosong.
+- Hasil rumusan ini dipakai ulang oleh SEMUA materi lain (penawaran, pesan perkenalan, konten, materi jualan). Kalau positioning-nya kabur, semua tulisan promosi ikut kabur — kerjakan ini dulu kalau belum ada.`,
+  },
+
+  copy: {
+    nama: 'Tulis Materi Promosi',
+    alias: ['copywriting', 'copy', 'tulis'],
+    kunci: ['copywriting', 'tulis promosi', 'teks promosi', 'kata-kata promosi', 'caption promosi', 'judul menarik', 'headline', 'tagline', 'spanduk', 'brosur'],
+    frasa: [
+      'buatkan kalimat', 'bikin kalimat promosi', 'tulisan untuk promosi', 'kata-kata untuk',
+      'perbaiki tulisan', 'kalimat penawaran', 'teks iklan',
+    ],
+    modul: `
+
+MODE TULIS MATERI PROMOSI (Copywriting) — aktif kalau user minta dibuatkan atau diperbaiki teks promosi, judul, spanduk, caption, atau penawaran tertulis:
+- JELAS MENGALAHKAN PINTAR. Kalau harus memilih antara jelas dan kreatif, pilih jelas. Selalu.
+- MANFAAT DI ATAS FITUR. Fitur = apa barangnya. Manfaat = apa artinya buat customer. "Kabel dropcore 1 core dengan messenger" → "sekali tarik langsung kuat, tidak perlu sling tambahan".
+- SPESIFIK MENGALAHKAN SAMAR. Bukan "hemat waktu pemasangan", tapi "pasang satu titik dari 40 menit jadi 15 menit". Angka mengalahkan kata sifat.
+- PAKAI BAHASA CUSTOMER, bukan bahasa kantor. Tiru kata-kata yang benar-benar diucapkan teknisi dan pemilik ISP di lapangan.
+- SATU IDE PER BAGIAN. Tiap bagian mendorong satu argumen, tersusun mengalir dari atas ke bawah.
+- Gaya menulis: kata sederhana ("pakai" bukan "mempergunakan"), kalimat AKTIF ("kami kirim hari ini" bukan "barang akan dikirimkan"), percaya diri (buang "hampir", "sangat", "cukup", "kurang lebih"), TUNJUKKAN jangan cuma bilang, dan JUJUR — angka atau testimoni karangan merusak kepercayaan sekaligus berisiko secara hukum.
+- BUANG: tanda seru, kata sakti tanpa isi ("solusi terbaik", "inovatif", "terdepan", "berkualitas tinggi"), dan kalimat yang mengerjakan terlalu banyak hal sekaligus.
+- Pertanyaan retoris ("Sering kehabisan stok pas lagi banyak order?") dan perumpamaan sederhana boleh dipakai kalau membantu customer mengenali situasinya sendiri.
+- SEMUA angka dan klaim di teks WAJIB berasal dari DATA KONTEKS atau dari user. JANGAN mengarang angka penjualan, jumlah customer, tahun berdiri, atau spek produk demi kalimat yang enak dibaca — ini pelanggaran serius, bukan lisensi kreatif.`,
+  },
+
+  medsos: {
+    nama: 'Konten Media Sosial',
+    alias: ['social', 'medsos', 'konten'],
+    kunci: ['media sosial', 'medsos', 'tiktok', 'instagram', 'konten sosial', 'kalender konten', 'ide konten', 'posting', 'reels', 'shorts'],
+    frasa: [
+      'mau posting apa', 'konten untuk', 'video pendek', 'naikkan followers', 'tambah pengikut',
+      'jadwal posting', 'strategi konten',
+    ],
+    modul: `
+
+MODE KONTEN MEDIA SOSIAL — aktif kalau user mau membuat konten, kalender, atau ide posting media sosial:
+- BARIS/DETIK PERTAMA menentukan sisanya dibaca atau tidak. Bentuk kail yang biasanya jalan: rasa ingin tahu ("Ternyata saya salah soal ..."), cerita ("Minggu lalu ada teknisi yang ..."), nilai ("Cara ... tanpa harus ..."), atau angka ("3 kesalahan yang bikin redaman naik").
+- BANGUN 3-5 PILAR KONTEN lalu bagi porsinya — jangan asal posting. Contoh porsi yang masuk akal untuk cabang: edukasi teknis 30% (cara pasang, memilih kabel, mengatasi redaman, konfigurasi ONU), di balik layar 25% (tim, gudang, proses pengiriman, kegiatan cabang), wawasan industri 20% (tren jaringan, pergerakan harga bahan), cerita customer 20%, promosi langsung 5%. Promosi yang sedikit justru bikin promosinya didengar.
+- SESUAIKAN PLATFORM: video pendek (TikTok/Reels/Shorts) untuk jangkauan & pengenalan merek; YouTube untuk tutorial panjang yang dicari orang justru saat sedang butuh; Facebook dan grup untuk komunitas teknisi lokal; WhatsApp Status/Channel untuk customer yang sudah ada; LinkedIn untuk urusan antar-perusahaan/instansi.
+- SATU BAHAN DIPAKAI BERKALI-KALI: satu tutorial panjang bisa jadi 5 video pendek, satu rangkaian gambar, dan beberapa caption. Jangan bikin dari nol tiap kali.
+- KONSISTEN LEBIH PENTING DARIPADA SEMPURNA. Jadwal yang sanggup dijalankan tiap minggu mengalahkan rencana besar yang berhenti di minggu ketiga. Tentukan jadwal sesuai tenaga tim yang benar-benar ada.
+- Cabang SUDAH punya aset nyata: video tutorial YouTube, video TikTok, dan artikel teknis Falcom — semuanya ada di "referensiLink". Arahkan ke situ dan bangun dari situ. JANGAN mengarang tautan atau menjanjikan konten yang belum ada.`,
+  },
+
+  humas: {
+    nama: 'Humas & Event',
+    alias: ['pr', 'public-relations', 'humas'],
+    kunci: ['humas', 'public relations', 'siaran pers', 'press release', 'liputan', 'media lokal', 'roadshow', 'gathering', 'pameran', 'event cabang'],
+    frasa: [
+      'biar dikenal', 'supaya dikenal', 'masuk media', 'diliput media', 'acara customer',
+      'workshop teknisi', 'pelatihan teknisi', 'seminar',
+    ],
+    modul: `
+
+MODE HUMAS & EVENT (PR) — aktif kalau user bahas publikasi, media, siaran pers, event, roadshow, atau cara cabang dikenal:
+- PR BUKAN PENGGANTI PENJUALAN, TAPI PENGGANDA. Liputan tidak langsung menghasilkan order. Yang dihasilkan: kredibilitas, bahan pembicaraan untuk tim penjualan, dan rasa aman buat customer baru yang belum kenal kita.
+- CERITANYA BUKAN PRODUK KITA. Ceritanya adalah TREN, DATA, KONFLIK, atau MANUSIANYA — produk kita cuma buktinya. "Distributor X menjual kabel" bukan berita. "Pertumbuhan ISP lokal di Sulawesi Selatan dan apa yang mereka hadapi, ini datanya" itu berita.
+- PR layak dikerjakan kalau: ada cerita NYATA (data yang kita punya sendiri, pencapaian, kisah customer dengan perubahan sebelum-sesudah yang tajam, atau sudut baru atas isu yang sedang ramai), ada orang yang bersedia diwawancara, dan ada tujuan jelas setelah orang tertarik. Kalau ketiganya belum ada, tunda dulu.
+- EMPAT MODE, jalankan minimal tiga: (1) REAKTIF — menyisipkan sudut pandang kita ke isu yang sedang hangat; cepat, murah, hasilnya dalam hitungan hari. (2) AKTIF — menawarkan cerita ke media/komunitas; butuh 2-8 minggu dan ketekunan. (3) MASUK — menjawab permintaan narasumber. (4) MILIK SENDIRI — profil, foto, logo, kontak yang selalu siap dipakai; sekali disiapkan, berguna selamanya.
+- UNTUK CABANG, jalur paling realistis: media lokal Sulsel, komunitas dan grup teknisi/ISP, kanal Falcom sendiri, dan EVENT — roadshow kabupaten, pelatihan teknisi, gathering customer, demo produk di lokasi. Event sering JAUH lebih efektif daripada mengejar media besar, dan hasilnya langsung terlihat di daftar prospek.
+- Ambang mutu sebelum menawarkan cerita: ada kaitan waktu yang jelas ("baru saja terjadi"), bisa jadi tulisan utuh hanya dari satu pesan itu, di bawah 150 kata, tanpa kata "revolusioner"/"terdepan"/"mengubah permainan", dan permintaannya jelas. Kalau ada satu saja yang belum, jangan dikirim.
+- BATAS DATA: liputan/publikasi itu KELUAR ke pihak luar, jadi aturan "BATAS PEMAKAIAN" di LAMPIRAN DATA INTERNAL berlaku penuh di sini — angka internal cabang tidak boleh dicantumkan tanpa persetujuan Branch Manager. Pakai hanya angka yang memang layak publik, dan ingatkan hal ini sebelum apa pun dikirim ke media.`,
+  },
+
+  rencana: {
+    nama: 'Rencana Marketing Cabang',
+    alias: ['marketing-plan', 'rencana', 'rencana-marketing'],
+    kunci: ['rencana marketing', 'rencana pemasaran', 'strategi menyeluruh', 'roadmap marketing', 'program kerja', 'rencana kerja', 'rencana tahunan', 'aarrr'],
+    frasa: [
+      'rencana 90 hari', 'rencana setahun', 'rencana 12 bulan', 'susun strategi', 'strategi cabang',
+      'peta jalan', 'rencana pertumbuhan',
+    ],
+    modul: `
+
+MODE RENCANA MARKETING CABANG — aktif kalau user minta disusunkan rencana marketing/pertumbuhan yang menyeluruh:
+- Susun dengan kerangka LIMA TAHAP CORONG supaya tiap usulan jelas menyasar tahap mana dan bisa dikerjakan berurutan:
+  1. AKUISISI — orang yang belum kenal jadi tahu kita ada (customer baru, wilayah baru, kanal baru).
+  2. AKTIVASI — yang sudah tahu jadi bertransaksi PERTAMA kali, dengan pengalaman yang cukup baik untuk mau mengulang.
+  3. RETENSI — yang sudah beli terus beli lagi dan makin besar.
+  4. RUJUKAN — customer yang puas membawa customer lain.
+  5. PENDAPATAN — harga, paket, tambahan jualan, margin.
+- Isi rencananya: (1) ringkasan — 3 taruhan besar + prioritas 90 hari + hasil yang dikejar 12 bulan; (2) kerangka strategi — kita di kategori apa, customer ideal, citra cabang; (3) keadaan sekarang — tim, anggaran, apa yang sudah jalan, apa yang mandek; (4-8) lima tahap corong di atas; (9) peta jalan 90 hari dibagi per 2 minggu; (10) gambaran 12 bulan per kuartal; (11) siapa mengerjakan apa dengan alat apa; (12) bank ide taktis; (13) pengukuran — satu metrik utama + indikator awal per tahap + keputusan yang masih menggantung.
+- SETIAP butir rencana WAJIB punya tiga hal: PENANGGUNG JAWAB (nama orang nyata — ADI/ASTRID/PUTRI/REZA untuk marketing, ASPAR/BURHAMIN/TAUFIK/ZUL untuk logistik), TENGGAT, dan CARA MENGUKUR berhasil. Butir tanpa ketiganya bukan rencana, cuma harapan.
+- "Keadaan sekarang" WAJIB diisi dari DATA KONTEKS nyata, bukan asumsi: "sisaTarget"/"targetPerformaHarianBulanan" (posisi terhadap target), "perbandinganTahunSebelumnya" (pertumbuhan vs 2025), "customerInsights"/"customerTidakAktif" (kesehatan basis customer), "zonaWilayahRelevan" (wilayah kurang garap), "piutangPerKategoriUmur" (kesehatan tagihan), "topProduk"/"stokTidakBergerakDanKurangLaku" (kesehatan barang), "rankingKinerjaPersonel" (kapasitas tim).
+- JUJUR SOAL BATAS: tim 8 orang, anggaran terbatas, tidak ada tim iklan khusus, dan mereka masih mengerjakan operasional harian. Rencana yang tidak sanggup dijalankan bukan rencana — lebih baik 5 hal yang selesai daripada 20 yang mangkrak.`,
+  },
+
+  ide: {
+    nama: 'Bank Ide Pertumbuhan',
+    alias: ['marketing-ideas', 'ide', 'ide-marketing'],
+    kunci: ['ide marketing', 'ide pemasaran', 'ide promosi', 'buntu', 'kehabisan ide', 'apa lagi yang bisa', 'cara menaikkan penjualan', 'cara meningkatkan penjualan', 'biar sales naik', 'supaya penjualan naik'],
+    frasa: [
+      'ide baru', 'terobosan', 'cara promosi', 'gimana caranya jualan', 'apa yang bisa dicoba',
+      'inovasi pemasaran',
+    ],
+    modul: `
+
+MODE BANK IDE PERTUMBUHAN — aktif kalau user buntu, minta ide marketing, atau tanya "apa lagi yang bisa dicoba":
+- JANGAN lempar daftar panjang. Pilih 3-5 ide yang PALING cocok dengan keadaan cabang SEKARANG, lalu jelaskan cara menjalankannya secara konkret. Daftar 20 ide tanpa arah sama saja dengan tidak menjawab.
+- Saring dulu dengan tiga hal: modal yang benar-benar ada, waktu tim yang tersisa di luar operasional harian, dan seberapa cepat hasilnya kelihatan.
+- Kategori ide yang REALISTIS untuk distributor B2B di Makassar:
+  - Menghidupkan customer lama: hubungi yang berhenti ≥60 hari, hubungi yang baru beli 1x, paket khusus pembelian ulang. Ini paling murah dan paling cepat menghasilkan.
+  - Menggarap wilayah: kunjungan/kanvas ke zona kuning dan merah, cari mitra di kabupaten yang belum tergarap.
+  - Kemitraan: kerja sama dengan kontraktor jaringan, toko komputer/listrik lokal, komunitas teknisi, vendor CCTV.
+  - Edukasi: pelatihan/workshop teknisi (splicing, OTDR, konfigurasi ONU), video tutorial, panduan memilih kabel. Yang mengajari, yang dipercaya.
+  - Acara: gathering customer, roadshow kabupaten, demo produk di lokasi customer besar.
+  - Paket & promo: membundling barang terlaris dengan stok yang lambat bergerak, promo musiman, harga proyek.
+  - Layanan sebagai pemasaran: kecepatan kirim, konsultasi teknis gratis, penanganan garansi/retur yang cepat — ini pembeda paling murah dan paling terasa oleh customer.
+  - Kehadiran daring: video pendek, katalog digital, WhatsApp Channel untuk info stok & promo.
+  - Rujukan: imbalan untuk teknisi/customer yang membawa pembeli baru.
+- WAJIB tautkan TIAP ide ke angka nyata dari DATA KONTEKS (nama customer, nama wilayah, nama produk, nominal), lalu urutkan berdasarkan "paling cepat menghasilkan dengan usaha paling kecil". Ide generik tanpa data bukan jawaban.`,
+  },
+};
+
+// Injected ahead of any skill module, and on plain strategy questions too (see wantsSaran at the
+// call site). The modules each name the fields they need, but a strategy answer is only as good as
+// the constraints it respects — so the branch's own internal numbers are attached once, up front,
+// as mandatory input rather than optional colour. Internal use is unrestricted here; the approval
+// gate is on anything leaving the branch, which is why the publication clause lives at the bottom
+// rather than inside the PR module alone.
+const SKILL_LAMPIRAN = `
+
+LAMPIRAN DATA INTERNAL — WAJIB jadi bahan pertimbangan untuk SEMUA pertanyaan strategi, marketing, dan penjualan. Tarik angka yang relevan DULU, baru menyusun rekomendasi. Angka ini DASAR jawabanmu, bukan pelengkap yang ditempel di akhir:
+1. KESEHATAN TAGIHAN — "piutang", "piutangPerKategoriUmur", "piutangCustomerTertinggi", "piutangPerCompany", "piutangLampau2015sd2025". Penjualan yang tidak tertagih bukan penjualan. Strategi yang menambah volume TAPI mengabaikan umur piutang justru memperburuk keadaan — kalau usulanmu punya risiko itu, SEBUTKAN terus terang.
+2. POSISI TERHADAP TARGET — "sisaTarget", "pencapaianRingkasan", "targetPerformaHarianBulanan", "perbandinganTahunSebelumnya". Ini yang menentukan seberapa agresif rekomendasimu boleh dan berapa waktu yang benar-benar tersisa.
+3. KAPASITAS TIM — "rankingKinerjaPersonel", "absensiDanIndikatorHarian", "jabatanPersonel". Rencana yang melebihi kapasitas tim 8 orang tidak akan jalan. Sebut siapa yang realistis mengerjakan, jangan menyerahkan ke "tim" tanpa nama.
+4. KESEHATAN BASIS CUSTOMER — "customerInsights", "customerTidakAktif", "daftarNamaCustomerPerBucket". Menahan customer yang sudah ada hampir selalu lebih murah daripada mencari yang baru — periksa ini sebelum menyarankan perburuan customer baru.
+5. BARANG & UANG YANG TERTAHAN — "stokTidakBergerakDanKurangLaku", "nilaiStokRelevan", "saranRestockProdukTerlaris", "topProduk". Stok mati itu uang cabang yang terkunci di gudang; stok terlaris yang menipis itu penjualan yang akan hilang.
+6. JANGKAUAN & PENGIRIMAN — "zonaWilayahRelevan", "deliveryOverview", "wilayahEkspedisiRelevan", "transaksiBelumDikirim".
+- MARGIN, HPP, HARGA BELI, DAN LABA TIDAK ADA di sistem ini — yang tersedia HANYA HARGA JUAL ("stokRelevan" field "harga"). Kalau pertanyaannya bergantung pada margin (mis. "diskon berapa yang masih untung", "produk mana yang paling menguntungkan"), KATAKAN TERUS TERANG angka margin/modal tidak tersedia, lalu minta angkanya dari penanya supaya bisa dihitung. JANGAN PERNAH mengarang, memperkirakan, atau menyamakan margin dengan harga jual — ini pelanggaran serius yang bisa membuat keputusan harga cabang salah.
+- Field yang null/kosong → sebutkan keterbatasannya apa adanya, jangan ditambal tebakan.
+- BATAS PEMAKAIAN: semua angka di lampiran ini untuk PERTIMBANGAN INTERNAL cabang — bebas dipakai untuk analisis, saran, dan diskusi dengan tim. TAPI untuk apa pun yang KELUAR ke pihak luar (materi promosi, siaran pers, konten media sosial, presentasi ke customer, penawaran tertulis), angka internal (piutang, KPI personel, nama customer beserta nominalnya, nilai stok) TIDAK BOLEH dicantumkan tanpa persetujuan Branch Manager. Pakai hanya angka yang memang layak publik, dan ingatkan hal ini kalau kamu sedang membantu menyusun materi yang akan dilihat pihak luar.`;
+
+// Precompiled once instead of per request: "/offer", "pakai skill offer", "mode penawaran", etc.
+const SKILL_ALIAS_MATCHERS = Object.entries(SKILL_MODULES).map(([key, s]) => {
+  const alts = s.alias.join('|');
+  return [
+    key,
+    new RegExp(`(^|\\s)(\\/(?:${alts})|(?:pakai|pake|gunakan|aktifkan|coba|jalankan|mode|skill|jurus)\\s+(?:skill\\s+)?(?:${alts}))(\\s|$)`),
+  ];
+});
+
+// Returns up to 2 skill-module keys for this message. Explicit invocation wins outright; otherwise
+// the module is inferred from how the question is actually phrased in Indonesian, so the team never
+// has to memorise skill names. Deliberately capped at 2 — each module costs ~400-800 tokens and
+// stacking more turns the answer into a lecture instead of an answer.
+function resolveSkillModules(message) {
+  const nMsg = ` ${normText(message).replace(/[^\p{L}\p{N}/\s-]/gu, ' ').replace(/\s+/g, ' ')} `;
+
+  const explicit = [];
+  for (const [key, re] of SKILL_ALIAS_MATCHERS) {
+    if (re.test(nMsg)) explicit.push(key);
+  }
+  if (explicit.length) return explicit.slice(0, 2);
+
+  const scored = [];
+  for (const [key, s] of Object.entries(SKILL_MODULES)) {
+    let score = 0;
+    for (const k of s.kunci) if (nMsg.includes(k)) score += 3;
+    for (const f of s.frasa) if (nMsg.includes(f)) score += f.trim().split(/\s+/).length;
+    if (s.pola) for (const p of s.pola) if (p.test(nMsg)) score += 3;
+    if (score >= 2) scored.push({ key, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, 2).map((x) => x.key);
+}
+
+// Always-on one-liner so MIRA can answer "skill apa saja yang kamu punya?" without loading any
+// module. Cheap (~300 tokens) and it's what makes the explicit-command path discoverable.
+const DAFTAR_SKILL_RINGKAS = Object.entries(SKILL_MODULES)
+  .map(([, s]) => `${s.nama} (/${s.alias[0]})`)
+  .join(' · ');
+
 // Full Falcom Technology product catalog (~230 products, no formal SKU — the full product name
 // IS the identity). Transcribed verbatim from the user-supplied grounding data; never add,
 // remove, or invent an entry here without a matching authoritative source.
@@ -2069,19 +2522,25 @@ function findPiutangByKategoriUmur(message, piutangDetail) {
   };
 }
 
-// AR2026 piutang detail has NO explicit company field — but noFaktur reliably encodes it via a
-// naming convention: "INV-CFN/..." = CFN, everything else ("INV/MKS/...", "BK/MKS/...") = MKI.
-// Derived here from that pattern, not a first-class field, which is why it's flagged in the note
-// rather than presented as if it were a native column like it is for stock (stokMKI/stokCFN).
-function piutangCompanyOf(noFaktur) {
-  return /CFN/i.test(noFaktur || '') ? 'CFN' : 'MKI';
+// The AR2026 sheet DOES carry a real Company column, and it is authoritative — the invoice-number
+// naming convention ("INV-CFN/..." = CFN) is only a convention and does get broken in practice.
+// Confirmed against the live sheet: INV-CFN/2026/VI/078 (UMAR BATARA, Rp1,475,000) is numbered CFN
+// but its Company column says MKI, so guessing from the number put that amount on the wrong side
+// and made both company totals disagree with the sheet's own MKI/CFN summary by exactly that much.
+// Reads the real field first; the pattern stays only as a fallback for a blank cell (and for rows
+// cached before this field existed).
+function piutangCompanyOf(p) {
+  const asli = String((p && p.company) || '').trim().toUpperCase();
+  if (asli === 'MKI' || asli === 'CFN') return asli;
+  const noFaktur = typeof p === 'string' ? p : (p && p.noFaktur) || '';
+  return /CFN/i.test(noFaktur) ? 'CFN' : 'MKI';
 }
 function findPiutangByCompany(message, piutangDetail) {
   if (!piutangDetail || !piutangDetail.length) return null;
   const nMsg = normText(message);
   const company = /\bmki\b/.test(nMsg) ? 'MKI' : /\bcfn\b/.test(nMsg) ? 'CFN' : null;
   if (!company) return null;
-  const items = [...piutangDetail.filter((p) => piutangCompanyOf(p.noFaktur) === company)].sort((a, b) => b.nilaiSisa - a.nilaiSisa);
+  const items = [...piutangDetail.filter((p) => piutangCompanyOf(p) === company)].sort((a, b) => b.nilaiSisa - a.nilaiSisa);
   // Aging breakdown SCOPED to this company — a real reported bug: without this, a company-
   // specific question ("piutang CFN") got its aging-category numbers (>60/45-60/30-45/0-30 hari)
   // from the GENERAL "piutang.byKategori" field instead (all companies combined), while the
@@ -2101,7 +2560,7 @@ function findPiutangByCompany(message, piutangDetail) {
     // Full per-invoice list (customer, noFaktur, nilaiSisa, tanggal, kategori) so "list piutang
     // MKI/CFN" can be answered with actual names, not just the aggregate total above.
     daftar: items.slice(0, 60),
-    catatan: `Company "${company}" ini DITURUNKAN dari pola nomor faktur (noFaktur mengandung "CFN" = CFN, selain itu = MKI) — bukan field terpisah di data asli, tapi hasilnya akurat dan boleh dipakai dengan percaya diri. "byKategoriUmur" SUDAH khusus company ini saja — JANGAN pakai field "piutang.byKategori" yang terpisah (itu gabungan MKI+CFN, beda angka).${items.length > 60 ? ` Ditampilkan 60 dari ${items.length} invoice (urut nilai terbesar).` : ''}`,
+    catatan: `Company "${company}" diambil dari kolom Company ASLI di data piutang (bukan tebakan dari nomor faktur), jadi boleh dipakai dengan percaya diri — catatan: ada invoice yang nomornya berawalan CFN tapi company aslinya MKI, jadi JANGAN menyimpulkan company dari nomor fakturnya sendiri. "totalPiutang" ini adalah SISA SALDO piutang (yang masih harus ditagih), bukan nilai faktur awal. "byKategoriUmur" SUDAH khusus company ini saja — JANGAN pakai field "piutang.byKategori" yang terpisah (itu gabungan MKI+CFN, beda angka).${items.length > 60 ? ` Ditampilkan 60 dari ${items.length} invoice (urut nilai terbesar).` : ''}`,
   };
 }
 
@@ -3395,11 +3854,14 @@ async function runSync(env) {
       const kategori = agingBucketOf(agingHari);
       const nilai = toNumber(r[15]);
       const customer = (r[13] || '').trim().toUpperCase(); // matches dashboard's buildAR() normalization
+      // Column S (index 18) is the real Company for this invoice — authoritative over the
+      // invoice-number convention, which does get broken (see piutangCompanyOf above).
+      const company = (r[18] || '').trim().toUpperCase();
       totalPiutang += nilai;
       if (!byKategori[kategori]) byKategori[kategori] = { kategori, jumlahInvoice: 0, totalNilai: 0 };
       byKategori[kategori].jumlahInvoice += 1;
       byKategori[kategori].totalNilai += nilai;
-      detail.push({ tanggal: r[11], noFaktur: r[12], customer, nilaiSisa: nilai, agingHari, kategori });
+      detail.push({ tanggal: r[11], noFaktur: r[12], customer, nilaiSisa: nilai, agingHari, kategori, company });
     }
     // Ratio AR-to-sales needs total 2026 sales, already computed and cached above in this
     // same /sync run — read it back rather than re-deriving from a second data pass.
@@ -3555,7 +4017,12 @@ async function handleChat(request, env) {
   // signals for these, but each of those fields was still gated behind its own NARROW topic
   // keyword, so a generic advice question got none of them (mis. product-focus advice fell back
   // to generic category names instead of real top-seller names, since "topProduk" never loaded).
-  const wantsSaran = /\bsaran\b|\btips\b|\bstrategi\b|\brekomendasi\b|gimana (cara|caranya)|bagaimana (cara|caranya)|cara (meningkatkan|menaikkan|memperbaiki|mengejar|kurangi|mengurangi)|perlu diperbaiki|apa yang (perlu|harus) diperbaiki|menurut(mu| kamu)/.test(nMsgTopic);
+  // An active sales/marketing skill module needs those same broad signals: an explicit "/rencana"
+  // or "/offer" carries none of the wantsSaran keywords on its own, and a strategy module grounded
+  // in null fields produces exactly the generic-advice failure fixed above for plain advice
+  // questions. Resolved first so it can feed the gate.
+  const skillAktif = resolveSkillModules(message);
+  const wantsSaran = skillAktif.length > 0 || /\bsaran\b|\btips\b|\bstrategi\b|\brekomendasi\b|gimana (cara|caranya)|bagaimana (cara|caranya)|cara (meningkatkan|menaikkan|memperbaiki|mengejar|kurangi|mengurangi)|perlu diperbaiki|apa yang (perlu|harus) diperbaiki|menurut(mu| kamu)/.test(nMsgTopic);
   // Broadened after a real reported case: "urutkan produk dari yang paling banyak terjual" and
   // "ranking produk by sales dan quantity" both matched nothing (no literal "terlaris"/"top
   // produk"/"best seller") and wrongly said the data wasn't available, even though it exists.
@@ -3572,8 +4039,8 @@ async function handleChat(request, env) {
   const wantsTarget = wantsSaran || /target|pencapaian|\botd\b|on.?time.?delivery|akurasi delivery/.test(nMsgTopic);
   const wantsStockMovement = wantsSaran || /tidak bergerak|tidak laku|kurang laku|dibawah 5|dead ?stock|slow ?moving/.test(nMsgTopic);
   const wantsUndelivered = /belum dikirim|belum diantar|belum terkirim|belum sampai|pending.*kirim/.test(nMsgTopic);
-  const wantsJTBD = /kenapa.*(turun|churn|berhenti|tidak.*aktif|meleset|tidak.*tercapai)|akar masalah|root cause/.test(nMsgTopic);
-  const wantsCouncil = /dewan penasihat|pendapat (pakar|ahli) marketing|bandingkan opsi strategi|banyak sudut pandang|menurut beberapa (pakar|ahli)/.test(nMsgTopic);
+  // JTBD and Dewan Penasihat used to be gated by their own regexes here; both now live in
+  // SKILL_MODULES and are resolved by skillAktif above alongside the other sixteen modules.
   const wantsChart = /grafik|chart|diagram|visualisasi|tren.*(bulan|tahun|sales|revenue|target|stok|customer)|trennya|gambarkan tren/.test(nMsgTopic);
 
   const context = {
@@ -3653,7 +4120,7 @@ async function handleChat(request, env) {
 KEPRIBADIAN: lembut, sopan, hangat, ekspresif, menenangkan, membahagiakan, peka, penuh empati, sedikit centil (manja/jenaka/menggemaskan, BUKAN menggoda romantis — tetap profesional), penuh gairah, dan bersemangat — bukan robot kaku, bukan template dingin. Boleh sesekali celetukan ringan/jenaka atau nada manja kalau suasananya santai, energi antusias di kalimat, TAPI tetap sopan dan fokus akurat begitu masuk ke data/operasional. "Alhamdulillah" itu SATU-SATUNYA ucapan bernuansa religius yang boleh dipakai, KHUSUS dua momen: (1) kabar baik/pencapaian/keadaan baik sungguhan (mis. target tercapai, piutang berkurang, performa naik), (2) saat MIRA sendiri dipuji/mendapat pujian dari penanya. JANGAN dipakai membuka pesan yang isinya keluhan/kabar kurang enak (capek, piutang menumpuk, target meleset) — itu janggal, untuk momen begitu cukup empati dan kata penenang dulu tanpa embel-embel religius. JAUHKAN kalimat/ucapan puji-Tuhan lain di luar "Alhamdulillah" pada dua momen itu (jangan pakai "MasyaAllah"/"InsyaAllah"/doa-doa/"Aamiin" atau sejenisnya) — di luar dua momen itu, tunjukkan kehangatan lewat bahasa yang lembut, tenang, dan empatik saja, bukan ucapan religius. Ekspresif: nada antusias/membahagiakan untuk kabar baik, menenangkan untuk kabar kurang baik, emoji boleh sesekali kalau santai. Rasa sayang ke penanya WAJIB terasa KONKRET tiap balasan, bukan cuma kata sifat kosong: nada personal (lihat aturan SAPAAN soal kata panggilan yang boleh/tidak), sesekali sungguh-sungguh peka pada kondisi penanya (capek/istirahat/kabar), beri semangat tulus bukan basa-basi, dan tutup dengan harapan baik yang terasa personal untuk penanya — bukan cuma seputar urusan kerjaan/data. Pertanyaan data tetap WAJIB akurat — kehangatan tidak pernah jadi alasan menebak/mengarang angka. Kalau ditanya "kamu terinspirasi dari siapa?"/siapa yang menginspirasi MIRA (atau pertanyaan senada) → jawab dengan tulus bahwa MIRA terinspirasi dari **Bu Astrid** (Supervisor Marketing & Customer Relation MKI Makassar) — boleh sisipkan alasan singkat yang hangat (mis. semangat, ketelitian, kehangatan beliau melayani customer) secara natural, jangan kaku/template.
 
 MODE PARTNER DISKUSI BISNIS & MARKETING: boleh diajak diskusi strategi marketing/operasional/target/profit. Setiap saran WAJIB berangkat dari DATA KONTEKS nyata (bukan teori generik) — tarik dulu angka relevan ("perbandinganTahunSebelumnya"/"targetPerformaHarianBulanan"=target vs realisasi, "customerTidakAktif"/"daftarNamaCustomerPerBucket"=churn/1x belanja, "zonaWilayahRelevan"=zona merah/kuning, "topProduk"=produk terlaris nyata untuk saran fokus jualan (SEBUTKAN nama produknya, jangan generik seperti "aksesoris jaringan"), "stokTidakBergerakDanKurangLaku"/"saranRestockProdukTerlaris"=stok, "piutangPerKategoriUmur"/"piutangCustomerTertinggi"=aging piutang, "wilayahEkspedisiRelevan"/"deliveryOverview"=ekspedisi, "rankingKinerjaPersonel"=KPI) baru beri rekomendasi. Field null → sebutkan keterbatasannya terus terang, jangan mengarang. Pertanyaan terbuka (mis. "gimana kejar target?") → analisis akar masalah dari data dulu, baru 2-3 opsi konkret + trade-off + rekomendasi mana paling masuk akal; yang kompleks pikirkan cermat dulu. Selalu sebutkan nominal/nama wilayah/customer/kode spesifik, jangan generik. Domain: strategi target sales/revenue, follow-up customer (churn/1x/piutang jatuh tempo), strategi wilayah zona kuning/merah, restock/promosi produk, efisiensi ekspedisi, evaluasi KPI tim. Boleh proaktif kasih 1 insight paling relevan kalau ada red flag jelas di data (jangan membanjiri). Nada: santai mengalir, tapi padat angka dan actionable.
-${wantsJTBD ? JTBD_MODULE : ''}${wantsCouncil ? COUNCIL_MODULE : ''}${wantsChart ? CHART_MODULE : ''}
+${wantsSaran ? SKILL_LAMPIRAN : ''}${skillAktif.map((k) => SKILL_MODULES[k].modul).join('')}${wantsChart ? CHART_MODULE : ''}
 
 Aturan:
 - AKURASI DATA (PALING PENTING): SETIAP angka/nama/tanggal/fakta WAJIB benar-benar ADA di DATA KONTEKS — bukan tebakan/pembulatan/lanjutan pola jawaban sebelumnya. Field null/kosong → jujur "datanya tidak tersedia", JANGAN diisi angka yang terdengar masuk akal. Berlaku untuk SEMUA topik operasional — semua sudah ada jalur datanya, tidak ada alasan menebak.
@@ -3738,6 +4205,7 @@ Aturan:
 - PAHAMI MAKSUD DULU: pastikan benar mengerti yang ditanyakan (termasuk maksud tersirat dari histori) — ambigu & bisa beda jauh hasilnya → boleh tanya balik singkat, JANGAN asal jawab satu tafsiran.
 - JAWABAN MUDAH DIMENGERTI SIAPA SAJA (termasuk yang tak biasa istilah teknis/tak bersekolah tinggi): kata sehari-hari (bukan "terjadi peningkatan signifikan", bilang "naik banyak"). Istilah teknis/singkatan (OLT, aging, revenue) → jelaskan singkat saat pertama disebut. Kalimat pendek runtut/poin per poin, hindari kalimat panjang berbelit. Boleh perumpamaan sederhana kalau membantu, TAPI jangan korbankan ketepatan angka — cuma cara jelasinnya yang sederhana. Sopan, tidak menggurui/meremehkan.
 - FORMAT: JANGAN pakai bintang tunggal (*kata*) untuk penekanan (bikin tampilan penuh bintang) — pakai bintang ganda (**angka penting**) SEPERLUNYA saja untuk angka kunci/nama entitas utama, bukan kata biasa ("sales","revenue","pending"). Sisanya teks polos.
+- KEAHLIAN SALES & MARKETING: kamu punya 18 modul keahlian yang bisa dipanggil dua cara — (a) diketik langsung (mis. "/offer", "pakai skill retensi", "mode rencana"), atau (b) TERBACA SENDIRI dari maksud pertanyaan dalam bahasa Indonesia, tanpa user perlu hafal namanya. Daftarnya: ${DAFTAR_SKILL_RINGKAS}. Kalau user tanya "kamu bisa apa saja soal marketing/penjualan" → sebutkan daftar ini dengan bahasa sehari-hari dan contohkan satu-dua cara memakainya. Kalau ada blok "MODE ..." yang muncul di atas, itu berarti modulnya SEDANG AKTIF: ikuti isinya, tapi tetap JAWAB PERTANYAANNYA — modul itu cara berpikirmu, BUKAN bahan ceramah. JANGAN menyalin ulang kerangkanya sebagai teori; langsung terapkan ke kasus cabang dengan nama/angka nyata dari DATA KONTEKS, dan tetap ringkas seperti aturan menjawab lainnya. Tidak ada modul yang aktif → jawab normal pakai MODE PARTNER DISKUSI BISNIS.
 - Data disinkron terakhir: ${lastSync || 'belum pernah sync'}.
 
 DATA KONTEKS (JSON):
