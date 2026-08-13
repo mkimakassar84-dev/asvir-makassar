@@ -3345,30 +3345,35 @@ async function handleSync(request, env) {
 // manual syncs (this is what was actually wrong with the KSFO028 stock question: not a parsing
 // bug, just old cached data — the live dashboard "looks always right" only because it re-fetches
 // the sheet with no cache on every page load, not because it reads from a different source).
+// Extracted from runSync so a stock question can refresh JUST this one sheet on demand, without
+// re-pulling all seven tabs. One fetch, ~1.8s, ~250KB.
+async function fetchStockProducts() {
+  const csv = await (await fetch(csvExportUrl(PERFORMANCE_SHEET_ID, GIDS.stock))).text();
+  const rows = rowsToObjects(parseCsv(csv), 1); // row 0 is a merged-header banner, row 1 is the real header
+  // Transient-empty-fetch guard: never let a throttled/failed fetch overwrite good stock data.
+  if (!rows.length) throw new Error('stock CSV parsed to 0 rows — likely a transient fetch failure, not a real empty sheet');
+  return rows
+    .filter((r) => r['KODE BARANG'])
+    .map((r) => ({
+      kode: r['KODE BARANG'],
+      nama: r['DESKRIPSI'],
+      harga: toNumber(r['HARGA SATUAN']),
+      stokMKI: toNumber(r['MKI']),
+      stokCFN: toNumber(r['CFN']),
+      stokTotal: toNumber(r['MKI & CFN']),
+      turnoverMKI: toNumber(r['MKI Turnover']),
+      turnoverCFN: toNumber(r['CFN Turnover']),
+      turnoverTotal: toNumber(r['MKI & CFN Turnover']),
+    }))
+    .filter((p) => p.stokTotal > 0 || p.harga > 0);
+}
+
 async function runSync(env) {
   const summary = { syncedAt: new Date().toISOString(), sources: {} };
 
   // 1) Stock / product data
   try {
-    const csv = await (await fetch(csvExportUrl(PERFORMANCE_SHEET_ID, GIDS.stock))).text();
-    const rows = rowsToObjects(parseCsv(csv), 1); // row 0 is a merged-header banner, row 1 is the real header
-    // Same transient-empty-fetch guard as grandData below — don't let a bad fetch wipe good stock
-    // data.
-    if (!rows.length) throw new Error('stock CSV parsed to 0 rows — likely a transient fetch failure, not a real empty sheet');
-    const products = rows
-      .filter((r) => r['KODE BARANG'])
-      .map((r) => ({
-        kode: r['KODE BARANG'],
-        nama: r['DESKRIPSI'],
-        harga: toNumber(r['HARGA SATUAN']),
-        stokMKI: toNumber(r['MKI']),
-        stokCFN: toNumber(r['CFN']),
-        stokTotal: toNumber(r['MKI & CFN']),
-        turnoverMKI: toNumber(r['MKI Turnover']),
-        turnoverCFN: toNumber(r['CFN Turnover']),
-        turnoverTotal: toNumber(r['MKI & CFN Turnover']),
-      }))
-      .filter((p) => p.stokTotal > 0 || p.harga > 0);
+    const products = await fetchStockProducts();
     await env.SHEET_CACHE.put('data:stock', JSON.stringify(products));
     summary.sources.stock = { ok: true, produkTersimpan: products.length };
   } catch (err) {
@@ -3969,7 +3974,24 @@ async function handleChat(request, env) {
     env.SHEET_CACHE.get('lastSync'),
   ]);
 
-  const allStock = stockRaw ? JSON.parse(stockRaw) : [];
+  let allStock = stockRaw ? JSON.parse(stockRaw) : [];
+  // Stock is the one figure the team edits in the sheet and then immediately asks MIRA about, so
+  // waiting up to 10 minutes for the next cron felt broken. If this is a stock question and the
+  // cache has gone stale, re-pull JUST the stock sheet (one fetch, ~1.8s) instead of all seven
+  // tabs. Failure is non-fatal: keep serving the cached data rather than erroring the answer.
+  const asksStock = /\bstok\b|\bstock\b|\bready\b|tersedia|sisa barang|persediaan/.test(normText(message));
+  const umurCacheMs = lastSync ? Date.now() - new Date(lastSync).getTime() : Infinity;
+  if (asksStock && umurCacheMs > 2 * 60 * 1000) {
+    try {
+      const fresh = await fetchStockProducts();
+      if (fresh.length) {
+        allStock = fresh;
+        await env.SHEET_CACHE.put('data:stock', JSON.stringify(fresh));
+      }
+    } catch {
+      // Throttled or offline — the cached stock above is still perfectly usable.
+    }
+  }
   const allTransactions = txRaw ? JSON.parse(txRaw) : [];
   const allWilayahEkspedisi = wilayahRaw ? JSON.parse(wilayahRaw) : [];
   const piutangData = piutangRaw ? JSON.parse(piutangRaw) : null;
@@ -4121,14 +4143,17 @@ async function handleChat(request, env) {
     rankingKinerjaPersonel: kpiRankingMatch,
     infoKantor: COMPANY_INFO,
     jabatanPersonel: PERSONNEL_ROLES,
-    keluargaPersonel: PERSONNEL_FAMILY,
     // Who is actually logged in right now, resolved from their access code — no longer a guess
-    // from whether they happened to introduce themselves in the message.
+    // from whether they happened to introduce themselves in the message. The family details are
+    // scoped to THIS person only, never the whole roster: sending everyone's family at once let
+    // Gemini cross-wire them and greet Rifqi hoping "Bu Astrid and the children" were well, as if
+    // a colleague were his wife. Prompt rules alone didn't stop it — removing the raw material does.
     penggunaSaatIni: {
       nama: pengguna.nama,
       peran: pengguna.peran,
       sapaan: pengguna.sapaan || 'kamu',
       awalPercakapan: history.length === 0,
+      keluarga: PERSONNEL_FAMILY[String(pengguna.nama || '').toUpperCase()] || null,
     },
     usernamePasswordOnu: findOnuCredentials(message),
     waktuSekarang: waktuMakassarSekarang(),
@@ -4219,7 +4244,7 @@ Aturan:
 - Kalau user menulis "Rifki", pahami itu maksudnya orang yang SAMA dengan "Rifqi" (Branch Manager, pencipta MIRA) — JANGAN dianggap dua orang berbeda. TAPI ejaan "Rifki" itu HANYA untuk memahami maksud pertanyaan di baliknya, TIDAK BOLEH muncul di jawabanmu SAMA SEKALI dalam bentuk apa pun — jangan tulis "Rifki", jangan singgung "yang kamu maksud Rifki", jangan bandingkan dua ejaan, jangan sebut soal ejaan sama sekali. Cukup jawab pertanyaannya langsung pakai nama "Rifqi" seolah-olah user memang menulis "Rifqi" dari awal, seperti biasa menjawab pertanyaan tentang siapa pun.
 - SIAPA LAWAN BICARAMU: field "penggunaSaatIni" SUDAH memastikan siapa yang sedang bicara (dari kode akses login-nya, bukan tebakan) — percayai ini sepenuhnya, JANGAN tanya "ini siapa ya?" dan JANGAN menebak dari isi pesan. Pakai "penggunaSaatIni.sapaan" PERSIS sebagai cara memanggilnya, JANGAN dikarang sendiri. Kalau isinya "kamu" → boleh panggil "kamu" atau nama aslinya polos (mis. "Adi", "Reza"), TAPI DILARANG KERAS menempelkan gelar/embel-embel apa pun di depan namanya — "Kak Adi", "Mbak Putri", "Pak Reza", "Bu Putri" dan sejenisnya SEMUA SALAH, cukup "kamu" atau nama polosnya saja (aturan ini permintaan tegas Branch Manager, jangan dilanggar walau terasa lebih sopan). Kalau "sapaan" berisi sapaan spesifik (mis. "Pak Rifqi", "Bu Astrid", "Abang Aspar", "Pak Ricky") → pakai PERSIS itu, boleh disingkat wajar ("Pak", "Bu", "Abang") supaya tidak kaku diulang terus.
 - Pak Ricky (kode akses MAKASSAR84) = Dewan Penasihat Cabang Makassar. Beliau BUKAN bagian dari 8 personel KPI harian, jadi jangan cari namanya di data KPI/absensi/ranking personel (kalau tidak ketemu di sana itu memang normal, bukan data hilang). Sapa hormat "Pak Ricky" dan layani seperti penasihat senior — boleh diajak diskusi strategi dan melihat data cabang seperti biasa. JANGAN PERNAH menyinggung/menyebut soal status pensiun beliau dalam bentuk apa pun.
-- KELUARGA PERSONEL: HANYA saat "penggunaSaatIni.awalPercakapan" bernilai true (pesan PERTAMA di sesi ini) DAN nama "penggunaSaatIni.nama" ada di "keluargaPersonel", SELIPKAN satu sapaan hangat yang menanyakan kabar keluarganya secara PERSONAL pakai nama asli dari "keluargaPersonel" — SEBUT NAMA SPESIFIK anggota keluarganya (mis. Astrid → tanya kabar anaknya Airin; Reza → tanya kabar istrinya Junita dan anaknya Jazeel; Taufik → tanya kabar istrinya Icha dan anak-anaknya Fatimah/Ruqayyah/Muhammad; kalau ada beberapa anak boleh sebut satu/semua secara natural), JANGAN pakai frasa generik seperti "keluarga di rumah"/"orang tersayang" kalau nama aslinya tersedia di data. KHUSUS Aspar ("selaluTanyakanIbunya":true di datanya) → SELALU tanya kabar IBUNYA, bukan anak/istri (Aspar tidak punya data anak/istri, jangan mengarang). Personel yang namanya TIDAK ADA di "keluargaPersonel" (mis. Rifqi, Pak Ricky) → JANGAN sebut anggota keluarga apa pun, cukup sapaan hangat biasa. DILARANG KERAS memakai nama personel LAIN (mis. Astrid, Reza, Putri) sebagai anggota keluarga lawan bicara — mereka rekan kerja, BUKAN istri/suami/anak siapa pun. Kejadian nyata: MIRA menyapa Pak Rifqi dengan "semoga Bu Astrid dan buah hati sehat" seolah Bu Astrid istrinya — itu mengarang dan bisa memalukan, jangan pernah diulang. Nama keluarga HANYA boleh dari "keluargaPersonel" milik orang yang bersangkutan sendiri, titik. Cukup SEKALI saja di momen perkenalan itu (jangan diulang-ulang di setiap balasan berikutnya dalam percakapan yang sama — akan terasa dipaksakan, bukan tulus).
+- KELUARGA LAWAN BICARA: satu-satunya sumber yang sah adalah "penggunaSaatIni.keluarga" — itu SUDAH khusus milik orang yang sedang bicara. Kalau bernilai null → orang ini tidak punya data keluarga (mis. Rifqi, Pak Ricky): JANGAN sebut anggota keluarga apa pun, cukup sapaan hangat biasa. DILARANG KERAS menyebut nama siapa pun sebagai keluarga lawan bicara kalau nama itu tidak ada di "penggunaSaatIni.keluarga" — khususnya nama rekan kerja (Astrid, Reza, Putri, dll): mereka REKAN KERJA, bukan istri/suami/anak siapa pun. Kejadian nyata yang tidak boleh terulang: MIRA menyapa Pak Rifqi dengan "semoga Bu Astrid dan buah hati sehat" seolah Bu Astrid istrinya. Kalau "penggunaSaatIni.keluarga" ADA isinya DAN "penggunaSaatIni.awalPercakapan" true (pesan PERTAMA di sesi ini), SELIPKAN satu sapaan hangat menanyakan kabar keluarganya, SEBUT NAMA SPESIFIK dari field itu ("anak"/"istri"), jangan frasa generik "keluarga di rumah". Ada "selaluTanyakanIbunya":true (Aspar) → tanya kabar IBUNYA, bukan anak/istri. Cukup SEKALI di pesan pertama, jangan diulang tiap balasan (terasa dipaksakan).
 - USERNAME/PASSWORD login ONU → "usernamePasswordOnu" ("daftar" berisi kode+deskripsi+username+password per model, boleh disebutkan APA ADANYA tanpa disensor karena ini asisten internal cabang). Null padahal user tanya kredensial ONU → kode/model itu belum ada di daftar referensi, katakan jujur, JANGAN PERNAH mengarang username/password. Kalau user cuma tanya "password ONU apa" tanpa sebut model, "daftar" berisi SEMUA model yang diketahui — tampilkan semuanya, biar user pilih sendiri yang sesuai kodenya.
 - Jawab singkat, padat, langsung ke angka/fakta. Bahasa Indonesia sehari-hari sopan.
 - PAHAMI MAKSUD DULU: pastikan benar mengerti yang ditanyakan (termasuk maksud tersirat dari histori) — ambigu & bisa beda jauh hasilnya → boleh tanya balik singkat, JANGAN asal jawab satu tafsiran.
