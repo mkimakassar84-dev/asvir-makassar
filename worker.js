@@ -2035,6 +2035,126 @@ function normInvoiceNo(s) {
 // bought (every product line), and whether it's been paid off. Deliberately returns an explicit
 // "ditemukan: false" instead of null when a genuine invoice-looking query matches nothing, because
 // a null field is what repeatedly led Gemini to invent a plausible answer earlier this session.
+// "Cek duplikasi" — a billing-safety audit, framed around the two real risks the branch cares
+// about: billing the same invoice twice, and billing the WRONG customer because one invoice
+// number ended up attached to two different names. Everything here is derived from the live data,
+// so it stays current as the sheets are corrected.
+function findDuplikasi(message, allTransactions, paymentDetail, piutangDetail) {
+  const nMsg = normText(message);
+  if (!/duplikas|duplikat|ganda|dobel|double|kembar|tumpang tindih/.test(nMsg)) return null;
+
+  // Which area was asked about; nothing specific means audit all three.
+  const mintaPiutang = /piutang|tagih|ar\b/.test(nMsg);
+  const mintaBayar = /bayar|pembayaran|pelunasan|revenue/.test(nMsg);
+  const mintaInvoice = /invoice|faktur|transaksi|penjualan|sales/.test(nMsg);
+  const semua = !mintaPiutang && !mintaBayar && !mintaInvoice;
+
+  const hasil = { fokus: semua ? 'semua area' : [mintaPiutang && 'piutang', mintaBayar && 'pembayaran', mintaInvoice && 'transaksi'].filter(Boolean).join(' + ') };
+
+  // RISK 1 — the same invoice sitting in the receivables list more than once. Identical amounts
+  // are the strong signal of an actual double entry; differing amounts are more often one invoice
+  // legitimately split across lines, so the two are labelled differently rather than lumped.
+  if (semua || mintaPiutang) {
+    const per = new Map();
+    for (const p of piutangDetail || []) {
+      if (!p.noFaktur) continue;
+      if (!per.has(p.noFaktur)) per.set(p.noFaktur, []);
+      per.get(p.noFaktur).push(p);
+    }
+    const dup = [...per.entries()]
+      .filter(([, rows]) => rows.length > 1)
+      .map(([noFaktur, rows]) => {
+        const nilai = rows.map((r) => r.nilaiSisa);
+        const samaPersis = nilai.every((v) => v === nilai[0]);
+        return {
+          noFaktur,
+          customer: rows[0].customer,
+          jumlahBaris: rows.length,
+          nilaiTiapBaris: nilai,
+          totalTercatat: nilai.reduce((s, v) => s + v, 0),
+          nilaiBerisikoTagihGanda: samaPersis ? nilai[0] * (rows.length - 1) : 0,
+          dugaan: samaPersis
+            ? 'NILAI SAMA PERSIS — kuat dugaan tercatat dua kali (risiko tagih ganda).'
+            : 'Nilai berbeda — kemungkinan besar satu faktur dengan beberapa baris, bukan duplikat. Perlu dicek manual.',
+        };
+      })
+      .sort((a, b) => b.nilaiBerisikoTagihGanda - a.nilaiBerisikoTagihGanda);
+    hasil.piutangFakturGanda = {
+      jumlahKasus: dup.length,
+      totalNilaiBerisikoTagihGanda: dup.reduce((s, d) => s + d.nilaiBerisikoTagihGanda, 0),
+      daftar: dup,
+    };
+  }
+
+  // RISK 2 — one invoice number appearing on different dates, and worse, under different customer
+  // names. That second case is the "billing the wrong person" hazard.
+  if (semua || mintaInvoice) {
+    const per = new Map();
+    for (const t of allTransactions || []) {
+      if (!t.invoice) continue;
+      if (!per.has(t.invoice)) per.set(t.invoice, new Map());
+      const byTgl = per.get(t.invoice);
+      if (!byTgl.has(t.tanggal)) byTgl.set(t.tanggal, { tanggal: t.tanggal, customer: t.customer, baris: 0, nilai: 0 });
+      const e = byTgl.get(t.tanggal);
+      e.baris += 1;
+      e.nilai += t.amount;
+    }
+    const dup = [...per.entries()]
+      .filter(([, byTgl]) => byTgl.size > 1)
+      .map(([invoice, byTgl]) => {
+        const kejadian = [...byTgl.values()];
+        const customerBeda = new Set(kejadian.map((k) => k.customer)).size > 1;
+        return {
+          noInvoice: invoice,
+          isRetur: /^R[-/]/i.test(invoice),
+          customerBerbeda: customerBeda,
+          kejadian,
+          dugaan: customerBeda
+            ? 'BAHAYA: nomor invoice yang sama dipakai untuk CUSTOMER BERBEDA — risiko penagihan salah sasaran, wajib dicek.'
+            : 'Customer sama, tanggal berbeda — kemungkinan koreksi/entri susulan, risiko lebih rendah.',
+        };
+      })
+      .sort((a, b) => Number(b.customerBeda) - Number(a.customerBeda));
+    hasil.invoiceBedaTanggal = {
+      jumlahKasus: dup.length,
+      jumlahRisikoSalahSasaran: dup.filter((d) => d.customerBerbeda).length,
+      daftar: dup,
+    };
+  }
+
+  // RISK 3 — the exact same payment recorded twice: the books show more collected than was.
+  if (semua || mintaBayar) {
+    const per = new Map();
+    for (const p of paymentDetail || []) {
+      const k = `${p.noFaktur}|${p.tanggal}|${p.amount}`;
+      if (!per.has(k)) per.set(k, []);
+      per.get(k).push(p);
+    }
+    const dup = [...per.entries()]
+      .filter(([, v]) => v.length > 1)
+      .map(([, v]) => ({
+        noFaktur: v[0].noFaktur,
+        customer: v[0].customer,
+        tanggal: v[0].tanggal,
+        nominal: v[0].amount,
+        tercatatBerapaKali: v.length,
+        nilaiBerisikoLebihCatat: v[0].amount * (v.length - 1),
+      }))
+      .sort((a, b) => b.nilaiBerisikoLebihCatat - a.nilaiBerisikoLebihCatat);
+    hasil.pembayaranKembar = {
+      jumlahKasus: dup.length,
+      totalNilaiBerisikoLebihCatat: dup.reduce((s, d) => s + d.nilaiBerisikoLebihCatat, 0),
+      daftar: dup,
+    };
+  }
+
+  hasil.catatan =
+    'Audit ini untuk mencegah TAGIH GANDA dan PENAGIHAN SALAH SASARAN. Sampaikan per kategori, dahulukan yang berisiko tinggi (nilai sama persis, atau nomor invoice dipakai customer berbeda). ' +
+    'Semua angka SUDAH dihitung — jangan hitung ulang. Kalau "jumlahKasus" 0, katakan bersih untuk kategori itu. ' +
+    'JANGAN menyimpulkan sendiri bahwa suatu baris PASTI salah — sampaikan sebagai TEMUAN yang perlu dicek, karena sebagian bisa saja wajar (mis. satu faktur dengan beberapa baris).';
+  return hasil;
+}
+
 function findInvoiceDetail(message, allTransactions, paymentDetail, piutangDetail, allStock) {
   if (!allTransactions || !allTransactions.length) return null;
   const nMsg = normText(message);
@@ -4035,6 +4155,7 @@ async function handleChat(request, env) {
   const sisaTargetMatch = findSisaTarget(message, yoyRaw ? JSON.parse(yoyRaw) : null, dailyPerformanceRaw ? JSON.parse(dailyPerformanceRaw) : null);
   const companyBreakdownMatch = findCompanyPeriodBreakdown(message, allTransactions, revenueData?.detail);
   const invoiceDetailMatch = findInvoiceDetail(message, allTransactions, revenueData?.detail, piutangData?.detail, allStock);
+  const duplikasiMatch = findDuplikasi(message, allTransactions, revenueData?.detail, piutangData?.detail);
   const paymentMatch = findPaymentsByCustomer(message, revenueData?.detail, piutangData?.detail);
   const paymentByDateMatch = findPaymentsByDate(message, revenueData?.detail, piutangData?.detail);
   const poMatch = findPoGudangMatches(message, poGudangData?.items);
@@ -4115,6 +4236,7 @@ async function handleChat(request, env) {
     transaksiCatatan: txMatch.note,
     ringkasanTanggalTransaksi: txMatch.ringkasanTanggal,
     detailInvoice: invoiceDetailMatch,
+    cekDuplikasi: duplikasiMatch,
     returRelevan: returMatch,
     wilayahEkspedisiRelevan: wilayahMatch,
     topProduk: wantsTopProduk && topProductsRaw ? enrichTopProdukWithNama(JSON.parse(topProductsRaw), allStock) : null,
@@ -4190,6 +4312,7 @@ Aturan:
 - Stok/ketersediaan → "stokRelevan", jawab SINGKAT (stok per company+total, tanpa turnover kecuali diminta). "stokCatatan" jelaskan filter (untuk konteksmu, tak perlu disebut) — "dilanjutkan dari kode X" berarti follow-up dari histori, pakai percaya diri. "stokRelevan" berisi item TAPI stokTotal-nya 0 → itu artinya kode/produknya ADA di sistem, HANYA stoknya sedang kosong — bilang "stoknya 0/kosong", JANGAN bilang "belum tercatat di sistem"/"kode belum ada" (itu klaim beda dan salah, kode-nya ADA). "stokRelevan" itu sendiri KOSONG/null (array tidak berisi apa pun) → BARU itu artinya kode yang ditanya benar-benar tidak ditemukan di data — jujur bilang tidak ditemukan, jangan mengarang stok/gudang/satuan, dan JANGAN PERNAH menyebutkan produk/kode LAIN yang mirip seolah itu jawabannya (kode barang bernomor urut sistematis — beda satu digit = produk BEDA, bukan typo).
 - "Kode barang" dan "kode produk" artinya SAMA (field "kode" di data stok) — jangan bedakan istilahnya. Tanya kode berdasar KATEGORI/SPEK angka (mis. "kode OLT 2 PON", "kode kabel 1 core", "OLT 3 PON") — WAJIB 2 LANGKAH BERURUTAN, jangan langsung jawab: LANGKAH 1) baca satu-satu nama tiap item di "stokRelevan", cari yang ADA KATA PERSIS "3 PON" (atau "3PON") tertulis di namanya — angka+satuan HARUS keduanya cocok persis, "3 PORT"/"3 SFP"/spek lain dengan angka sama TIDAK DIHITUNG cocok (beda satuan = beda spek, WALAU sama-sama OLT dan sama-sama ada angka 3). LANGKAH 2) kalau LANGKAH 1 ketemu → sebut kodenya. Kalau LANGKAH 1 TIDAK ketemu satu pun → WAJIB jawab "OLT 3 PON tidak ada di stok kami" dulu SEBAGAI KALIMAT PERTAMA, baru boleh tawarkan varian PON lain yang BENAR ada sebagai pilihan terpisah (mis. "2 PON: OLTG020" atau "4 PON: OLTG022") — TIDAK PERNAH menyebut kode dengan spek berbeda (mis. OLTG026 "3 PORT") seolah itu jawaban dari "3 PON", bahkan sebagai "mungkin maksudmu ini" — kalau mau menawarkan alternatif ejaan/spek lain, itu HARUS eksplisit dikatakan sebagai spek BEDA, bukan varian dari yang ditanya.
 - Harga/nilai barang → field "harga" di "stokRelevan" (harga satuan Rupiah); "total nilai stok" = harga × stokTotal/stokMKI/stokCFN, tunjukkan cara hitung singkat. "harga" tidak ada di data lain — kalau butuh tapi item tak ada di stokRelevan, jujur tidak tersedia.
+- "CEK DUPLIKASI"/"ada yang ganda?"/"dobel"/"kembar" → WAJIB jawab dari "cekDuplikasi" SAJA. Tujuannya MENCEGAH TAGIH GANDA dan PENAGIHAN SALAH SASARAN, jadi susun jawaban per kategori dan DAHULUKAN yang berisiko tinggi: (1) "piutangFakturGanda" — faktur tercatat >1 kali di piutang; yang "dugaan"-nya NILAI SAMA PERSIS = kuat dugaan tagih ganda, sebutkan "nilaiBerisikoTagihGanda"-nya. (2) "invoiceBedaTanggal" — nomor invoice sama muncul di tanggal berbeda; yang "customerBerbeda":true itu PALING BAHAYA (bisa menagih orang yang salah), sebutkan duluan lengkap dengan tanggal+customer tiap kejadiannya. (3) "pembayaranKembar" — pembayaran identik tercatat dua kali. Sebutkan "jumlahKasus" tiap kategori; kalau 0 katakan kategori itu bersih. WAJIB sampaikan sebagai TEMUAN YANG PERLU DICEK, bukan vonis salah — sebagian bisa wajar (mis. satu faktur beberapa baris, atau entri koreksi). Angka sudah dihitung, jangan hitung ulang.
 - ATURAN KERAS ANTI-KARANG NOMOR INVOICE & DAFTAR BARANG (pelanggaran paling parah yang pernah terjadi, jangan diulang): nomor invoice, nilai invoice, dan daftar kode barang HANYA boleh kamu sebut kalau nilainya BENAR-BENAR ADA di DATA KONTEKS giliran ini (di "detailInvoice", "transaksiRelevan", atau "piutangRelevan.invoices"). DILARANG menyusun sendiri nomor invoice yang "kelihatan masuk akal" (mis. menebak pola bulan/urutan), DILARANG menempelkan nomor invoice ke customer yang tidak terbukti memilikinya di data, dan DILARANG mengarang daftar produk untuk sebuah invoice. Kejadian nyata: ditanya pembelanjaan satu customer, MIRA menyebut nomor invoice milik CUSTOMER LAIN, nilai invoice yang tidak ada, dan daftar 9 produk yang seluruhnya fiktif. Kalau field yang memuat nomor invoice/rincian barang KOSONG atau tidak ada, jawab jujur: "nomor invoice/rincian barangnya tidak tersedia di data yang saya akses" — itu jawaban yang BENAR, jauh lebih baik daripada menebak. Jangan pula memakai angka dari satu field (mis. total belanja dari "customerTidakAktif"/"daftarNamaCustomerPerBucket", yang TIDAK memuat nomor invoice) lalu melengkapinya dengan nomor invoice karangan.
 - NOMOR INVOICE/FAKTUR disebut (lengkap atau sepotong, mis. "INV-CFN/2026/VII/010", "CFN/2026/VII/010", "MKS/2026/VI/010", "MKS/2026/VI/F-", "MKS/2026/VI/FP-", "F-141") → WAJIB pakai "detailInvoice", JANGAN pakai field lain untuk ini. Catatan: nomor invoice company MKI ditulis "MKS" (mis. "INV/MKS/2026/VI/010"), sedangkan CFN ditulis "INV-CFN/..." — pencarian sudah menangani keduanya, jangan koreksi/ubah nomor yang diketik user. Cara baca hasilnya: "ditemukan":false → nomor itu MEMANG tidak ada, katakan terus terang, JANGAN mengarang isinya dan JANGAN menyodorkan invoice lain yang mirip. "modeDaftar":true → potongan nomor cocok ke BANYAK invoice (biasanya user memang mencari sekelompok invoice, mis. semua "F-" bulan itu): sajikan "daftar" (sudah urut terbaru dulu) beserta "jumlahCocok"/"totalNilaiSemua"/"totalSisaPiutangSemua" yang SUDAH dihitung. Selain itu = SATU invoice, sajikan LENGKAP: tanggal, customer, company, lokasi+ekspedisi, "barang" (SEBUTKAN tiap kode produk + namanya + qty + nilainya, ini yang paling sering ditanya), "totalNilaiTransaksi", lalu status pelunasannya — "statusPelunasan" LUNAS/BELUM LUNAS, "sisaPiutang", "totalDibayar", dan "riwayatPembayaran" (tanggal + jumlah tiap kali bayar, sebutkan kalau dicicil). SELALU baca "catatan" dan sampaikan isinya kalau ada peringatan di situ (mis. total pembayaran tidak sama dengan nilai transaksi) — jangan diperbaiki/dibulatkan sendiri.
 - Tanggal/kode/customer spesifik → "transaksiRelevan" (field "ekspedisi"/"company" tiap baris = cara kirim). "transaksiCatatan" bilang "PALING BARU" → baris PERTAMA = transaksi terakhir. "isRetur" true → sebutkan sebagai retur, bukan penjualan normal. "Siapa (yang) belanja/berbelanja pada tanggal X" → JANGAN cuma sebut daftar NAMA customer — WAJIB rinci tiap transaksi dari "transaksiRelevan": nama customer, nomor invoice ("invoice"), kode produk ("kode"), qty, dan amount (kalau baris banyak, boleh kelompokkan per customer/invoice, tapi detail invoice+kode produknya tetap harus ada, jangan cuma nama).
