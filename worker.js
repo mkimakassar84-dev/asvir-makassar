@@ -381,7 +381,15 @@ PETA SEBARAN WILAYAH — kalau user minta GRAFIK/GAMBAR/PETA soal WILAYAH, ZONA,
   \`\`\`
 - "provinsi" WAJIB disalin apa adanya dari "zonaWilayahRelevan.provinsi" (tiap item sudah punya "kode", "zona", "total"). JANGAN mengarang kode provinsi dan JANGAN menebak zonanya — kode yang salah akan mewarnai pulau yang salah.
 - "zona" hanya "hijau", "kuning", atau "merah". Provinsi yang tidak kamu sebutkan otomatis digambar abu-abu (belum ada data).
-- Peta ini menggambarkan SEBARAN antar provinsi. Kalau yang diminta justru peringkat kabupaten/kota (mis. "grafik 10 wilayah teratas"), pakai "bar" biasa — bukan peta.`;
+- Peta ini menggambarkan SEBARAN antar provinsi. Kalau yang diminta justru peringkat kabupaten/kota (mis. "grafik 10 wilayah teratas"), pakai "bar" biasa — bukan peta.
+
+GRAFIK KINERJA PERSONEL — kalau user minta GRAFIK/GAMBAR soal KINERJA, KEPATUHAN, atau PERBANDINGAN PERSONEL/KARYAWAN/TIM, pakai "type":"personel". Batangnya berisi foto tiap orang, seperti kartu "Perbandingan Kepatuhan per Personel" di dashboard:
+  \`\`\`chart
+  {"type":"personel","title":"Perbandingan Kepatuhan per Personel","personel":[{"nama":"ASTRID","persen":100},{"nama":"REZA","persen":98.4}]}
+  \`\`\`
+- Ambil dari "rankingKinerjaPersonel.ranking": "nama" dan "kepatuhanPersen" jadi "persen". JANGAN mengarang nama atau angka.
+- Foto hanya tersedia untuk delapan nama ini: ASTRID, ADI, REZA, PUTRI, BURHAMIN, ZUL, ASPAR, TAUFIK. Nama lain tetap boleh dimasukkan, batangnya digambar polos berwarna.
+- Warna batang mengikuti kepatuhannya sendiri (hijau >=80%, kuning >=50%, merah di bawahnya) — kamu tidak perlu menentukan warna.`;
 
 // ==== MODUL SKILL SALES & MARKETING ====
 // Twenty condensed Indonesian modules distilled from the installed marketing/sales skill library
@@ -3770,7 +3778,11 @@ async function findKpiRanking(message, kpiData, env) {
   // mentionsOtherTopic so this doesn't hijack "kinerja cabang"/"kinerja penjualan" questions.
   const mentionsOtherTopic = /\bcabang\b|perusahaan|penjualan|\bsales\b|\bproduk\b|\bwilayah\b|piutang|\bstok\b|\brevenue\b/.test(nMsg);
   const aboutPersonnel = !mentionsOtherTopic && /karyawan|personel|staff|\bstaf\b|\btim\b|anggota tim|siapa yang|\bkinerja\b/.test(nMsg);
-  if (!wantsRanking || (!mentionsJamKerja && !aboutPersonnel)) return null;
+  // "Grafik kinerja personel" names no superlative and no ranking word, so it used to fall
+  // through and MIRA answered that the data was not available — while the data was sitting right
+  // there. A request to DRAW the team's performance is a request for the same ranking.
+  const wantsGrafik = /grafik|chart|diagram|bagan|visual|gambar|kepatuhan|perbandingan/.test(nMsg);
+  if ((!wantsRanking && !wantsGrafik) || (!mentionsJamKerja && !aboutPersonnel)) return null;
 
   // "Siapa karyawan terbaik JULI?" — the KV cache (data:kpi) only ever holds the CURRENT month's
   // teamOverview (overwritten every cron cycle), so a question naming a DIFFERENT month silently
@@ -4349,6 +4361,24 @@ async function runSync(env) {
     // ledger (retur excluded), because the sheet's own totals count retur and disagreed with
     // every other invoice figure MIRA reports. Sheet totals are kept alongside under a clearly
     // different name so the KPI board number is still traceable, never interchangeable.
+    // Daily target board (KPI MONITORING columns A-D, rows 10/11/13). The branch works to these
+    // exact figures, so MIRA must quote them rather than derive its own. Asked "target hari ini"
+    // before this existed, MIRA divided the monthly target by an assumed 25 working days and
+    // answered Rp70,7 juta — the board says Rp83,5 juta. Column B is today's realisation and
+    // column D the sheet's own achieved/not-achieved mark, both carried along so the answer can
+    // say how far today has got without a second lookup.
+    const selHarian = (baris) => {
+      const r = allRows[baris - 1] || [];
+      return { label: (r[0] || '').trim(), realisasi: toNumber(r[1]), target: toNumber(r[2]), status: (r[3] || '').trim() };
+    };
+    const targetHarian = {
+      sales: selHarian(10),
+      invoice: selHarian(11),
+      revenue: selHarian(13),
+      catatan: 'Angka target harian resmi cabang, disalin apa adanya dari papan KPI MONITORING. JANGAN dihitung sendiri dari target bulanan dibagi jumlah hari kerja.',
+    };
+    await env.SHEET_CACHE.put('data:targetHarian', JSON.stringify(targetHarian));
+
     const invoiceLedgerRaw = await env.SHEET_CACHE.get('data:invoicePerWilayah');
     const invoiceLedger = invoiceLedgerRaw ? JSON.parse(invoiceLedgerRaw) : null;
     const wilayahData = [];
@@ -4593,7 +4623,7 @@ async function handleChat(request, env) {
     stockRaw, perfRaw, piutangRaw, kpiRaw, txRaw, wilayahRaw,
     revenueRaw, poGudangRaw, topProductsRaw, deliveryRaw, customerInsightsRaw, fo1coreRaw,
     yoyRaw, zonaWilayahRaw, dailyPerformanceRaw, stockMovementRaw, undeliveredRaw, customerBucketsRaw,
-    customerActivityRaw, lastSync,
+    customerActivityRaw, targetHarianRaw, lastSync,
   ] = await Promise.all([
     env.SHEET_CACHE.get('data:stock'),
     env.SHEET_CACHE.get('data:performance'),
@@ -4614,6 +4644,7 @@ async function handleChat(request, env) {
     env.SHEET_CACHE.get('data:undelivered'),
     env.SHEET_CACHE.get('data:customerBuckets'),
     env.SHEET_CACHE.get('data:customerActivity'),
+    env.SHEET_CACHE.get('data:targetHarian'),
     env.SHEET_CACHE.get('lastSync'),
   ]);
 
@@ -4793,6 +4824,10 @@ async function handleChat(request, env) {
     perbandinganTahunSebelumnya: (wantsTarget || wantsYoy) ? yoyData : null,
     zonaWilayahRelevan: zonaMatch,
     targetPerformaHarianBulanan: wantsTarget && dailyPerformanceRaw ? JSON.parse(dailyPerformanceRaw) : null,
+    // Always sent, never gated behind a keyword: "target hari ini" gets asked in too many shapes
+    // to guard, the payload is a handful of numbers, and the cost of it being missing was MIRA
+    // inventing a daily target by dividing the monthly one by an assumed 25 working days.
+    targetHarianResmi: targetHarianRaw ? JSON.parse(targetHarianRaw) : null,
     stokTidakBergerakDanKurangLaku: wantsStockMovement && stockMovementRaw ? JSON.parse(stockMovementRaw) : null,
     transaksiBelumDikirim: wantsUndelivered && undeliveredRaw ? JSON.parse(undeliveredRaw) : null,
     referensiLink: referensi,
@@ -4876,6 +4911,7 @@ Aturan:
 - Customer lama tidak belanja rentang hari spesifik, nama spesifik, ATAU follow-up umum tanpa rentang → "customerTidakAktif" (default churn ≥60hr untuk follow-up umum, BUKAN null). Beda dari "customerInsights.totalChurned" (cuma total). "modeCustomerSpesifik":true → field "customer" satu orang. False → "daftar" banyak orang urut PALING LAMA. Null padahal jelas ditanya → kata kunci tak terdeteksi, minta rentang/nama.
 - Kaitkan customer tidak aktif/1x-belanja dengan PIUTANG: "daftarNamaCustomerPerBucket"/"customerTidakAktif" punya "piutangBelumLunas" per customer (0=tak ada tagihan). >0 (apalagi besar) → WAJIB sampaikan sebagai insight, kemungkinan itu SEBAB belum belanja lagi — sarankan PENAGIHAN dulu (atau bareng follow-up), bukan cuma "hubungi jualan lagi". =0 → murni kandidat follow-up biasa.
 - Boleh proaktif kasih SARAN operasional/penjualan kalau diminta, DASARKAN pada data (bukan taktik di luar itu): bucket "1x"/churn≥60hr = kandidat follow-up (cek piutangBelumLunas dulu); stok tidak bergerak = kandidat promo; piutang aging/tertinggi = kandidat penagihan; topProduk = acuan fokus stok/promosi. Sebutkan NAMA/DATA KONKRET, bukan saran generik.
+- TARGET HARI INI / TARGET HARIAN ("target hari ini", "target harian kita berapa", "hari ini targetnya apa") → WAJIB dari "targetHarianResmi", JANGAN PERNAH dihitung sendiri dari target bulanan dibagi hari kerja. Sebutkan ketiganya: sales ("sales.target"), invoice ("invoice.target"), revenue ("revenue.target"). Tiap bagian juga punya "realisasi" (pencapaian hari ini) dan "status" dari papan KPI — sebutkan supaya jelas sudah tercapai atau belum. Kalau field ini kosong barulah katakan datanya belum tersedia.
 - TARGET SALES/REVENUE (Rupiah, bulanan/tahunan) + perbandingan tahun lalu → "perbandinganTahunSebelumnya": "months" (12 bulan, tiap ada "targetSalesRevenue"=target Rupiah SATU angka dipakai sales&revenue, plus sales2025/2026 rev2025/2026). Target bulan tertentu → cari di "months" pakai "label". Target tahunan → "totalTarget" (sudah dijumlah, jangan hitung ulang). PENTING: target HANYA ada untuk 2026 — 2025 tak punya target tercatat (cuma realisasi). "Komparasi target 2025&2026" → WAJIB jujur tak ada target 2025, yang bisa dibandingkan REALISASI 2025 vs 2026 + pencapaian ke target 2026 ("achievementSalesPersen"/"achievementRevPersen") — JANGAN mengarang target 2025. Pertumbuhan dibanding tahun lalu → "growthSalesPersen"/"growthRevPersen" (SUDAH periode setara: hanya bulan yang berjalan di 2026 vs bulan sama 2025 — pakai ini). Rincian & daftar bulannya di "pertumbuhanPeriodeSetara". Field "pertumbuhanTidakSetaraJanganDipakai" membandingkan 2025 penuh dengan 2026 sebagian — JANGAN dipakai menyimpulkan naik/turun. Beda dari "targetPerformaHarianBulanan" (target OPERASIONAL invoice/OTD, bukan Rupiah) — tentukan dari konteks pertanyaan mana yang dimaksud.
 - "Zona wilayah" (merah/kuning/hijau by jumlah invoice, beda dari ekspedisi), "wilayah tanpa pembelanjaan", zona per provinsi → "zonaWilayahRelevan". Zona: hijau>50, kuning 20-50, merah<20. Baca "tipe": "ringkasan" → pertanyaan umum soal zona/wilayah: sebutkan "jumlahWilayah", sebaran "jumlahPerZona", "wilayahTeratas", dan soroti "wilayahZonaMerah" sebagai yang perlu digarap. "satuWilayah"/"perZona"/"tanpaPembelanjaan" → sesuai namanya.
 - Target performa OPERASIONAL harian/bulanan (invoice 280/bulan, OTD 80% — BUKAN Rupiah, itu di atas) → "targetPerformaHarianBulanan"/bulan (invoiceUnik, pencapaianInvoicePersen, otdAccuracyPersen).

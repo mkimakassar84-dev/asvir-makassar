@@ -461,6 +461,112 @@
     }
   }
 
+  // ==== Grafik kepatuhan personel (batang berisi foto) ====
+  // The dashboard draws this with a custom Chart.js plugin. Here it is drawn straight onto a
+  // canvas: the bars are photographs, which Chart.js has no notion of, and the whole point in
+  // MIRA is that the result can be sent as an image. Photo is top-aligned inside the bar so the
+  // face stays visible even when the bar is short, with a colour strip along its base — the same
+  // treatment the dashboard uses.
+  const KEPATUHAN_WARNA = { baik: '#7c9470', sedang: '#c99a3a', kurang: '#b5564a' };
+  const warnaKepatuhan = (persen) => (persen >= 80 ? KEPATUHAN_WARNA.baik : persen >= 50 ? KEPATUHAN_WARNA.sedang : KEPATUHAN_WARNA.kurang);
+  const fotoCache = {};
+  function fotoPersonel(nama) {
+    const kunci = String(nama || '').trim().toLowerCase();
+    if (fotoCache[kunci]) return fotoCache[kunci];
+    const img = new Image();
+    img.src = './assets/personel/' + kunci + '.jpg';
+    fotoCache[kunci] = img;
+    return img;
+  }
+
+  async function renderPersonel(bubbleEl, spec) {
+    const orang = (spec.personel || []).filter((p) => p && p.nama);
+    if (!orang.length) return;
+    const LEBAR = 1000, ATAS = 64, TINGGI = 300, BAWAH = 44, KIRI = 58, KANAN = 20;
+    const canvas = document.createElement('canvas');
+    canvas.width = LEBAR;
+    canvas.height = ATAS + TINGGI + BAWAH;
+    canvas.className = 'mt-2 w-full rounded-xl';
+    bubbleEl.appendChild(canvas);
+    try {
+      // Wait for every photo before drawing — a half-loaded image would be baked into the PNG.
+      await Promise.all(
+        orang.map((p) => new Promise((selesai) => {
+          const img = fotoPersonel(p.nama);
+          if (img.complete) return selesai();
+          img.addEventListener('load', selesai, { once: true });
+          img.addEventListener('error', selesai, { once: true });
+        }))
+      );
+
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = PALET.kertas;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#4a3b2f';
+      ctx.font = '600 22px system-ui, sans-serif';
+      ctx.fillText(spec.title || 'Perbandingan Kepatuhan per Personel', 24, 36);
+
+      // Sumbu persen
+      ctx.font = '12px system-ui, sans-serif';
+      for (let p = 0; p <= 100; p += 10) {
+        const y = ATAS + TINGGI - (p / 100) * TINGGI;
+        ctx.strokeStyle = PALET.grid;
+        ctx.beginPath();
+        ctx.moveTo(KIRI, y + 0.5);
+        ctx.lineTo(LEBAR - KANAN, y + 0.5);
+        ctx.stroke();
+        ctx.fillStyle = '#9a8873';
+        ctx.textAlign = 'right';
+        ctx.fillText(p + '%', KIRI - 8, y + 4);
+      }
+
+      const areaLebar = LEBAR - KIRI - KANAN;
+      const slot = areaLebar / orang.length;
+      const lebarBatang = Math.min(slot * 0.74, 128);
+      orang.forEach((p, i) => {
+        const persen = Math.max(0, Math.min(100, Number(p.persen) || 0));
+        const tinggiBatang = (persen / 100) * TINGGI;
+        const x = KIRI + slot * i + (slot - lebarBatang) / 2;
+        const y = ATAS + TINGGI - tinggiBatang;
+        const warna = warnaKepatuhan(persen);
+        if (tinggiBatang > 0) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(x, y, lebarBatang, tinggiBatang);
+          ctx.clip();
+          const img = fotoPersonel(p.nama);
+          if (img.complete && img.naturalWidth > 0) {
+            const rasioFoto = img.naturalWidth / img.naturalHeight;
+            const rasioKotak = lebarBatang / tinggiBatang;
+            let w, h, dx, dy;
+            if (rasioFoto > rasioKotak) { h = tinggiBatang; w = h * rasioFoto; dx = x - (w - lebarBatang) / 2; dy = y; }
+            else { w = lebarBatang; h = w / rasioFoto; dx = x; dy = y; }
+            ctx.drawImage(img, dx, dy, w, h);
+            ctx.fillStyle = 'rgba(58,53,48,.12)';
+            ctx.fillRect(x, y, lebarBatang, tinggiBatang);
+          } else {
+            ctx.fillStyle = warna;
+            ctx.fillRect(x, y, lebarBatang, tinggiBatang);
+          }
+          ctx.fillStyle = warna;
+          ctx.fillRect(x, ATAS + TINGGI - 6, lebarBatang, 6);
+          ctx.restore();
+        }
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#4a3b2f';
+        ctx.font = '600 13px system-ui, sans-serif';
+        ctx.fillText(String(p.nama).toUpperCase(), x + lebarBatang / 2, ATAS + TINGGI + 22);
+        ctx.font = '12px system-ui, sans-serif';
+        ctx.fillStyle = '#6b5a4a';
+        ctx.fillText(persen.toFixed(1) + '%', x + lebarBatang / 2, ATAS + TINGGI + 38);
+      });
+      ctx.textAlign = 'left';
+      tambahTombolGambar(bubbleEl, canvas, spec.title || 'Kepatuhan Personel');
+    } catch {
+      canvas.remove();
+    }
+  }
+
   // Turns the rendered chart into a real PNG the user can send. Same mechanism the branch
   // dashboard's own share pages already use (canvas -> toBlob -> navigator.share), so a chart from
   // MIRA reaches WhatsApp exactly the way a dashboard card does. Falls back to a plain download on
@@ -534,6 +640,7 @@
     const { cleanText, chart } = extractChartSpec(fullText);
     textEl.innerHTML = linkify(cleanText || '(tidak ada jawaban)');
     if (chart && chart.type === 'peta') renderPeta(bubbleEl.querySelector('.ai-bubble'), chart);
+    else if (chart && chart.type === 'personel') renderPersonel(bubbleEl.querySelector('.ai-bubble'), chart);
     else if (chart) renderChart(bubbleEl.querySelector('.ai-bubble'), chart);
     const waBtn = bubbleEl.querySelector('.wa-share-btn');
     waBtn.classList.remove('hidden');

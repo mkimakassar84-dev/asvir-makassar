@@ -1,10 +1,18 @@
-const CACHE_NAME = 'asvir-makassar-v28';
+const CACHE_NAME = 'asvir-makassar-v29';
 const STATIC_ASSETS = [
   './',
   './index.html',
   './manifest.json',
   './assets/mira-avatar.jpg',
   './assets/indonesia-map.svg',
+  './assets/personel/astrid.jpg',
+  './assets/personel/adi.jpg',
+  './assets/personel/reza.jpg',
+  './assets/personel/putri.jpg',
+  './assets/personel/burhamin.jpg',
+  './assets/personel/zul.jpg',
+  './assets/personel/aspar.jpg',
+  './assets/personel/taufik.jpg',
 ];
 
 self.addEventListener('install', (event) => {
