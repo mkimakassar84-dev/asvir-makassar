@@ -382,6 +382,8 @@ PETA SEBARAN WILAYAH — kalau user minta GRAFIK/GAMBAR/PETA soal WILAYAH, ZONA,
 - "provinsi" WAJIB disalin apa adanya dari "zonaWilayahRelevan.provinsi" (tiap item sudah punya "kode", "zona", "total"). JANGAN mengarang kode provinsi dan JANGAN menebak zonanya — kode yang salah akan mewarnai pulau yang salah.
 - "zona" hanya "hijau", "kuning", atau "merah". Provinsi yang tidak kamu sebutkan otomatis digambar abu-abu (belum ada data).
 - Peta ini menggambarkan SEBARAN antar provinsi. Kalau yang diminta justru peringkat kabupaten/kota (mis. "grafik 10 wilayah teratas"), pakai "bar" biasa — bukan peta.
+- Kata "peta" di sini berarti peta sebaran zona. Kalau user minta "peta lokasi kantor"/"alamat kantor"/"share lokasi", itu BUKAN peta ini — jawab dengan tautan lokasi kantor dari "infoKantor", jangan buat blok chart.
+- Kalau user memakai kata "peta" untuk wilayah/zona/sebaran, WAJIB buat blok chart "peta" — jangan cuma menjabarkan angkanya dalam teks lalu berhenti. Yang diminta adalah gambarnya.
 
 GRAFIK KINERJA PERSONEL — kalau user minta GRAFIK/GAMBAR soal KINERJA, KEPATUHAN, atau PERBANDINGAN PERSONEL/KARYAWAN/TIM, pakai "type":"personel". Batangnya berisi foto tiap orang, seperti kartu "Perbandingan Kepatuhan per Personel" di dashboard:
   \`\`\`chart
@@ -1577,8 +1579,14 @@ function findStockValueSummary(message, allStock) {
   let totalUnit = 0;
   let jumlahKodeBarang = 0;
   let jumlahKodeTanpaHarga = 0;
+  // Negative stock is skipped from the valuation (a minus quantity would quietly reduce the
+  // branch's stock value, which is not what "nilai stok" means) but it is no longer skipped
+  // SILENTLY. A stock audit turned up three real cases — KSFO066 at -1 unit alone is Rp10,66 juta
+  // of goods that left without ever being booked in. Worth the branch knowing, not worth hiding.
+  const stokMinus = [];
   for (const p of allStock) {
     const qty = p[field] || 0;
+    if (qty < 0) stokMinus.push({ kode: p.kode, nama: p.nama, qty, hargaSatuan: p.harga });
     if (qty <= 0) continue;
     if (p.harga > 0) {
       totalNilaiRupiah += qty * p.harga;
@@ -1593,6 +1601,10 @@ function findStockValueSummary(message, allStock) {
     jumlahKodeBarang,
     totalUnit,
     totalNilaiRupiah,
+    stokMinus: stokMinus.length ? stokMinus : null,
+    catatanStokMinus: stokMinus.length
+      ? `${stokMinus.length} kode barang tercatat MINUS. Stok minus berarti barang keluar tanpa pernah tercatat masuk — perlu dicek fisik dan dirapikan di sheet. Tidak ikut dihitung di totalNilaiRupiah. Sebutkan ini sebagai catatan singkat.`
+      : null,
     catatan: jumlahKodeTanpaHarga > 0 ? `${jumlahKodeTanpaHarga} kode barang punya stok tapi tidak punya data harga, TIDAK ikut terhitung di totalNilaiRupiah — sebutkan ini kalau relevan supaya user tahu totalnya bisa jadi lebih tinggi dari angka ini.` : 'Semua kode barang yang punya stok juga punya data harga, total ini sudah mencakup semuanya.',
   };
 }
@@ -4367,14 +4379,33 @@ async function runSync(env) {
     // answered Rp70,7 juta — the board says Rp83,5 juta. Column B is today's realisation and
     // column D the sheet's own achieved/not-achieved mark, both carried along so the answer can
     // say how far today has got without a second lookup.
-    const selHarian = (baris) => {
-      const r = allRows[baris - 1] || [];
+    // Read by position (rows 10/11/13) but VERIFIED by the label in column A, and re-found by
+    // label if the sheet has shifted. A row inserted above would otherwise make MIRA quote some
+    // neighbouring cell as the branch's official daily target — wrong, authoritative-sounding, and
+    // completely silent. If neither position nor label resolves, the entry is dropped so MIRA says
+    // it has no target rather than reporting a stray number.
+    const labelKolomA = (r) => ((r && r[0]) || '').trim().toUpperCase();
+    const selHarian = (baris, bagian, labelHarus) => {
+      const cocok = (r) => labelKolomA(r) === labelHarus;
+      let r = allRows[baris - 1];
+      if (!cocok(r)) {
+        // Fallback must start BELOW the section header, never from the top of the sheet:
+        // "TOTAL INVOICE" appears twice — once under LOGISTIK PERFORMANCE, which has no target in
+        // column C, and once under MARKETING PERFORMANCE, which does. Searching from row 1 found
+        // the logistics one and reported the daily invoice target as 0. The header also repeats
+        // for the monthly block further down, so the FIRST occurrence (the daily one) is taken.
+        const mulai = allRows.findIndex((x) => labelKolomA(x) === bagian);
+        if (mulai < 0) return null;
+        const sampai = allRows.findIndex((x, i) => i > mulai && /PERFORMANCE$/.test(labelKolomA(x)));
+        r = allRows.slice(mulai + 1, sampai > mulai ? sampai : mulai + 8).find(cocok);
+      }
+      if (!r) return null;
       return { label: (r[0] || '').trim(), realisasi: toNumber(r[1]), target: toNumber(r[2]), status: (r[3] || '').trim() };
     };
     const targetHarian = {
-      sales: selHarian(10),
-      invoice: selHarian(11),
-      revenue: selHarian(13),
+      sales: selHarian(10, 'MARKETING PERFORMANCE', 'TOTAL SALES'),
+      invoice: selHarian(11, 'MARKETING PERFORMANCE', 'TOTAL INVOICE'),
+      revenue: selHarian(13, 'COLLECTION PERFORMANCE', 'TOTAL REVENUE'),
       catatan: 'Angka target harian resmi cabang, disalin apa adanya dari papan KPI MONITORING. JANGAN dihitung sendiri dari target bulanan dibagi jumlah hari kerja.',
     };
     await env.SHEET_CACHE.put('data:targetHarian', JSON.stringify(targetHarian));
@@ -4766,7 +4797,11 @@ async function handleChat(request, env) {
   const wantsUndelivered = /belum dikirim|belum diantar|belum terkirim|belum sampai|pending.*kirim/.test(nMsgTopic);
   // JTBD and Dewan Penasihat used to be gated by their own regexes here; both now live in
   // SKILL_MODULES and are resolved by skillAktif above alongside the other sixteen modules.
-  const wantsChart = /grafik|chart|diagram|visualisasi|tren.*(bulan|tahun|sales|revenue|target|stok|customer)|trennya|gambarkan tren/.test(nMsgTopic);
+  // "peta" and "gambar" were missing here, so the module that teaches MIRA how to draw was never
+  // loaded for the most natural way to ask for the map — "kirimkan peta sebaran wilayah" answered
+  // with a Google Maps link to the office one time and a wall of text the next, never a map.
+  // "kepatuhan"/"perbandingan personel" likewise: those name the personnel card by its own title.
+  const wantsChart = /grafik|chart|diagram|bagan|visualisasi|\bpeta\b|gambar|tren.*(bulan|tahun|sales|revenue|target|stok|customer)|trennya|gambarkan tren|kepatuhan.*personel|perbandingan.*personel/.test(nMsgTopic);
 
   const context = {
     // "performa" = SALES (order value from Grand Data 2026). "revenue" = actual cash collected
