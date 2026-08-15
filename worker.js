@@ -2581,20 +2581,68 @@ function agingBucketOf(days) {
 // bare "piutang terlama"-type question — that last case matters most: without it, "piutang paling
 // lama" would only ever see AR 2026 and answer with a ~200-day-old invoice while genuinely
 // decade-old debt sits in this list unmentioned.
-function findPiutangLampau(message) {
+function findPiutangLampau(message, history) {
   const nMsg = normText(message);
-  if (!/piutang|tagihan|tunggak|menunggak|utang|hutang/.test(nMsg)) return null;
+  const bicaraPiutang = /piutang|tagihan|tunggak|menunggak|utang|hutang/.test(nMsg);
+  // A follow-up rarely repeats the topic word: after "list piutang 2015 sampai 2025", the next
+  // message is just "kalau tahun 2017". Without carrying the topic over, that returned nothing and
+  // MIRA reported the year as having no data at all — when it has six customers and Rp442 juta.
+  let lanjutanDariHistori = false;
+  if (!bicaraPiutang && Array.isArray(history)) {
+    for (let i = history.length - 1; i >= 0 && i >= history.length - 4; i--) {
+      const h = history[i];
+      if (h && h.text && /piutang lampau|piutang.*(201[5-9]|202[0-5])|arsip piutang/.test(normText(h.text))) {
+        lanjutanDariHistori = true;
+        break;
+      }
+    }
+  }
+  if (!bicaraPiutang && !lanjutanDariHistori) return null;
 
-  const mentionsHistoris = /lampau|lama sekali|masa lalu|tahun lalu|bertahun|legacy|warisan|lawas|tahun-tahun|sebelum 2026|2015|2016|2017|2018|2019|2020|2021|2022|2023|2024|2025/.test(nMsg);
+  const mentionsHistoris = /lampau|lama sekali|masa lalu|tahun lalu|bertahun|legacy|warisan|lawas|arsip|piutang lama|tagihan lama|tahun-tahun|sebelum 2026|2015|2016|2017|2018|2019|2020|2021|2022|2023|2024|2025/.test(nMsg);
   const wantsOldest = new RegExp(SUPERLATIVE_HIGH).test(nMsg) || /terlama|paling lama|tertua|paling tua|paling awal/.test(nMsg);
   const msgWords = nameWordsOf(message);
   const namedHit = PIUTANG_LAMPAU.filter((e) => e.nama.length >= 4 && customerNameFuzzyMatch(msgWords, e.nama));
-  if (!mentionsHistoris && !wantsOldest && !namedHit.length) return null;
+  if (!mentionsHistoris && !wantsOldest && !namedHit.length && !lanjutanDariHistori) return null;
 
-  // A specific year mentioned narrows the list to just that year's outstanding entries.
-  const yearMatch = nMsg.match(/\b(20(?:1[5-9]|2[0-5]))\b/);
-  if (yearMatch) {
-    const tahun = Number(yearMatch[1]);
+  const tahunDisebut = [...nMsg.matchAll(/\b(20(?:1[5-9]|2[0-5]))\b/g)].map((m) => Number(m[1]));
+
+  // Two years with a range connector ("2015 sampai 2025") asks for everything in between. Matching
+  // only the first year answered a much smaller question than the one asked — the whole archive
+  // (30 customers, Rp925 juta) came back as just 2015 (5 customers, Rp40,9 juta).
+  if (tahunDisebut.length >= 2) {
+    const dari = Math.min(...tahunDisebut);
+    const sampai = Math.max(...tahunDisebut);
+    const dalamRentang = (th) => th >= dari && th <= sampai;
+    const perTahun = {};
+    const perPelanggan = [];
+    for (const e of PIUTANG_LAMPAU) {
+      let subtotal = 0;
+      const rinci = {};
+      for (const [th, val] of Object.entries(e.perTahun)) {
+        if (!dalamRentang(Number(th))) continue;
+        subtotal += val;
+        rinci[th] = val;
+        perTahun[th] = (perTahun[th] || 0) + val;
+      }
+      if (subtotal > 0) perPelanggan.push({ kodePelanggan: e.kodePelanggan, nama: e.nama, perTahun: rinci, totalPiutang: subtotal, tahunTerlama: e.tahunTerlama });
+    }
+    perPelanggan.sort((a, b) => b.totalPiutang - a.totalPiutang);
+    return {
+      mode: 'rentangTahun',
+      dariTahun: dari,
+      sampaiTahun: sampai,
+      jumlahPelanggan: perPelanggan.length,
+      totalNilai: perPelanggan.reduce((s, x) => s + x.totalPiutang, 0),
+      totalPerTahun: Object.entries(perTahun).sort((a, b) => a[0].localeCompare(b[0])).map(([tahun, nilai]) => ({ tahun: Number(tahun), nilai })),
+      daftar: perPelanggan,
+      catatan: `Arsip piutang lampau ${dari}-${sampai}: SELURUH pelanggan dalam rentang itu ada di "daftar" (urut nilai terbesar), rekap per tahun ada di "totalPerTahun". Ini rentang PENUH yang diminta — jangan hanya menyebut satu tahun. TERPISAH dari piutang AR 2026 yang berjalan, jangan dijumlahkan dengan angka 2026.`,
+    };
+  }
+
+  // A single year narrows the list to just that year's outstanding entries.
+  if (tahunDisebut.length === 1) {
+    const tahun = tahunDisebut[0];
     const items = PIUTANG_LAMPAU.filter((e) => e.perTahun[tahun])
       .map((e) => ({ kodePelanggan: e.kodePelanggan, nama: e.nama, nilai: e.perTahun[tahun] }))
       .sort((a, b) => b.nilai - a.nilai);
@@ -2604,7 +2652,7 @@ function findPiutangLampau(message) {
       jumlahPelanggan: items.length,
       totalNilai: items.reduce((s, x) => s + x.nilai, 0),
       daftar: items,
-      catatan: `Piutang lampau tahun ${tahun} (arsip 2015-2025, TERPISAH dari piutang AR 2026 yang berjalan — JANGAN dijumlahkan dengan angka piutang 2026).`,
+      catatan: `Piutang lampau tahun ${tahun} (arsip 2015-2025, TERPISAH dari piutang AR 2026 yang berjalan — JANGAN dijumlahkan dengan angka piutang 2026).${items.length ? '' : ` Tahun ${tahun} memang tidak ada piutang tercatat di arsip — katakan itu untuk tahun ${tahun} saja, JANGAN bilang arsipnya cuma berisi satu tahun.`}`,
     };
   }
 
@@ -4412,7 +4460,7 @@ async function handleChat(request, env) {
   }
   const topPiutangMatch = findTopPiutangCustomers(message, piutangData?.detail);
   const piutangKategoriMatch = findPiutangByKategoriUmur(message, piutangData?.detail);
-  const piutangLampauMatch = findPiutangLampau(message);
+  const piutangLampauMatch = findPiutangLampau(message, history);
   const piutangCompanyMatch = findPiutangByCompany(message, piutangData?.detail);
   const stockValueMatch = findStockValueSummary(message, allStock);
   const restockMatch = findRestockCandidates(message, topProductsRaw ? JSON.parse(topProductsRaw).byQty : null, allStock);
@@ -4598,7 +4646,7 @@ Aturan:
 - Piutang (belum dibayar) customer tertentu → WAJIB "piutangRelevan" (rincian per invoice); field umum "piutang" cuma total per kategori umur GABUNGAN SELURUH CABANG, tak ada rincian per customer — JANGAN PERNAH pakai angka dari "piutang" untuk pertanyaan piutang SATU customer, walau "piutangRelevan" null/kosong (itu berarti customer itu tidak punya piutang tercatat, BUKAN alasan menyamarkan angka total cabang seolah itu piutang orang tersebut — kalau "piutangRelevan" null/kosong, katakan jujur "tidak ada piutang tercatat", titik, jangan tambal pakai field lain). Beda dari "pembayaranRelevan" (sudah bayar). "piutangRelevan"/"pembayaranRelevan" berisi "customerCandidatesAmbiguous" (bukan "customer"/"invoices" seperti biasa) → nama yang ditanya cocok ke BEBERAPA customer nyata sekaligus, sebutkan semua nama di "customerCandidatesAmbiguous" dan tanya balik yang mana dimaksud, JANGAN pilih satu sendiri. User menjawab follow-up MEMILIH salah satu nama (termasuk menolak nama lain, mis. "X bukan Y") → pertanyaan itu SUDAH terjawab lewat "piutangRelevan"/"pembayaranRelevan" yang baru (sistem sudah paham penolakannya), TINGGAL jawab pakai data customer yang dipilih user — jangan tanya ulang atau bingung lagi.
 - "Customer piutang tertinggi/terbesar" → "piutangCustomerTertinggi" (top10, sudah urut). Null padahal ditanya → kata kunci tak terdeteksi, minta user pertegas.
 - KATEGORI UMUR PIUTANG (AGING) BAKU, WAJIB konsisten: "0-30 Hari", "30-45 Hari", "45-60 Hari", "> 60 Hari" (definisi resmi dashboard dari kolom Aging/hari — BUKAN kategori lama "14-30"/"0-13" yang sudah tak dipakai). Kategori tertentu, ambang bebas (mis. "di atas 90 hari"), ATAU superlatif tanpa angka (mis. "piutang paling lama menunggak"/"terlama"/"terdekat jatuh tempo") → "piutangPerKategoriUmur" ("daftar" = customer+noFaktur+nilaiSisa+agingHari+tanggal, beda dari "piutang.byKategori" yang cuma total tanpa nama) — sebutkan nama customer, bukan cuma total. "kategori" di hasil = salah satu 4 kategori baku, ambang bebas, atau label superlatif ("Paling lama menunggak"/"Paling dekat jatuh tempo").
-- PIUTANG LAMPAU 2015-2025 → "piutangLampau2015sd2025" (arsip historis 30 pelanggan, TERPISAH dari AR 2026 berjalan). ATURAN PALING PENTING: pertanyaan "piutang TERLAMA"/"paling lama"/"tertua"/"paling awal" WAJIB dijawab dari field INI dulu kalau isinya ada — piutang di sini umurnya BERTAHUN-TAHUN (mulai 2015), jadi SELALU jauh lebih lama daripada apa pun di "piutangPerKategoriUmur" (AR 2026, paling lama cuma ratusan hari). JANGAN jawab "terlama" pakai data 2026 kalau field ini terisi. Baca "mode": "ringkasan" → pakai "tahunPalingLama" + "daftarUrutTerlama" (SUDAH urut dari tahun paling lama duluan, sebutkan nama + tahunnya). "perTahun" → satu tahun spesifik yang ditanya ("tahun"+"daftar"+"totalNilai"). "perPelanggan" → piutang lampau satu/beberapa pelanggan yang namanya disebut. JANGAN PERNAH menjumlahkan angka field ini dengan total piutang AR 2026 (dua periode beda, hasilnya menyesatkan) — sebutkan terpisah dan jelaskan ini piutang lama/warisan tahun sebelumnya.
+- PIUTANG LAMPAU 2015-2025 → "piutangLampau2015sd2025" (arsip historis 30 pelanggan, TERPISAH dari AR 2026 berjalan). ATURAN PALING PENTING: pertanyaan "piutang TERLAMA"/"paling lama"/"tertua"/"paling awal" WAJIB dijawab dari field INI dulu kalau isinya ada — piutang di sini umurnya BERTAHUN-TAHUN (mulai 2015), jadi SELALU jauh lebih lama daripada apa pun di "piutangPerKategoriUmur" (AR 2026, paling lama cuma ratusan hari). JANGAN jawab "terlama" pakai data 2026 kalau field ini terisi. Baca "mode": "ringkasan" → pakai "tahunPalingLama" + "daftarUrutTerlama" (SUDAH urut dari tahun paling lama duluan, sebutkan nama + tahunnya). "rentangTahun" → user minta SATU RENTANG (mis. "2015 sampai 2025"): sajikan "totalNilai"+"jumlahPelanggan" untuk SELURUH rentang, rekap "totalPerTahun", dan "daftar" seluruh pelanggannya — DILARANG hanya menyebut satu tahun saja lalu bilang sisanya tidak ada (kesalahan nyata: diminta 2015-2025, MIRA cuma melaporkan 2015 dan menyebut arsipnya "hanya berisi 5 pelanggan dari 2015"). "perTahun" → satu tahun spesifik ("tahun"+"daftar"+"totalNilai"); kalau "daftar" kosong itu berarti TAHUN ITU saja yang tidak ada piutangnya — JANGAN disimpulkan arsipnya cuma memuat satu tahun. "perPelanggan" → piutang lampau satu/beberapa pelanggan yang namanya disebut. Arsip ini memuat 30 pelanggan tersebar 2015-2025, bukan satu tahun saja. JANGAN PERNAH menjumlahkan angka field ini dengan total piutang AR 2026 (dua periode beda, hasilnya menyesatkan) — sebutkan terpisah dan jelaskan ini piutang lama/warisan tahun sebelumnya.
 - Pertanyaan piutang MENYEBUT NAMA/NOMOR FAKTUR CUSTOMER SPESIFIK ("customer dengan piutang terbaru/terlama/tertinggi", "piutang si X", dll) → jawaban itu WAJIB berasal dari salah satu field piutang ("piutangRelevan"/"piutangCustomerTertinggi"/"piutangPerKategoriUmur"/"piutangPerCompany") — TIDAK PERNAH mengarang nama customer, nomor faktur, tanggal, atau nominal sendiri walau terdengar masuk akal. Field yang relevan null/kosong SEMUA → jujur bilang "belum bisa saya jawab dari data yang ada" dan berhenti di situ, JANGAN mengisi kekosongan dengan detail yang kelihatan meyakinkan tapi sebenarnya karangan — ini pelanggaran serius, bukan sekadar kurang lengkap.
 - Piutang per company MKI/CFN (mis. "piutang CFN", "piutang MKI berapa") → JAWAB LANGSUNG dari "piutangPerCompany" SAJA, mulai dari kalimat PERTAMA — WAJIB sebutkan company diturunkan dari pola nomor faktur (bukan field asli), sesuai catatannya. JANGAN PERNAH sebut/tampilkan angka dari field "piutang" (total/byKategori GABUNGAN MKI+CFN) di jawaban ini SAMA SEKALI, bahkan sebagai pembuka/perbandingan/konteks — user tanya SATU company, bukan gabungan, jangan bertele-tele ke angka gabungan dulu sebelum ke angka yang diminta. SEMUA angka di jawaban (total, jumlah invoice, breakdown aging) WAJIB dari "piutangPerCompany" saja: "totalPiutang"+"jumlahInvoice"=total company itu, "byKategoriUmur"=breakdown aging KHUSUS company itu (bukan dari "piutang.byKategori"). Minta LIST → field "daftar" (per invoice: customer/noFaktur/nilaiSisa/tanggal/kategori), sebutkan nama.
 - "Nilai stok"/"nilai rupiah stok" (total/per company) → "nilaiStokRelevan" ("totalNilaiRupiah" = harga×unit, company-aware). "catatan" ada kode tanpa harga → sebutkan totalnya belum 100% lengkap. Null kalau tidak sebut "nilai" DAN "stok" bersamaan.

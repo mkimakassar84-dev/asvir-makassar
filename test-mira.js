@@ -70,12 +70,20 @@ const STOK = [
   { kode: 'KSFO020', nama: 'Kabel Fiber Optik 6 Core', harga: 15670000, stokMKI: 1, stokCFN: 0, stokTotal: 1 },
   { kode: 'KSFO113', nama: 'Kabel Fiber Optik 1Core Cablelink', harga: 940000, stokMKI: 10, stokCFN: 0, stokTotal: 10 },
 ];
+const NAMA_BULAN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+// Includes whichever month is running right now, so "sisa target bulan ini" has something to find
+// no matter when the suite is run — an earlier fixture omitted it and the test failed every
+// August for a reason that had nothing to do with the code.
 const YOY = {
   months: [
     { monthIdx: 0, label: 'Januari', targetSalesRevenue: 1000, sales2025: 100, sales2026: 120, rev2025: 90, rev2026: 100 },
     { monthIdx: 6, label: 'Juli', targetSalesRevenue: 2000, sales2025: 500, sales2026: 300, rev2025: 400, rev2026: 250 },
     { monthIdx: 11, label: 'Desember', targetSalesRevenue: 3000, sales2025: 700, sales2026: 0, rev2025: 600, rev2026: 0 },
-  ],
+  ].concat(
+    [0, 6, 11].includes(BULAN_INI - 1)
+      ? []
+      : [{ monthIdx: BULAN_INI - 1, label: NAMA_BULAN[BULAN_INI - 1], targetSalesRevenue: 5000, sales2025: 800, sales2026: 400, rev2025: 750, rev2026: 350 }]
+  ),
   totalSales2025: 1300, totalSales2026: 420, totalRev2025: 1090, totalRev2026: 350, totalTarget: 6000,
 };
 
@@ -242,6 +250,74 @@ t('kode ONU dikenal mengembalikan kredensial', () => {
   return r && r.daftar && r.daftar.length ? null : 'kredensial tidak ditemukan';
 });
 t('pertanyaan stok ONU tidak membocorkan kredensial', () => (M.findOnuCredentials('stok ONUA023 berapa') === null ? null : 'kredensial ikut terkirim tanpa diminta'));
+
+// ---------------------------------------------------------------------------
+// Phrasing variations.
+//
+// This section exists because the suite once passed while a capability was
+// visibly broken: piutang lampau was checked with one wording only, so a year
+// RANGE ("2015 sampai 2025") returning just the first year, and a follow-up
+// that dropped the topic word ("kalau tahun 2017") returning nothing, both went
+// unnoticed. People do not ask the same question the same way twice, so every
+// wording below must reach data — that is what stops "right today, wrong next
+// week".
+// ---------------------------------------------------------------------------
+grup('Variasi kalimat — semua bentuk harus terjawab');
+const variasi = (judul, fn, kalimat) => {
+  t(judul, () => {
+    const gagal = kalimat.filter((k) => !fn(k));
+    return gagal.length ? `tidak terjawab: ${gagal.map((x) => `"${x}"`).join(', ')}` : null;
+  });
+};
+
+variasi('stok per kode', (k) => M.findStockMatches(k, STOK, []).items.length, [
+  'stok KSFO028', 'stock KSFO028', 'KSFO028 ada berapa', 'sisa stok KSFO028', 'cek stok KSFO028',
+]);
+variasi('piutang per company', (k) => M.findPiutangByCompany(k, PIUTANG), [
+  'piutang CFN', 'piutang CFN berapa', 'berapa piutang CFN', 'sisa saldo piutang CFN', 'total piutang CFN',
+]);
+variasi('penjualan per kode', (k) => M.findProductSalesBreakdown(k, TX), [
+  'penjualan KSFO028', 'sales KSFO028', 'KSFO028 terjual berapa', 'qty KSFO028',
+]);
+variasi('performa periode', (k) => M.findPerformaPeriode(k, TX, BAYAR, STOK), [
+  'performa Mei-Juli', 'kinerja Mei-Juli', 'bagaimana performa Mei-Juli', 'tren penjualan Mei-Juli',
+]);
+variasi('perbandingan tahun', (k) => M.findPerbandinganTahun(k, YOY), [
+  'perbandingan sales tahun lalu dan tahun ini', 'sales 2025 vs 2026',
+  'bandingkan penjualan 2025 dengan 2026', 'pertumbuhan dibanding tahun lalu',
+]);
+variasi('sisa target', (k) => M.findSisaTarget(k, YOY, []), [
+  'sisa target bulan ini', 'kekurangan target bulan ini', 'kurang berapa lagi target bulan ini',
+]);
+variasi('per company + periode', (k) => M.findCompanyPeriodBreakdown(k, TX, BAYAR), [
+  'sales MKI bulan ini', 'penjualan MKI bulan ini', 'omzet MKI bulan ini', 'revenue MKI hari ini',
+]);
+variasi('customer aktif periode', (k) => M.findCustomerAktifPeriode(k, TX), [
+  'persentase customer aktif sejak Mei', 'berapa persen customer aktif sejak Mei', 'customer aktif sejak Mei',
+]);
+variasi('piutang lampau', (k) => M.findPiutangLampau(k, []), [
+  'piutang lampau', 'list piutang 2015 sampai 2025', 'piutang tahun 2017',
+  'piutang terlama', 'arsip piutang lama',
+]);
+variasi('retur', (k) => M.findReturTransactions(k, TX), [
+  'retur bulan ini', 'return bulan ini', 'ada retur bulan ini', 'pengembalian barang bulan ini',
+]);
+
+grup('Rentang tahun & pertanyaan lanjutan (dua bug nyata)');
+t('rentang tahun mengembalikan SELURUH rentang, bukan tahun pertama saja', () => {
+  const r = M.findPiutangLampau('list piutang 2015 sampai 2025', []);
+  if (!r || r.mode !== 'rentangTahun') return `mode ${r && r.mode}, seharusnya rentangTahun`;
+  return r.jumlahPelanggan === 30 ? null : `${r.jumlahPelanggan} pelanggan, seharusnya 30 (seluruh arsip)`;
+});
+t('tahun tanpa data tidak membuat arsip lain ikut hilang', () => {
+  const r = M.findPiutangLampau('piutang tahun 2017', []);
+  return r && r.mode === 'perTahun' && r.jumlahPelanggan === 6 ? null : `dapat ${r && r.jumlahPelanggan} pelanggan, seharusnya 6`;
+});
+t('lanjutan tanpa kata "piutang" tetap terjawab', () => {
+  const h = [{ role: 'user', text: 'list piutang lampau 2015 sampai 2025' }, { role: 'model', text: 'arsip piutang lampau 2015-2025' }];
+  const r = M.findPiutangLampau('kalau tahun 2017', h);
+  return r && r.mode === 'perTahun' && r.tahun === 2017 ? null : 'follow-up tidak terjawab';
+});
 
 console.log(`\n${'='.repeat(52)}`);
 console.log(`lulus: ${lulus}   gagal: ${gagal}`);
