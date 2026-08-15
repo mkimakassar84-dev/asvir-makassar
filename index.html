@@ -379,6 +379,88 @@
     }
   }
 
+  // ==== Peta sebaran zona per provinsi ====
+  // The dashboard draws this as an inline SVG with tooltips. Here it is drawn onto a canvas
+  // instead: the map's whole purpose in MIRA is to be SENT, and a canvas is already the one thing
+  // the share button knows how to turn into a PNG — so what appears on screen is byte-for-byte
+  // what lands in WhatsApp. Colours and thresholds are the dashboard's own.
+  const ZONA_WARNA = { hijau: '#8fae82', kuning: '#e0bf72', merah: '#c98b7f' };
+  const ZONA_KOSONG = '#e3dccb';
+  const LEGENDA = [
+    ['Hijau (>50 invoice)', ZONA_WARNA.hijau],
+    ['Kuning (20-50)', ZONA_WARNA.kuning],
+    ['Merah (<20)', ZONA_WARNA.merah],
+    ['Belum ada data', ZONA_KOSONG],
+  ];
+  let petaSvgCache = null;
+
+  async function renderPeta(bubbleEl, spec) {
+    const LEBAR = 1000, TINGGI_PETA = 368, ATAS = 76, BAWAH = 16;
+    const canvas = document.createElement('canvas');
+    canvas.width = LEBAR;
+    canvas.height = ATAS + TINGGI_PETA + BAWAH;
+    canvas.className = 'mt-2 w-full rounded-xl';
+    bubbleEl.appendChild(canvas);
+    try {
+      if (!petaSvgCache) {
+        const res = await fetch('./assets/indonesia-map.svg', { cache: 'force-cache' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        petaSvgCache = await res.text();
+      }
+      const holder = document.createElement('div');
+      holder.innerHTML = petaSvgCache;
+      const svg = holder.querySelector('svg');
+      if (!svg) throw new Error('SVG kosong');
+      svg.setAttribute('width', String(LEBAR));
+      svg.setAttribute('height', String(TINGGI_PETA));
+      // simplemaps ships label dots we do not use; they only add noise to a shared image.
+      ['#points', '#label_points'].forEach((sel) => {
+        const g = svg.querySelector(sel);
+        if (g) g.setAttribute('display', 'none');
+      });
+
+      const perProvinsi = new Map(
+        (spec.provinsi || []).map((p) => [String(p.kode || '').toUpperCase(), p])
+      );
+      svg.querySelectorAll('#features path[id]').forEach((path) => {
+        const info = perProvinsi.get(path.id.toUpperCase());
+        const warna = info ? ZONA_WARNA[String(info.zona || '').toLowerCase()] || ZONA_KOSONG : ZONA_KOSONG;
+        // Attribute, not style: the serialized copy below is what gets rasterised, and inline
+        // style survives serialisation less reliably across browsers than a plain fill attribute.
+        path.setAttribute('fill', warna);
+      });
+
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = PALET.kertas;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#4a3b2f';
+      ctx.font = '600 22px system-ui, sans-serif';
+      ctx.fillText(spec.title || 'Peta Sebaran Zona per Provinsi', 24, 34);
+      let x = 24;
+      ctx.font = '14px system-ui, sans-serif';
+      for (const [teks, warna] of LEGENDA) {
+        ctx.fillStyle = warna;
+        ctx.fillRect(x, 50, 14, 14);
+        ctx.fillStyle = '#6b5a4a';
+        ctx.fillText(teks, x + 20, 62);
+        x += 26 + ctx.measureText(teks).width + 18;
+      }
+
+      const xml = new XMLSerializer().serializeToString(svg);
+      await new Promise((selesai, gagal) => {
+        const img = new Image();
+        img.onload = () => { ctx.drawImage(img, 0, ATAS, LEBAR, TINGGI_PETA); selesai(); };
+        img.onerror = () => gagal(new Error('peta gagal digambar'));
+        // data: URL rather than blob: — an SVG drawn from a same-document data URL leaves the
+        // canvas untainted, so toBlob() still works and the image can actually be shared.
+        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml);
+      });
+      tambahTombolGambar(bubbleEl, canvas, spec.title || 'Peta Sebaran Zona');
+    } catch {
+      canvas.remove();
+    }
+  }
+
   // Turns the rendered chart into a real PNG the user can send. Same mechanism the branch
   // dashboard's own share pages already use (canvas -> toBlob -> navigator.share), so a chart from
   // MIRA reaches WhatsApp exactly the way a dashboard card does. Falls back to a plain download on
@@ -451,7 +533,8 @@
     const textEl = bubbleEl.querySelector('.ai-text');
     const { cleanText, chart } = extractChartSpec(fullText);
     textEl.innerHTML = linkify(cleanText || '(tidak ada jawaban)');
-    if (chart) renderChart(bubbleEl.querySelector('.ai-bubble'), chart);
+    if (chart && chart.type === 'peta') renderPeta(bubbleEl.querySelector('.ai-bubble'), chart);
+    else if (chart) renderChart(bubbleEl.querySelector('.ai-bubble'), chart);
     const waBtn = bubbleEl.querySelector('.wa-share-btn');
     waBtn.classList.remove('hidden');
     waBtn.classList.add('flex');

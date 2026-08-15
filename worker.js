@@ -373,7 +373,15 @@ MODE GRAFIK/CHART — aktif kalau user minta grafik/chart/diagram/visualisasi/tr
 - SETIAP angka di "data" WAJIB persis sama dengan angka yang sudah kamu sebutkan/hitung dari DATA KONTEKS — JANGAN PERNAH mengarang angka baru khusus untuk chart.
 - Kalau user minta perbandingan dengan tahun lalu, ambil dari "perbandinganTahunSebelumnya.months" (sales2025/sales2026/rev2025/rev2026/targetSalesRevenue). Bulan yang belum berjalan di 2026 tetap ditulis 0, jangan dibuang.
 - Kalau data yang diminta tidak cukup untuk digrafikkan (mis. cuma 1 angka tunggal, bukan deret waktu atau perbandingan kategori), JANGAN paksa buat blok chart — cukup jawab teks biasa saja.
-- Setelah grafik tampil, di bawahnya ADA tombol "Kirim gambar" dan "Simpan" di aplikasi. Jadi kalau user minta dikirimi gambar, buat grafiknya lalu beri tahu tombol itu — jangan bilang kamu tidak bisa mengirim gambar.`;
+- Setelah grafik tampil, di bawahnya ADA tombol "Kirim gambar" dan "Simpan" di aplikasi. Jadi kalau user minta dikirimi gambar, buat grafiknya lalu beri tahu tombol itu — jangan bilang kamu tidak bisa mengirim gambar.
+
+PETA SEBARAN WILAYAH — kalau user minta GRAFIK/GAMBAR/PETA soal WILAYAH, ZONA, SEBARAN, atau JANGKAUAN DAERAH, pakai "type":"peta", BUKAN bar/line:
+  \`\`\`chart
+  {"type":"peta","title":"Peta Sebaran Zona per Provinsi","provinsi":[{"kode":"IDSN","zona":"hijau","total":1500},{"kode":"IDST","zona":"merah","total":12}]}
+  \`\`\`
+- "provinsi" WAJIB disalin apa adanya dari "zonaWilayahRelevan.provinsi" (tiap item sudah punya "kode", "zona", "total"). JANGAN mengarang kode provinsi dan JANGAN menebak zonanya — kode yang salah akan mewarnai pulau yang salah.
+- "zona" hanya "hijau", "kuning", atau "merah". Provinsi yang tidak kamu sebutkan otomatis digambar abu-abu (belum ada data).
+- Peta ini menggambarkan SEBARAN antar provinsi. Kalau yang diminta justru peringkat kabupaten/kota (mis. "grafik 10 wilayah teratas"), pakai "bar" biasa — bukan peta.`;
 
 // ==== MODUL SKILL SALES & MARKETING ====
 // Twenty condensed Indonesian modules distilled from the installed marketing/sales skill library
@@ -2594,6 +2602,9 @@ function findZonaWilayahMatches(message, zonaData) {
         .slice(0, 10),
       jumlahTanpaPembelanjaan: (zonaData.tanpaPembelanjaan || []).length,
       contohTanpaPembelanjaan: (zonaData.tanpaPembelanjaan || []).slice(0, 15),
+      // Province codes + zone, ready to be handed straight to the map. Sent as data rather than
+      // left to the model to recall, because an ISO code guessed wrong colours the wrong island.
+      provinsi: (zonaData.provinsi || []).map((p) => ({ kode: p.code, zona: p.zone, total: p.total, jumlahWilayah: p.wilayahCount })),
       catatan:
         'Zona dihitung dari jumlah invoice unik per kabupaten/kota sepanjang tahun berjalan, RETUR TIDAK DIHITUNG: hijau >50, kuning 20-50, merah <20. ' +
         '"wilayahTeratas" sudah urut dari invoice terbanyak. "wilayahTerlemah" adalah yang paling sedikit transaksinya (pakai ini untuk pertanyaan "paling lemah/terendah", JANGAN ambil dari bawah "wilayahTeratas"). ' +

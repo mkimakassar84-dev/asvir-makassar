@@ -92,5 +92,25 @@ const fmt = tertangkap.options.scales.y.ticks.callback;
 console.log('\nFormat sumbu Y: 2500000000 -> "' + fmt(2500000000) + '", 500000000 -> "' + fmt(500000000) + '"');
 cek('sumbu', fmt(2500000000) === '2.5 M' && fmt(500000000) === '500 Jt', 'format sumbu tidak sama dengan dashboard');
 
+
+// ---- Peta sebaran zona per provinsi ----
+console.log('\nPeta sebaran zona');
+const petaPath = require('path').join(__dirname, 'assets', 'indonesia-map.svg');
+if (!fs.existsSync(petaPath)) {
+  masalah++;
+  console.log('    GAGAL: assets/indonesia-map.svg tidak ada — peta tidak akan tergambar');
+} else {
+  const svg = fs.readFileSync(petaPath, 'utf8');
+  cek('peta', svg.includes('id="features"'), 'SVG tidak punya grup #features yang diwarnai');
+  cek('peta', /viewbox=|viewBox=/.test(svg), 'SVG tanpa viewBox — hasil rasterisasi bisa kosong');
+  cek('peta', !/xlink:href="http|<image|url\(http/.test(svg), 'SVG merujuk berkas luar — kanvas jadi tainted dan gambar tidak bisa dikirim');
+  const adaDiSvg = new Set((svg.match(/id="(ID[A-Z]{2})"/g) || []).map((m) => m.slice(4, 8)));
+  const worker = fs.readFileSync(require('path').join(__dirname, 'worker.js'), 'utf8');
+  const blokProv = worker.slice(worker.indexOf('const WILAYAH_TO_PROVINCE'), worker.indexOf('const KPI_WEBAPP_URL'));
+  const dipakai = [...new Set((blokProv.match(/'(ID[A-Z]{2})'/g) || []).map((m) => m.slice(1, 5)))];
+  const yatim = dipakai.filter((k) => !adaDiSvg.has(k));
+  console.log('    kode provinsi dipakai worker: ' + dipakai.length + ' | ada di SVG: ' + adaDiSvg.size);
+  cek('peta', yatim.length === 0, 'kode provinsi tanpa jalur di SVG (tidak akan terwarnai): ' + yatim.join(', '));
+}
 console.log(masalah ? `\n>>> ${masalah} MASALAH` : '\n>>> semua sesuai gaya dashboard');
 process.exit(masalah ? 1 : 0);
