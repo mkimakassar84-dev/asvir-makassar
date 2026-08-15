@@ -37,6 +37,8 @@ module.exports = {
   findCompanyPeriodBreakdown, findInvoiceDetail, findCustomerAktifPeriode, findStockMatches,
   findProductSalesBreakdown, findPiutangByCompany, findPiutangByCustomer, findDuplikasi,
   findPiutangLampau, findReturTransactions, findTransactionMatches, findOnuCredentials,
+  findTopPiutangCustomers, findStockValueSummary, findPaymentsByCustomer, findTopProdukByMonth,
+  findKabelByCoreCategory, findZonaWilayahMatches,
   resolveAccessCode, piutangCompanyOf, normText, normCode, nowMakassar,
 };`;
 const tmp = path.join(os.tmpdir(), `mira-test-${process.pid}.cjs`);
@@ -85,6 +87,16 @@ const YOY = {
       : [{ monthIdx: BULAN_INI - 1, label: NAMA_BULAN[BULAN_INI - 1], targetSalesRevenue: 5000, sales2025: 800, sales2026: 400, rev2025: 750, rev2026: 350 }]
   ),
   totalSales2025: 1300, totalSales2026: 420, totalRev2025: 1090, totalRev2026: 350, totalTarget: 6000,
+};
+
+const ZONA = {
+  wilayah: [
+    { nama: 'MAKASSAR', total: 120, zone: 'hijau' },
+    { nama: 'BONE', total: 35, zone: 'kuning' },
+    { nama: 'PALU', total: 8, zone: 'merah' },
+  ],
+  tanpaPembelanjaan: ['AMBON'],
+  provinsi: [],
 };
 
 // ---- runner ----
@@ -301,6 +313,43 @@ variasi('piutang lampau', (k) => M.findPiutangLampau(k, []), [
 ]);
 variasi('retur', (k) => M.findReturTransactions(k, TX), [
   'retur bulan ini', 'return bulan ini', 'ada retur bulan ini', 'pengembalian barang bulan ini',
+]);
+
+grup('Variasi kalimat — kemampuan lainnya');
+variasi('detail invoice', (k) => M.findInvoiceDetail(k, TX, BAYAR, PIUTANG, STOK), [
+  'INV/MKS/2026/I/001', 'detail invoice INV/MKS/2026/I/001', 'isi invoice MKS/2026/I/001',
+  'faktur MKS/2026/I/001 isinya apa', 'invoice MKS/2026/I/001 sudah lunas?',
+]);
+variasi('siapa belanja pada tanggal', (k) => M.findTransactionMatches(k, TX).items.length, [
+  `siapa belanja tanggal 5/1/${TAHUN}`, `siapa yang berbelanja 5/1/${TAHUN}`,
+  `transaksi tanggal 5/1/${TAHUN}`, `penjualan tanggal 5/1/${TAHUN}`,
+]);
+variasi('piutang per customer', (k) => M.findPiutangByCustomer(k, PIUTANG), [
+  'piutang SITI', 'piutang SITI berapa', 'berapa tagihan SITI', 'sisa piutang SITI',
+]);
+variasi('customer piutang tertinggi', (k) => M.findTopPiutangCustomers(k, PIUTANG), [
+  'customer piutang tertinggi', 'siapa piutang terbesar', 'piutang paling tinggi siapa',
+]);
+variasi('nilai stok', (k) => M.findStockValueSummary(k, STOK), [
+  'nilai stok gudang', 'berapa nilai stok', 'total nilai stok gudang',
+]);
+variasi('pembayaran per customer', (k) => M.findPaymentsByCustomer(k, BAYAR, PIUTANG), [
+  'kapan BUDI terakhir bayar', 'riwayat pembayaran BUDI', 'pelunasan BUDI',
+]);
+variasi('produk terlaris per bulan', (k) => M.findTopProdukByMonth(k, TX, STOK), [
+  'produk terlaris Januari', 'produk paling laku bulan Januari', 'ranking produk Januari',
+]);
+variasi('kredensial ONU', (k) => M.findOnuCredentials(k), [
+  'password ONU FL327D', 'username ONU FL327D', 'login ONU FL327D apa', 'kredensial ONU FL327D',
+]);
+variasi('kategori kabel core', (k) => M.findKabelByCoreCategory(k, STOK, TX), [
+  'kabel 1 core', 'kabel 1 core apa saja', 'stok kabel 1 core',
+]);
+variasi('duplikasi', (k) => M.findDuplikasi(k, TX, BAYAR, PIUTANG), [
+  'cek duplikasi', 'cek duplikasi piutang', 'ada duplikasi invoice?', 'periksa duplikasi',
+]);
+variasi('zona wilayah', (k) => M.findZonaWilayahMatches(k, ZONA), [
+  'zona wilayah', 'zona wilayah kita bagaimana', 'wilayah zona merah', 'wilayah tanpa pembelanjaan',
 ]);
 
 grup('Rentang tahun & pertanyaan lanjutan (dua bug nyata)');

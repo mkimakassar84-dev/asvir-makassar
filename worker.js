@@ -1877,6 +1877,29 @@ function extractDateMention(message) {
     const year = m[3] ? parseInt(m[3], 10) : nowMakassar().getFullYear();
     return { day, month, year };
   }
+  return extractNumericDateMention(t);
+}
+
+// Numeric dates ("5/1/2026", "5-1-2026", "tanggal 5/1"). Written out separately and tried only
+// AFTER the month-name scan, with deliberately tight guards, because slashes and hyphens are
+// everywhere in this data and a loose pattern would misread them:
+//   - "INV/MKS/2026/VII/F-039"  -> guarded by refusing a match that touches another digit,
+//                                  slash or hyphen on either side
+//   - "piutang 30-45 hari"      -> guarded by the month 1-12 check
+//   - "kabel 2/4 core"          -> guarded by requiring either a 4-digit year OR the word
+//                                  tanggal/tgl/per right before the number
+function extractNumericDateMention(t) {
+  for (const m of t.matchAll(/(^|[^\d\/-])(\d{1,2})[\/-](\d{1,2})(?:[\/-](\d{4}))?(?![\d\/-])/g)) {
+    const day = parseInt(m[2], 10);
+    const month = parseInt(m[3], 10);
+    if (day < 1 || day > 31 || month < 1 || month > 12) continue;
+    if (!m[4]) {
+      // No year written — only accept it if the sentence marks it as a date.
+      const sebelum = t.slice(0, m.index + m[1].length);
+      if (!/(tanggal|tgl|per)\s*$/.test(sebelum)) continue;
+    }
+    return { day, month, year: m[4] ? parseInt(m[4], 10) : nowMakassar().getFullYear() };
+  }
   return null;
 }
 
@@ -2533,6 +2556,26 @@ function findZonaWilayahMatches(message, zonaData) {
   }
   if (/tanpa pembelanjaan|tidak ada pembelanjaan|belum pernah belanja/.test(nMsg)) {
     return { tipe: 'tanpaPembelanjaan', data: zonaData.tanpaPembelanjaan };
+  }
+  // General overview. Without this, a plain "zona wilayah kita bagaimana?" matched none of the
+  // branches above — no wilayah named, no colour, no "tanpa pembelanjaan" — and returned nothing,
+  // so MIRA could only recite the definition of the zones and had no figures to give. Checked last
+  // so a specific wilayah or colour still wins.
+  if (/zona/.test(nMsg) || (/wilayah/.test(nMsg) && /bagaimana|gimana|semua|daftar|list|ringkasan|performa|kinerja|sebaran|overview/.test(nMsg))) {
+    const semua = zonaData.wilayah || [];
+    const hitung = { merah: 0, kuning: 0, hijau: 0 };
+    for (const w of semua) if (hitung[w.zone] !== undefined) hitung[w.zone] += 1;
+    return {
+      tipe: 'ringkasan',
+      jumlahWilayah: semua.length,
+      jumlahPerZona: hitung,
+      wilayahTeratas: [...semua].sort((a, b) => b.total - a.total).slice(0, 10),
+      wilayahZonaMerah: semua.filter((w) => w.zone === 'merah').slice(0, 20),
+      jumlahTanpaPembelanjaan: (zonaData.tanpaPembelanjaan || []).length,
+      catatan:
+        'Zona dihitung dari jumlah invoice unik per kabupaten/kota sepanjang tahun berjalan: hijau >50, kuning 20-50, merah <20. ' +
+        '"wilayahTeratas" sudah urut dari invoice terbanyak. "wilayahZonaMerah" adalah yang paling perlu digarap. Semua sudah dihitung, jangan hitung ulang.',
+    };
   }
   return null;
 }
@@ -4666,7 +4709,7 @@ Aturan:
 - Kaitkan customer tidak aktif/1x-belanja dengan PIUTANG: "daftarNamaCustomerPerBucket"/"customerTidakAktif" punya "piutangBelumLunas" per customer (0=tak ada tagihan). >0 (apalagi besar) → WAJIB sampaikan sebagai insight, kemungkinan itu SEBAB belum belanja lagi — sarankan PENAGIHAN dulu (atau bareng follow-up), bukan cuma "hubungi jualan lagi". =0 → murni kandidat follow-up biasa.
 - Boleh proaktif kasih SARAN operasional/penjualan kalau diminta, DASARKAN pada data (bukan taktik di luar itu): bucket "1x"/churn≥60hr = kandidat follow-up (cek piutangBelumLunas dulu); stok tidak bergerak = kandidat promo; piutang aging/tertinggi = kandidat penagihan; topProduk = acuan fokus stok/promosi. Sebutkan NAMA/DATA KONKRET, bukan saran generik.
 - TARGET SALES/REVENUE (Rupiah, bulanan/tahunan) + perbandingan tahun lalu → "perbandinganTahunSebelumnya": "months" (12 bulan, tiap ada "targetSalesRevenue"=target Rupiah SATU angka dipakai sales&revenue, plus sales2025/2026 rev2025/2026). Target bulan tertentu → cari di "months" pakai "label". Target tahunan → "totalTarget" (sudah dijumlah, jangan hitung ulang). PENTING: target HANYA ada untuk 2026 — 2025 tak punya target tercatat (cuma realisasi). "Komparasi target 2025&2026" → WAJIB jujur tak ada target 2025, yang bisa dibandingkan REALISASI 2025 vs 2026 + pencapaian ke target 2026 ("achievementSalesPersen"/"achievementRevPersen") — JANGAN mengarang target 2025. Pertumbuhan murni → "growthSalesPersen"/"growthRevPersen". Beda dari "targetPerformaHarianBulanan" (target OPERASIONAL invoice/OTD, bukan Rupiah) — tentukan dari konteks pertanyaan mana yang dimaksud.
-- "Zona wilayah" (merah/kuning/hijau by jumlah invoice, beda dari ekspedisi), "wilayah tanpa pembelanjaan", zona per provinsi → "zonaWilayahRelevan". Zona: hijau>50, kuning 20-50, merah<20.
+- "Zona wilayah" (merah/kuning/hijau by jumlah invoice, beda dari ekspedisi), "wilayah tanpa pembelanjaan", zona per provinsi → "zonaWilayahRelevan". Zona: hijau>50, kuning 20-50, merah<20. Baca "tipe": "ringkasan" → pertanyaan umum soal zona/wilayah: sebutkan "jumlahWilayah", sebaran "jumlahPerZona", "wilayahTeratas", dan soroti "wilayahZonaMerah" sebagai yang perlu digarap. "satuWilayah"/"perZona"/"tanpaPembelanjaan" → sesuai namanya.
 - Target performa OPERASIONAL harian/bulanan (invoice 280/bulan, OTD 80% — BUKAN Rupiah, itu di atas) → "targetPerformaHarianBulanan"/bulan (invoiceUnik, pencapaianInvoicePersen, otdAccuracyPersen).
 - "Stok tidak bergerak/tidak laku"/"terjual di bawah 5 unit" → "stokTidakBergerakDanKurangLaku" (tidakBergerak=0 terjual 2026, terjualDibawah5=<5 unit).
 - "Belum dikirim/diantar/terkirim" → "transaksiBelumDikirim" (lengkap tahun 2026, belum Complete/Return) — sebutkan customer/kode/tanggal order.

@@ -67,6 +67,7 @@ Dua hal penting:
 | Detail satu invoice: isi barang + status pelunasan | "CFN/2026/VII/010" |
 | Pencarian sebagian nomor / satu seri | "MKS/2026/VI/F-" |
 | Siapa belanja pada tanggal tertentu (rinci per invoice+produk) | "siapa belanja 5 Januari" |
+| Tanggal boleh ditulis angka | "siapa belanja tanggal 5/8/2026" |
 | Retur | "retur bulan ini" |
 
 ### Customer
@@ -78,8 +79,8 @@ Dua hal penting:
 | Riwayat belanja & pembayaran per customer | "pembelanjaan Delta Sky Tech" |
 
 ### Operasional lain
-Wilayah & zona, delivery & ekspedisi, PO Gudang, KPI personel & absensi, jabatan, alamat kantor,
-jam & tanggal sekarang (WITA).
+Wilayah & zona (per wilayah maupun **ringkasan sebaran seluruh zona**), delivery & ekspedisi,
+PO Gudang, KPI personel & absensi, jabatan, alamat kantor, jam & tanggal sekarang (WITA).
 
 ### Non-operasional
 Diskusi strategi berbasis data, analisis akar masalah, "dewan penasihat" multi-sudut-pandang,
