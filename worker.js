@@ -2989,6 +2989,57 @@ function findCompanyPeriodBreakdown(message, allTransactions, revenueDetail) {
 // against the full-year target; otherwise it answers for a month (the one named, else the current
 // one). Targets come from two different places on purpose — Sales/Revenue share one Rupiah target
 // per month from the Sales SUM sheet, while the invoice target is a separate operational figure.
+// The Sales SUM sheet's YoY block (AW:AX revenue 2026, BA:BB sales 2026) is a SNAPSHOT that only
+// moves when the sheet recalculates, while Grand Data and Rev SUM are the live ledger. For every
+// CLOSED month the two agree to the rupiah (verified Jan-Jul 2026: zero difference on all seven).
+// For the RUNNING month they drift — caught live at Rp606.839.800 in the sheet vs Rp597.119.800 in
+// the ledger, a Rp9.720.000 gap. Both numbers were reaching Gemini at the same time under
+// different field names, so the same question about "sales bulan ini" answered differently
+// depending on which field the model happened to read. The ledger wins for the running month; the
+// sheet stays authoritative for 2025 and for months already closed.
+function selaraskanYoyBulanBerjalan(yoy, perfData, revenueData) {
+  if (!yoy || !Array.isArray(yoy.months)) return yoy;
+  const now = nowMakassar();
+  const idxBulan = now.getMonth();
+  const kunci = `${now.getFullYear()}-${String(idxBulan + 1).padStart(2, '0')}`;
+  const salesLedger = perfData?.performance?.find((m) => m.bulan === kunci)?.sales;
+  const revLedger = revenueData?.monthly?.find((m) => m.bulan === kunci)?.revenue;
+  if (!Number.isFinite(salesLedger) && !Number.isFinite(revLedger)) return yoy;
+
+  let diselaraskan = null;
+  const months = yoy.months.map((m) => {
+    if (m.monthIdx !== idxBulan) return m;
+    const baru = { ...m };
+    const catatan = {};
+    if (Number.isFinite(salesLedger) && salesLedger !== m.sales2026) {
+      catatan.sales = { sheet: m.sales2026, dipakai: salesLedger };
+      baru.sales2026 = salesLedger;
+    }
+    if (Number.isFinite(revLedger) && revLedger !== m.rev2026) {
+      catatan.revenue = { sheet: m.rev2026, dipakai: revLedger };
+      baru.rev2026 = revLedger;
+    }
+    if (Object.keys(catatan).length) diselaraskan = { bulan: m.label, ...catatan };
+    return baru;
+  });
+  if (!diselaraskan) return yoy;
+
+  const totalSales2026 = months.reduce((s, m) => s + m.sales2026, 0);
+  const totalRev2026 = months.reduce((s, m) => s + m.rev2026, 0);
+  const growthPct = (curr, prev) => (prev > 0 ? ((curr - prev) / prev) * 100 : null);
+  return {
+    ...yoy,
+    months,
+    totalSales2026,
+    totalRev2026,
+    growthSalesPersen: growthPct(totalSales2026, yoy.totalSales2025),
+    growthRevPersen: growthPct(totalRev2026, yoy.totalRev2025),
+    achievementSalesPersen: yoy.totalTarget > 0 ? (totalSales2026 / yoy.totalTarget) * 100 : null,
+    achievementRevPersen: yoy.totalTarget > 0 ? (totalRev2026 / yoy.totalTarget) * 100 : null,
+    catatanPenyelarasan: `Angka bulan berjalan (${diselaraskan.bulan}) diambil dari buku transaksi yang hidup, bukan dari kolom rekap sheet yang belum tersegarkan. Pakai angka ini; jangan sebut angka lain untuk bulan yang sama.`,
+  };
+}
+
 function findSisaTarget(message, yoy, dailyPerfTargets) {
   const nMsg = normText(message);
   const wants = /sisa\s*target|kekurangan\s*target|target.*(kurang|sisa)|(kurang|sisa).*target|berapa lagi.*(target|capai)|kurang berapa/.test(nMsg);
@@ -4510,7 +4561,10 @@ async function handleChat(request, env) {
   const revenueData = revenueRaw ? JSON.parse(revenueRaw) : null;
   const perfData = perfRaw ? JSON.parse(perfRaw) : null;
   const pencapaianMatch = findPencapaianRingkasan(message, perfData?.performance, revenueData?.monthly, perfData?.totalSales2026, revenueData?.total2026, allTransactions, revenueData?.detail);
-  const sisaTargetMatch = findSisaTarget(message, yoyRaw ? JSON.parse(yoyRaw) : null, dailyPerformanceRaw ? JSON.parse(dailyPerformanceRaw) : null);
+  // Parsed ONCE and reconciled once — previously yoyRaw was JSON.parse'd separately at three call
+  // sites, so nothing guaranteed the three copies told the same story.
+  const yoyData = selaraskanYoyBulanBerjalan(yoyRaw ? JSON.parse(yoyRaw) : null, perfData, revenueData);
+  const sisaTargetMatch = findSisaTarget(message, yoyData, dailyPerformanceRaw ? JSON.parse(dailyPerformanceRaw) : null);
   const companyBreakdownMatch = findCompanyPeriodBreakdown(message, allTransactions, revenueData?.detail);
   const invoiceDetailMatch = findInvoiceDetail(message, allTransactions, revenueData?.detail, piutangData?.detail, allStock);
   const duplikasiMatch = findDuplikasi(message, allTransactions, revenueData?.detail, piutangData?.detail);
@@ -4522,7 +4576,7 @@ async function handleChat(request, env) {
   const inactiveCustomerMatch = findInactiveCustomers(message, customerActivityRaw ? JSON.parse(customerActivityRaw) : null, history, piutangData?.detail);
   const customerAktifPeriodeMatch = findCustomerAktifPeriode(message, allTransactions);
   const performaPeriodeMatch = findPerformaPeriode(message, allTransactions, revenueData?.detail, allStock);
-  const perbandinganTahunMatch = findPerbandinganTahun(message, yoyRaw ? JSON.parse(yoyRaw) : null);
+  const perbandinganTahunMatch = findPerbandinganTahun(message, yoyData);
   const referensi = matchReferences(message, allStock);
   const kpiNames = Array.isArray(kpiData?.kpi) ? kpiData.kpi.map((p) => p.nama).filter(Boolean) : [];
   const absensi = await fetchAttendanceContext(message, kpiNames, history);
@@ -4622,7 +4676,7 @@ async function handleChat(request, env) {
     // "target") but not wantsYoy (no "2025"/"pertumbuhan") — this field is the ONLY place the
     // real Rupiah target lives (targetPerformaHarianBulanan below is a DIFFERENT, invoice/OTD
     // target), so it must load on either trigger or plain target questions silently return null.
-    perbandinganTahunSebelumnya: (wantsTarget || wantsYoy) && yoyRaw ? JSON.parse(yoyRaw) : null,
+    perbandinganTahunSebelumnya: (wantsTarget || wantsYoy) ? yoyData : null,
     zonaWilayahRelevan: zonaMatch,
     targetPerformaHarianBulanan: wantsTarget && dailyPerformanceRaw ? JSON.parse(dailyPerformanceRaw) : null,
     stokTidakBergerakDanKurangLaku: wantsStockMovement && stockMovementRaw ? JSON.parse(stockMovementRaw) : null,

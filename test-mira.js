@@ -38,7 +38,7 @@ module.exports = {
   findProductSalesBreakdown, findPiutangByCompany, findPiutangByCustomer, findDuplikasi,
   findPiutangLampau, findReturTransactions, findTransactionMatches, findOnuCredentials,
   findTopPiutangCustomers, findStockValueSummary, findPaymentsByCustomer, findTopProdukByMonth,
-  findKabelByCoreCategory, findZonaWilayahMatches,
+  findKabelByCoreCategory, findZonaWilayahMatches, selaraskanYoyBulanBerjalan,
   resolveAccessCode, piutangCompanyOf, normText, normCode, nowMakassar,
 };`;
 const tmp = path.join(os.tmpdir(), `mira-test-${process.pid}.cjs`);
@@ -351,6 +351,42 @@ variasi('duplikasi', (k) => M.findDuplikasi(k, TX, BAYAR, PIUTANG), [
 variasi('zona wilayah', (k) => M.findZonaWilayahMatches(k, ZONA), [
   'zona wilayah', 'zona wilayah kita bagaimana', 'wilayah zona merah', 'wilayah tanpa pembelanjaan',
 ]);
+
+grup('Satu bulan = satu angka (sheet vs buku transaksi)');
+// Reported live: MIRA answered Rp606.839.800 for August sales while its own ledger said
+// Rp597.119.800 — the Sales SUM sheet's YoY column had not refreshed, and BOTH numbers were in
+// context at once, so the same question answered differently depending on which field was read.
+// Closed months must stay untouched; only the running month follows the ledger.
+t('bulan berjalan mengikuti buku transaksi, bukan kolom rekap sheet', () => {
+  const kunci = `${TAHUN}-${String(BULAN_INI).padStart(2, '0')}`;
+  const perf = { performance: [{ bulan: kunci, sales: 597119800, transaksi: 144 }] };
+  const rev = { monthly: [{ bulan: kunci, revenue: 532201150 }] };
+  const yoy = {
+    months: [{ monthIdx: BULAN_INI - 1, label: NAMA_BULAN[BULAN_INI - 1], targetSalesRevenue: 1766666667, sales2025: 1, sales2026: 606839800, rev2025: 1, rev2026: 999 }],
+    totalSales2025: 1, totalRev2025: 1, totalTarget: 1766666667, totalSales2026: 606839800, totalRev2026: 999,
+  };
+  const h = M.selaraskanYoyBulanBerjalan(yoy, perf, rev);
+  const b = h.months[0];
+  if (b.sales2026 !== 597119800) return `sales bulan berjalan masih ${b.sales2026}`;
+  if (b.rev2026 !== 532201150) return `revenue bulan berjalan masih ${b.rev2026}`;
+  if (h.totalSales2026 !== 597119800) return 'total tahunan tidak ikut dihitung ulang';
+  if (!h.catatanPenyelarasan) return 'tidak ada catatan penyelarasan untuk Gemini';
+  return null;
+});
+t('bulan yang sudah tutup TIDAK ikut diubah', () => {
+  const lain = BULAN_INI === 1 ? 1 : 0; // pastikan bukan bulan berjalan
+  const yoy = {
+    months: [{ monthIdx: lain, label: NAMA_BULAN[lain], targetSalesRevenue: 100, sales2025: 1, sales2026: 2157219279, rev2025: 1, rev2026: 500 }],
+    totalSales2025: 1, totalRev2025: 1, totalTarget: 100, totalSales2026: 2157219279, totalRev2026: 500,
+  };
+  const perf = { performance: [{ bulan: `${TAHUN}-${String(lain + 1).padStart(2, '0')}`, sales: 999, transaksi: 1 }] };
+  const h = M.selaraskanYoyBulanBerjalan(yoy, perf, null);
+  return h.months[0].sales2026 === 2157219279 ? null : 'bulan tutup ikut tertimpa';
+});
+t('tanpa buku transaksi pembanding, yoy dikembalikan apa adanya', () => {
+  const yoy = { months: [{ monthIdx: BULAN_INI - 1, label: 'X', sales2026: 5, rev2026: 5 }], totalSales2026: 5 };
+  return M.selaraskanYoyBulanBerjalan(yoy, null, null) === yoy ? null : 'objek diubah padahal tak ada pembanding';
+});
 
 grup('Rentang tahun & pertanyaan lanjutan (dua bug nyata)');
 t('rentang tahun mengembalikan SELURUH rentang, bukan tahun pertama saja', () => {
