@@ -2963,10 +2963,13 @@ function extractRentangBulan(message) {
   const now = nowMakassar();
   const tahun = now.getFullYear();
 
+  // A year written right after the month ("Juli 2025") belongs to that month. Without this,
+  // "Juli 2025 dan Juli 2026" collapsed into the current year twice and reported one month's
+  // figures as though it were both sides of the comparison.
   const sebut = [];
-  for (const m of t.matchAll(/\b([a-z]+)\b/g)) {
+  for (const m of t.matchAll(/\b([a-z]+)\b\s*(\d{4})?/g)) {
     const bln = MONTHS[m[1]];
-    if (bln) sebut.push({ bulan: bln, at: m.index });
+    if (bln) sebut.push({ bulan: bln, at: m.index, tahun: m[2] ? parseInt(m[2], 10) : null });
   }
   if (/\bbulan ini\b/.test(t)) sebut.push({ bulan: now.getMonth() + 1, at: t.indexOf('bulan ini') });
   if (/\bbulan lalu\b/.test(t)) sebut.push({ bulan: now.getMonth() || 12, at: t.indexOf('bulan lalu') });
@@ -2985,9 +2988,9 @@ function extractRentangBulan(message) {
     // means two discrete months rather than everything in between.
     const modeBanding = penghubungRentang ? false : (penghubungBanding || mintaBanding);
     if (modeBanding) {
-      return { mode: 'perbandingan', periode: [{ dari: a.bulan, sampai: a.bulan, tahun }, { dari: b.bulan, sampai: b.bulan, tahun }] };
+      return { mode: 'perbandingan', periode: [{ dari: a.bulan, sampai: a.bulan, tahun: a.tahun || tahun }, { dari: b.bulan, sampai: b.bulan, tahun: b.tahun || tahun }] };
     }
-    return { mode: 'rentang', periode: [{ dari: a.bulan, sampai: b.bulan, tahun }] };
+    return { mode: 'rentang', periode: [{ dari: a.bulan, sampai: b.bulan, tahun: a.tahun || b.tahun || tahun }] };
   }
 
   // Single month named. "sejak April" (with or without "sampai hari ini") spans to the current
@@ -2995,9 +2998,72 @@ function extractRentangBulan(message) {
   const satu = sebut[0];
   const sejak = /\b(sejak|semenjak|dari|mulai)\b/.test(t.slice(0, satu.at + 12));
   if (sejak || sampaiKini) {
-    return { mode: 'rentang', periode: [{ dari: satu.bulan, sampai: now.getMonth() + 1, tahun }] };
+    return { mode: 'rentang', periode: [{ dari: satu.bulan, sampai: now.getMonth() + 1, tahun: satu.tahun || tahun }] };
   }
-  return { mode: 'rentang', periode: [{ dari: satu.bulan, sampai: satu.bulan, tahun }] };
+  return { mode: 'rentang', periode: [{ dari: satu.bulan, sampai: satu.bulan, tahun: satu.tahun || tahun }] };
+}
+
+// Sales and revenue this year against last year — for the whole year, or for one named month on
+// both sides ("Juli 2025 vs Juli 2026"). Last year exists ONLY in this pre-aggregated block (raw
+// transactions are current-year only), so this is the sole route to it. Comparisons are computed
+// here rather than left to the model, since that arithmetic has gone wrong before.
+function findPerbandinganTahun(message, yoy) {
+  if (!yoy || !Array.isArray(yoy.months)) return null;
+  const nMsg = normText(message);
+  const wants = /tahun lalu|tahun sebelumnya|\b2025\b|yoy|year.?on.?year|pertumbuhan|growth|dibanding.*tahun|tahun.*dibanding/.test(nMsg);
+  if (!wants) return null;
+
+  const beda = (a, b) => ({
+    tahunLalu: Math.round(a || 0),
+    tahunIni: Math.round(b || 0),
+    selisih: Math.round((b || 0) - (a || 0)),
+    persen: a ? Math.round((((b || 0) - a) / a) * 1000) / 10 : null,
+    arah: (b || 0) >= (a || 0) ? 'NAIK' : 'TURUN',
+  });
+
+  const mm = extractMonthMention(message);
+  const bulanDisebut = mm ? yoy.months.find((m) => m.monthIdx === mm.month - 1) : null;
+
+  if (bulanDisebut) {
+    return {
+      lingkup: 'bulan',
+      periode: `${bulanDisebut.label} 2025 vs ${bulanDisebut.label} 2026`,
+      sales: beda(bulanDisebut.sales2025, bulanDisebut.sales2026),
+      revenue: beda(bulanDisebut.rev2025, bulanDisebut.rev2026),
+      catatan:
+        'Angka 2025 dan 2026 untuk bulan yang sama, sudah dibandingkan — jangan hitung ulang. ' +
+        'Bulan tahun BERJALAN yang belum lewat penuh wajar lebih kecil karena baru sebagian bulan; sebutkan itu kalau relevan, jangan langsung disimpulkan sebagai penurunan kinerja.',
+    };
+  }
+
+  const sudahLewat = yoy.months.filter((m) => (m.sales2026 || 0) > 0 || (m.rev2026 || 0) > 0);
+  const ytd2025Sales = sudahLewat.reduce((s, m) => s + (m.sales2025 || 0), 0);
+  const ytd2026Sales = sudahLewat.reduce((s, m) => s + (m.sales2026 || 0), 0);
+  const ytd2025Rev = sudahLewat.reduce((s, m) => s + (m.rev2025 || 0), 0);
+  const ytd2026Rev = sudahLewat.reduce((s, m) => s + (m.rev2026 || 0), 0);
+
+  return {
+    lingkup: 'tahun',
+    periode: '2025 vs 2026',
+    // Full-year 2025 against a part-year 2026 flatters last year and is the comparison most likely
+    // to mislead, so the like-for-like window is given alongside it and flagged as the fair one.
+    setahunPenuh: {
+      sales: beda(yoy.totalSales2025, yoy.totalSales2026),
+      revenue: beda(yoy.totalRev2025, yoy.totalRev2026),
+      catatan: '2025 setahun PENUH vs 2026 yang baru berjalan sebagian — tidak setara, jangan dipakai menyimpulkan kinerja turun.',
+    },
+    periodeSetara: {
+      bulanDibandingkan: sudahLewat.map((m) => m.label),
+      // The running month is still incomplete on the 2026 side while 2025 has it in full, so even
+      // this fairer window tilts slightly against the current year. Say so rather than let the
+      // number stand as exact.
+      bulanBerjalanBelumPenuh: (yoy.months.find((m) => m.monthIdx === nowMakassar().getMonth()) || {}).label || null,
+      sales: beda(ytd2025Sales, ytd2026Sales),
+      revenue: beda(ytd2025Rev, ytd2026Rev),
+      catatan: 'Hanya bulan yang SUDAH berjalan di 2026 dibandingkan dengan bulan yang sama di 2025 — INI perbandingan yang adil, pakai ini sebagai kesimpulan utama. Catatan: bulan di "bulanBerjalanBelumPenuh" masih berjalan (2026 baru sebagian bulan, 2025 sudah sebulan penuh), jadi angka sebenarnya sedikit lebih baik dari yang tampak — sebutkan ini.',
+    },
+    catatan: 'Utamakan "periodeSetara" saat menyimpulkan naik/turun; "setahunPenuh" hanya sebagai konteks dan WAJIB disebut ketidaksetaraannya kalau dipakai. Target hanya ada untuk 2026, 2025 tidak punya target tercatat.',
+  };
 }
 
 // Branch performance for a period — or two periods side by side with the change between them.
@@ -3010,6 +3076,11 @@ function findPerformaPeriode(message, allTransactions, paymentDetail, allStock) 
   if (!wants) return null;
   const rentang = extractRentangBulan(message);
   if (!rentang) return null;
+  // Raw transactions only cover the current year. Anything asking about an earlier year must go to
+  // the year-on-year figures instead — answering it from here would silently label this year's
+  // numbers with last year's month.
+  const tahunData = nowMakassar().getFullYear();
+  if (rentang.periode.some((p) => p.tahun !== tahunData)) return null;
 
   const namaBulan = ['', 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
   const namaByKode = {};
@@ -4360,6 +4431,7 @@ async function handleChat(request, env) {
   const inactiveCustomerMatch = findInactiveCustomers(message, customerActivityRaw ? JSON.parse(customerActivityRaw) : null, history, piutangData?.detail);
   const customerAktifPeriodeMatch = findCustomerAktifPeriode(message, allTransactions);
   const performaPeriodeMatch = findPerformaPeriode(message, allTransactions, revenueData?.detail, allStock);
+  const perbandinganTahunMatch = findPerbandinganTahun(message, yoyRaw ? JSON.parse(yoyRaw) : null);
   const referensi = matchReferences(message, allStock);
   const kpiNames = Array.isArray(kpiData?.kpi) ? kpiData.kpi.map((p) => p.nama).filter(Boolean) : [];
   const absensi = await fetchAttendanceContext(message, kpiNames, history);
@@ -4453,6 +4525,7 @@ async function handleChat(request, env) {
     customerTidakAktif: inactiveCustomerMatch,
     customerAktifPeriode: customerAktifPeriodeMatch,
     performaPeriode: performaPeriodeMatch,
+    perbandinganAntarTahun: perbandinganTahunMatch,
     fiberOptic1Core: wantsFo1Core && fo1coreRaw ? JSON.parse(fo1coreRaw) : null,
     // (wantsTarget || wantsYoy): "target sales/revenue bulan ini" fires wantsTarget (keyword
     // "target") but not wantsYoy (no "2025"/"pertumbuhan") — this field is the ONLY place the
@@ -4535,6 +4608,7 @@ Aturan:
 - FOKUS JAWABAN PRODUK — berlaku untuk SEMUA pertanyaan produk (stok, kabelKategoriCore, katalog Falcom, dst), JANGAN menggabung info yang tidak diminta walau tersedia di field yang sama: tanya STOK saja (mis. "stok KSFO108", "ada stok kabel 1 core?") → jawab kode+nama singkat+angka stok SAJA, JANGAN sertakan harga/spesifikasi teknis lengkap/data penjualan. Tanya SPESIFIKASI/SPEK saja (mis. "spek KSFO108 apa?", "kabel 1 core itu produk apa saja?") → jawab nama lengkap/deskripsi/spesifikasi SAJA, JANGAN sertakan angka stok/harga/penjualan. Baru boleh gabung kalau user EKSPLISIT minta gabungan (mis. "spek dan stok KSFO108", "harga sekaligus stok kabel 1 core").
 - "Kabel 1 core"/"fiber optic 1 core" sebagai section dashboard spesifik → "fiberOptic1Core" (5 kode: KSFO028/108/083/113/128, tren bulanan+per kode) — pencarian stok umum tetap "stokRelevan".
 - PO Gudang (HANYA kalau eksplisit tulis "PO") → "poGudangRingkasan" (per status+tren bulanan, umum) atau "poGudangRelevan" ("poGudangCatatan" jelaskan filter, spesifik).
+- PERBANDINGAN DENGAN TAHUN LALU (mis. "sales 2025 vs 2026", "perbandingan revenue tahun lalu dan tahun ini", "Juli 2025 vs Juli 2026", "pertumbuhan dibanding tahun lalu") → WAJIB dari "perbandinganAntarTahun". Data 2025 HANYA ada di field ini — "performaPeriode"/"transaksiRelevan" cuma berisi tahun berjalan, JANGAN dipakai untuk angka 2025. "lingkup":"bulan" → sajikan sales & revenue bulan itu di kedua tahun beserta selisih+persen+arah. "lingkup":"tahun" → WAJIB pakai "periodeSetara" sebagai KESIMPULAN UTAMA (hanya bulan yang sudah berjalan di 2026 vs bulan sama di 2025 — ini yang adil), dan sebutkan bulan apa saja yang dibandingkan; "setahunPenuh" boleh disebut sebagai konteks TAPI WAJIB dijelaskan bahwa itu membandingkan 2025 penuh dengan 2026 yang baru sebagian, jadi TIDAK setara dan tidak boleh dipakai menyimpulkan kinerja turun. "persen":null = pembanding nol, katakan begitu jangan tulis 0%. Semua sudah dihitung — jangan hitung ulang manual.
 - PERFORMA / PERBANDINGAN ANTAR PERIODE (mis. "performa penjualan sejak April sampai hari ini", "performa Mei-Juli", "perbandingan penjualan Maret dan Juni", "tren Mei vs Juli") → WAJIB jawab dari "performaPeriode". Tiap entri di "periode" punya "label" (pakai persis sebagai judul periodenya) berisi: "sales", "revenue", "invoiceUnik", "customerUnik", "totalQty", dan "produkTerlaris" (5 kode teratas + nama). WAJIB sebutkan KELIMA ukuran utama (sales, revenue, invoice unik, customer unik, produk terlaris) — jangan cuma sales. Kalau "mode":"perbandingan" atau ada dua periode, WAJIB juga sampaikan "perubahan": selisih DAN persentasenya untuk sales/revenue/invoiceUnik/customerUnik ("persen":null artinya periode awal nol sehingga persentase tak bisa dihitung — katakan begitu, jangan tulis 0%). Setelah angkanya, JANGAN berhenti di tabel: baca polanya dan beri 1-3 kesimpulan singkat plus saran tindak lanjut yang konkret (mengacu MODE PARTNER DISKUSI BISNIS) — misalnya kalau sales turun tapi customer unik tetap, artinya nilai belanja per customer yang mengecil, bukan customer yang hilang. Ini dipakai Branch Manager untuk menyusun rencana kerja, jadi bantu tarik maknanya, bukan cuma membacakan angka.
 - "Berapa jumlah/total customer kita?" → "customerInsights.totalCustomer" (jumlah customer UNIK yang pernah bertransaksi tahun berjalan). JANGAN jawab pakai jumlah wilayah, jumlah transaksi, atau jumlah invoice — itu ukuran BERBEDA (kesalahan nyata: ditanya jumlah customer, MIRA menjawab "20 wilayah" beserta jumlah transaksi per wilayah). Kalau user memang minta jumlah transaksi/invoice, itu ukuran lain lagi — sebutkan terpisah dan jelaskan bedanya.
 - "Customer aktif" dalam suatu periode / "persentase customer aktif sejak <bulan>" → "customerAktifPeriode" (SUDAH dihitung: "customerAktifDiPeriode", "persenAktif", "customerTidakAktifDiPeriode", "persenTidakAktif", "customerBelanjaLebihDariSekali", dengan "periode" sebagai label). Pakai apa adanya, jangan hitung ulang. Baca juga "catatan": sistem tidak punya penanda peristiwa bisnis (mis. kenaikan harga), jadi kalau user mengaitkan periode dengan suatu peristiwa, jelaskan angkanya dihitung dari RENTANG TANGGAL-nya saja — itu tetap menjawab pertanyaannya, JANGAN menolak dengan "data tidak tersedia".
