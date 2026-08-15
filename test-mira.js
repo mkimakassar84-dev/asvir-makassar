@@ -94,6 +94,8 @@ const ZONA = {
     { nama: 'MAKASSAR', total: 120, zone: 'hijau' },
     { nama: 'BONE', total: 35, zone: 'kuning' },
     { nama: 'PALU', total: 8, zone: 'merah' },
+    { nama: 'BERAU', total: 1, zone: 'merah' },
+    { nama: 'AMBON', total: 0, zone: 'merah' },
   ],
   tanpaPembelanjaan: ['AMBON'],
   provinsi: [],
@@ -351,6 +353,16 @@ variasi('duplikasi', (k) => M.findDuplikasi(k, TX, BAYAR, PIUTANG), [
 variasi('zona wilayah', (k) => M.findZonaWilayahMatches(k, ZONA), [
   'zona wilayah', 'zona wilayah kita bagaimana', 'wilayah zona merah', 'wilayah tanpa pembelanjaan',
 ]);
+
+t('"wilayah paling lemah" tidak diambil dari ekor daftar teratas', () => {
+  const r = M.findZonaWilayahMatches('wilayah mana yang paling lemah', ZONA);
+  if (!r || r.tipe !== 'ringkasan') return 'pertanyaan terlemah tidak terjawab';
+  if (!Array.isArray(r.wilayahTerlemah) || !r.wilayahTerlemah.length) return 'tidak ada field wilayahTerlemah';
+  if (r.wilayahTerlemah[0].nama !== 'BERAU') return `terlemah dilaporkan ${r.wilayahTerlemah[0].nama}, seharusnya BERAU (1 invoice)`;
+  if (r.wilayahTerlemah.some((w) => w.total === 0)) return 'wilayah tanpa pembelanjaan ikut masuk daftar terlemah';
+  if (r.wilayahTeratas[0].nama !== 'MAKASSAR') return 'urutan teratas ikut rusak';
+  return null;
+});
 
 grup('Satu bulan = satu angka (sheet vs buku transaksi)');
 // Reported live: MIRA answered Rp606.839.800 for August sales while its own ledger said

@@ -2561,7 +2561,14 @@ function findZonaWilayahMatches(message, zonaData) {
   // branches above — no wilayah named, no colour, no "tanpa pembelanjaan" — and returned nothing,
   // so MIRA could only recite the definition of the zones and had no figures to give. Checked last
   // so a specific wilayah or colour still wins.
-  if (/zona/.test(nMsg) || (/wilayah/.test(nMsg) && /bagaimana|gimana|semua|daftar|list|ringkasan|performa|kinerja|sebaran|overview/.test(nMsg))) {
+  // Superlative wordings ("wilayah mana yang paling lemah") are included deliberately: without
+  // them the question fell through to the top-20 ranking and MIRA answered with the tail of that
+  // list instead of the real floor.
+  if (
+    /zona/.test(nMsg) ||
+    (/wilayah|daerah|kabupaten|kota/.test(nMsg) &&
+      /bagaimana|gimana|semua|daftar|list|ringkasan|performa|kinerja|sebaran|overview|lemah|lemas|terendah|paling sedikit|paling kecil|paling rendah|paling ramai|paling kuat|terbanyak|tertinggi|terbaik|terburuk|potensi|perlu digarap|kurang garap/.test(nMsg))
+  ) {
     const semua = zonaData.wilayah || [];
     const hitung = { merah: 0, kuning: 0, hijau: 0 };
     for (const w of semua) if (hitung[w.zone] !== undefined) hitung[w.zone] += 1;
@@ -2571,10 +2578,19 @@ function findZonaWilayahMatches(message, zonaData) {
       jumlahPerZona: hitung,
       wilayahTeratas: [...semua].sort((a, b) => b.total - a.total).slice(0, 10),
       wilayahZonaMerah: semua.filter((w) => w.zone === 'merah').slice(0, 20),
+      // Explicit weakest list. Without it, "wilayah mana yang paling lemah" was answered from the
+      // bottom of the top-20 ranking — caught live naming Barru (46 invoice) as weakest when the
+      // real floor is a string of wilayah on 1 invoice. A ranking's tail is not its opposite.
+      wilayahTerlemah: [...semua]
+        .filter((w) => w.total > 0)
+        .sort((a, b) => a.total - b.total)
+        .slice(0, 10),
       jumlahTanpaPembelanjaan: (zonaData.tanpaPembelanjaan || []).length,
+      contohTanpaPembelanjaan: (zonaData.tanpaPembelanjaan || []).slice(0, 15),
       catatan:
-        'Zona dihitung dari jumlah invoice unik per kabupaten/kota sepanjang tahun berjalan: hijau >50, kuning 20-50, merah <20. ' +
-        '"wilayahTeratas" sudah urut dari invoice terbanyak. "wilayahZonaMerah" adalah yang paling perlu digarap. Semua sudah dihitung, jangan hitung ulang.',
+        'Zona dihitung dari jumlah invoice unik per kabupaten/kota sepanjang tahun berjalan, RETUR TIDAK DIHITUNG: hijau >50, kuning 20-50, merah <20. ' +
+        '"wilayahTeratas" sudah urut dari invoice terbanyak. "wilayahTerlemah" adalah yang paling sedikit transaksinya (pakai ini untuk pertanyaan "paling lemah/terendah", JANGAN ambil dari bawah "wilayahTeratas"). ' +
+        '"wilayahZonaMerah" adalah yang paling perlu digarap. Semua sudah dihitung, jangan hitung ulang.',
     };
   }
   return null;
@@ -3927,6 +3943,13 @@ async function runSync(env) {
     // can have several product rows; confirmed live: 2534 unique invoices out of 4505 total rows,
     // ~34% of invoices are multi-line, so a row counter overstates every one of these by a lot).
     const byLokasi = {};
+    // Per-wilayah, per-month unique invoices — retur excluded, exactly like every other invoice
+    // count in MIRA. Feeds the zona wilayah figures further down, which used to be read straight
+    // off the KPI MONITORING sheet where retur IS counted. Both numbers were reaching Gemini
+    // (Makassar: 482 here vs 499 from the sheet, a gap of exactly 17 retur invoices) and the same
+    // question got a different answer depending on which field was read. One rule now: retur is a
+    // reversal, never a transaction.
+    const byLokasiBulan = {}; // lokasi -> monthIdx -> Set<noInvoice>
     const byLokasiEkspedisi = {}; // lokasi -> { ekspedisiName -> Set<noInvoice> }
     const byKode = {}; // top products: kode -> { amount, qty, amountMKI, amountCFN } — legitimately
     // per PRODUCT LINE, not per invoice, so this one stays row-based on purpose.
@@ -3981,6 +4004,12 @@ async function runSync(env) {
       if (lokasi && noInvoice && !isRetur) {
         if (!byLokasi[lokasi]) byLokasi[lokasi] = new Set();
         byLokasi[lokasi].add(noInvoice);
+        if (d && d.getFullYear() === nowMakassar().getFullYear()) {
+          if (!byLokasiBulan[lokasi]) byLokasiBulan[lokasi] = {};
+          const mi = d.getMonth();
+          if (!byLokasiBulan[lokasi][mi]) byLokasiBulan[lokasi][mi] = new Set();
+          byLokasiBulan[lokasi][mi].add(noInvoice);
+        }
       }
       if (lokasi && ekspedisi && noInvoice && !isRetur) {
         if (!byLokasiEkspedisi[lokasi]) byLokasiEkspedisi[lokasi] = {};
@@ -4171,6 +4200,18 @@ async function runSync(env) {
       };
     } catch { /* non-critical, leave empty if this sub-step fails */ }
 
+    // Retur-free invoice counts for EVERY wilayah (not just the top 20) — the zona step below
+    // reads this instead of the sheet's own totals, so both wilayah answers now come from one
+    // ledger and cannot disagree.
+    const invoicePerWilayah = {};
+    for (const [lokasi, set] of Object.entries(byLokasi)) {
+      const perBulan = byLokasiBulan[lokasi] || {};
+      invoicePerWilayah[lokasi] = {
+        total: set.size,
+        monthly: Array.from({ length: 12 }, (_, i) => (perBulan[i] ? perBulan[i].size : 0)),
+      };
+    }
+    await env.SHEET_CACHE.put('data:invoicePerWilayah', JSON.stringify(invoicePerWilayah));
     await env.SHEET_CACHE.put('data:performance', JSON.stringify({ performance, topWilayah, totalSales2026 }));
     await env.SHEET_CACHE.put('data:transactions', JSON.stringify(transactions));
     await env.SHEET_CACHE.put('data:wilayahEkspedisi', JSON.stringify(wilayahEkspedisi));
@@ -4261,13 +4302,44 @@ async function runSync(env) {
     const MONTH_START_IDX = 13;
     const TOTAL_IDX = 25;
     const MONTH_NAMES_ID = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+    // The SHEET supplies the wilayah universe — all 122 kabupaten/kota including the ones with
+    // zero purchases, which the transaction ledger cannot know about. The COUNTS come from the
+    // ledger (retur excluded), because the sheet's own totals count retur and disagreed with
+    // every other invoice figure MIRA reports. Sheet totals are kept alongside under a clearly
+    // different name so the KPI board number is still traceable, never interchangeable.
+    const invoiceLedgerRaw = await env.SHEET_CACHE.get('data:invoicePerWilayah');
+    const invoiceLedger = invoiceLedgerRaw ? JSON.parse(invoiceLedgerRaw) : null;
     const wilayahData = [];
     for (const r of allRows) {
       const nama = (r[NAMA_IDX] || '').trim();
       if (!nama || !/^[A-Za-z]/.test(nama)) continue;
-      const total = toNumber(r[TOTAL_IDX]);
-      const monthly = MONTH_NAMES_ID.map((label, i) => ({ label, invoice: toNumber(r[MONTH_START_IDX + i]) }));
-      wilayahData.push({ nama, monthly, total, zone: zoneOf(total) });
+      const totalSheet = toNumber(r[TOTAL_IDX]);
+      const ledger = invoiceLedger ? invoiceLedger[nama.toUpperCase()] : null;
+      const total = ledger ? ledger.total : totalSheet;
+      const monthly = MONTH_NAMES_ID.map((label, i) => ({
+        label,
+        invoice: ledger ? ledger.monthly[i] : toNumber(r[MONTH_START_IDX + i]),
+      }));
+      const w = { nama, monthly, total, zone: zoneOf(total) };
+      if (ledger && totalSheet !== total) w.totalPapanKpiTermasukRetur = totalSheet;
+      wilayahData.push(w);
+    }
+    // Wilayah that exist in the ledger but not on the sheet would otherwise vanish from zona
+    // entirely. Real cases: "PAREPARE" (2 invoices) and "KOILAKA" (1) — misspellings of PARE-PARE
+    // and KOLAKA typed into Grand Data. Carried in and flagged rather than dropped, so the
+    // invoices still count and the typo is visible instead of silently swallowed.
+    if (invoiceLedger) {
+      const sudahAda = new Set(wilayahData.map((w) => w.nama.toUpperCase()));
+      for (const [nama, ledger] of Object.entries(invoiceLedger)) {
+        if (sudahAda.has(nama.toUpperCase())) continue;
+        wilayahData.push({
+          nama,
+          monthly: MONTH_NAMES_ID.map((label, i) => ({ label, invoice: ledger.monthly[i] })),
+          total: ledger.total,
+          zone: zoneOf(ledger.total),
+          catatan: 'Nama ini ada di data transaksi tapi tidak ada di daftar wilayah papan KPI — kemungkinan salah ketik.',
+        });
+      }
     }
     const tanpaPembelanjaan = wilayahData.filter((w) => w.total === 0).map((w) => w.nama);
     const byProvince = {};
@@ -4738,7 +4810,7 @@ Aturan:
 - NOMOR INVOICE/FAKTUR disebut (lengkap atau sepotong, mis. "INV-CFN/2026/VII/010", "CFN/2026/VII/010", "MKS/2026/VI/010", "MKS/2026/VI/F-", "MKS/2026/VI/FP-", "F-141") → WAJIB pakai "detailInvoice", JANGAN pakai field lain untuk ini. Catatan: nomor invoice company MKI ditulis "MKS" (mis. "INV/MKS/2026/VI/010"), sedangkan CFN ditulis "INV-CFN/..." — pencarian sudah menangani keduanya, jangan koreksi/ubah nomor yang diketik user. Cara baca hasilnya: "ditemukan":false → nomor itu MEMANG tidak ada, katakan terus terang, JANGAN mengarang isinya dan JANGAN menyodorkan invoice lain yang mirip. "modeDaftar":true → potongan nomor cocok ke BANYAK invoice (biasanya user memang mencari sekelompok invoice, mis. semua "F-" bulan itu): sajikan "daftar" (sudah urut terbaru dulu) beserta "jumlahCocok"/"totalNilaiSemua"/"totalSisaPiutangSemua" yang SUDAH dihitung. Selain itu = SATU invoice, sajikan LENGKAP: tanggal, customer, company, lokasi+ekspedisi, "barang" (SEBUTKAN tiap kode produk + namanya + qty + nilainya, ini yang paling sering ditanya), "totalNilaiTransaksi", lalu status pelunasannya — "statusPelunasan" LUNAS/BELUM LUNAS, "sisaPiutang", "totalDibayar", dan "riwayatPembayaran" (tanggal + jumlah tiap kali bayar, sebutkan kalau dicicil). SELALU baca "catatan" dan sampaikan isinya kalau ada peringatan di situ (mis. total pembayaran tidak sama dengan nilai transaksi) — jangan diperbaiki/dibulatkan sendiri.
 - Tanggal/kode/customer spesifik → "transaksiRelevan" (field "ekspedisi"/"company" tiap baris = cara kirim). "transaksiCatatan" bilang "PALING BARU" → baris PERTAMA = transaksi terakhir. "isRetur" true → sebutkan sebagai retur, bukan penjualan normal. "Siapa (yang) belanja/berbelanja pada tanggal X" → JANGAN cuma sebut daftar NAMA customer — WAJIB rinci tiap transaksi dari "transaksiRelevan": nama customer, nomor invoice ("invoice"), kode produk ("kode"), qty, dan amount (kalau baris banyak, boleh kelompokkan per customer/invoice, tapi detail invoice+kode produknya tetap harus ada, jangan cuma nama).
 - "Nama X cocok ke BEBERAPA customer berbeda" di "transaksiCatatan" (atau catatan sejenis di field lain) → JANGAN pilih satu sendiri, tanya balik ke user sebutkan semua nama kandidat yang ada di catatan itu supaya user bisa pilih mana yang dimaksud.
-- INVOICE/TRANSAKSI = INVOICE UNIK bukan jumlah baris, RETUR TIDAK DIHITUNG: satu invoice bisa banyak baris (kode beda, invoice sama) — hitung nilai UNIK di field "invoice", jangan hitung baris array (dobel-hitung produk dalam 1 invoice). Hitung sendiri dari "transaksiRelevan" → buang dulu baris "isRetur":true (retur = pembalikan, bukan transaksi baru). Field yang SUDAH invoice-unik-tanpa-retur (pakai langsung): "performa"/"targetPerformaHarianBulanan" (transaksi/invoiceUnik/bulan), "deliveryOverview" (sameDayCount/cutOffCount/handCarryCount/pihakKetigaCount/byEkspedisi), "wilayahEkspedisiRelevan"/topWilayah (jumlahTransaksi/wilayah), "customerInsights"/"daftarNamaCustomerPerBucket" (invoiceUnik/customer). Pertanyaan retur sendiri → JANGAN pakai field ini (sudah exclude retur), pakai "returRelevan". "amount"/"qty" produk (mis. "topProduk") TETAP per baris (memang benar per unit produk).
+- INVOICE/TRANSAKSI = INVOICE UNIK bukan jumlah baris, RETUR TIDAK DIHITUNG: satu invoice bisa banyak baris (kode beda, invoice sama) — hitung nilai UNIK di field "invoice", jangan hitung baris array (dobel-hitung produk dalam 1 invoice). Hitung sendiri dari "transaksiRelevan" → buang dulu baris "isRetur":true (retur = pembalikan, bukan transaksi baru). Field yang SUDAH invoice-unik-tanpa-retur (pakai langsung): "performa"/"targetPerformaHarianBulanan" (transaksi/invoiceUnik/bulan), "deliveryOverview" (sameDayCount/cutOffCount/handCarryCount/pihakKetigaCount/byEkspedisi), "wilayahEkspedisiRelevan"/topWilayah/"zonaWilayahRelevan" (jumlahTransaksi/total per wilayah — semua sudah tanpa retur dan SATU sumber, jangan pernah sebut dua angka berbeda untuk wilayah yang sama), "customerInsights"/"daftarNamaCustomerPerBucket" (invoiceUnik/customer). Pertanyaan retur sendiri → JANGAN pakai field ini (sudah exclude retur), pakai "returRelevan". "amount"/"qty" produk (mis. "topProduk") TETAP per baris (memang benar per unit produk).
 - RETUR khusus (mis. "retur bulan ini", "retur customer X") → "returRelevan" (bisa dipersempit tanggal/customer). "Berapa BANYAK retur" → WAJIB "jumlahInvoiceUnikRetur" (invoice retur beda), JANGAN "jumlahBarisRetur" (baris produk) kecuali diminta rincian per baris. "catatan" jelaskan kriteria deteksi.
 - Piutang (belum dibayar) customer tertentu → WAJIB "piutangRelevan" (rincian per invoice); field umum "piutang" cuma total per kategori umur GABUNGAN SELURUH CABANG, tak ada rincian per customer — JANGAN PERNAH pakai angka dari "piutang" untuk pertanyaan piutang SATU customer, walau "piutangRelevan" null/kosong (itu berarti customer itu tidak punya piutang tercatat, BUKAN alasan menyamarkan angka total cabang seolah itu piutang orang tersebut — kalau "piutangRelevan" null/kosong, katakan jujur "tidak ada piutang tercatat", titik, jangan tambal pakai field lain). Beda dari "pembayaranRelevan" (sudah bayar). "piutangRelevan"/"pembayaranRelevan" berisi "customerCandidatesAmbiguous" (bukan "customer"/"invoices" seperti biasa) → nama yang ditanya cocok ke BEBERAPA customer nyata sekaligus, sebutkan semua nama di "customerCandidatesAmbiguous" dan tanya balik yang mana dimaksud, JANGAN pilih satu sendiri. User menjawab follow-up MEMILIH salah satu nama (termasuk menolak nama lain, mis. "X bukan Y") → pertanyaan itu SUDAH terjawab lewat "piutangRelevan"/"pembayaranRelevan" yang baru (sistem sudah paham penolakannya), TINGGAL jawab pakai data customer yang dipilih user — jangan tanya ulang atau bingung lagi.
 - "Customer piutang tertinggi/terbesar" → "piutangCustomerTertinggi" (top10, sudah urut). Null padahal ditanya → kata kunci tak terdeteksi, minta user pertegas.

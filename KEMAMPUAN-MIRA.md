@@ -105,6 +105,9 @@ Masing-masing lahir dari kesalahan nyata yang dilaporkan. Semuanya dijaga oleh `
 | **Duplikasi dipisah menurut jenis risikonya** | Nomor sama + tanggal beda ≠ tagih ganda | Angka risiko digelembungkan |
 | **Retur tidak menambah hitungan invoice** | Retur itu pembalikan, bukan transaksi baru | Jumlah transaksi menggelembung |
 | **Sinkronisasi kosong tidak menimpa data lama** | Google Sheets pernah membalas kosong | Seluruh data hilang, MIRA mengarang |
+| **Satu hal = satu angka.** Bulan berjalan ikut buku transaksi, bukan kolom rekap sheet | Sheet Rp606.839.800 vs buku Rp597.119.800 | Pertanyaan sama dijawab beda tiap kali ditanya |
+| **Invoice per wilayah dihitung dari buku transaksi**, sheet hanya penyedia daftar nama wilayah | Papan KPI dulu ikut menghitung retur (Makassar 499 vs 482) | Dua angka untuk wilayah yang sama |
+| **Yang "terlemah" punya field sendiri**, bukan ekor daftar teratas | Ekor top-20 pernah disebut sebagai wilayah terlemah | Barru (46) disebut terlemah, padahal ada yang 1 |
 
 ---
 
