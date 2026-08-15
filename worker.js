@@ -3020,8 +3020,6 @@ function selaraskanYoyBulanBerjalan(yoy, perfData, revenueData) {
   const kunci = `${now.getFullYear()}-${String(idxBulan + 1).padStart(2, '0')}`;
   const salesLedger = perfData?.performance?.find((m) => m.bulan === kunci)?.sales;
   const revLedger = revenueData?.monthly?.find((m) => m.bulan === kunci)?.revenue;
-  if (!Number.isFinite(salesLedger) && !Number.isFinite(revLedger)) return yoy;
-
   let diselaraskan = null;
   const months = yoy.months.map((m) => {
     if (m.monthIdx !== idxBulan) return m;
@@ -3038,22 +3036,48 @@ function selaraskanYoyBulanBerjalan(yoy, perfData, revenueData) {
     if (Object.keys(catatan).length) diselaraskan = { bulan: m.label, ...catatan };
     return baru;
   });
-  if (!diselaraskan) return yoy;
-
-  const totalSales2026 = months.reduce((s, m) => s + m.sales2026, 0);
-  const totalRev2026 = months.reduce((s, m) => s + m.rev2026, 0);
+  const totalSales2026 = months.reduce((s, m) => s + (m.sales2026 || 0), 0);
+  const totalRev2026 = months.reduce((s, m) => s + (m.rev2026 || 0), 0);
   const growthPct = (curr, prev) => (prev > 0 ? ((curr - prev) / prev) * 100 : null);
-  return {
+
+  // "Pertumbuhan dibanding tahun lalu" must ALWAYS mean like-for-like months. Dividing a
+  // part-year 2026 by a full-year 2025 produced -33,7% sales and -34,2% revenue, while the same
+  // eight months side by side are +1,9% and +3,6% — the difference between "cabang turun
+  // sepertiga" and "cabang tumbuh tipis". findPerbandinganTahun already got this right, but this
+  // object is sent on strategy questions too, where the raw full-year ratio was the only growth
+  // number in sight and was quoted as fact. The fair figure now owns the plain name; the
+  // part-vs-full ratio keeps a name that says what it is.
+  const sudahLewat = months.filter((m) => (m.sales2026 || 0) > 0 || (m.rev2026 || 0) > 0);
+  const setara2025Sales = sudahLewat.reduce((s, m) => s + (m.sales2025 || 0), 0);
+  const setara2026Sales = sudahLewat.reduce((s, m) => s + (m.sales2026 || 0), 0);
+  const setara2025Rev = sudahLewat.reduce((s, m) => s + (m.rev2025 || 0), 0);
+  const setara2026Rev = sudahLewat.reduce((s, m) => s + (m.rev2026 || 0), 0);
+
+  const hasil = {
     ...yoy,
     months,
     totalSales2026,
     totalRev2026,
-    growthSalesPersen: growthPct(totalSales2026, yoy.totalSales2025),
-    growthRevPersen: growthPct(totalRev2026, yoy.totalRev2025),
+    growthSalesPersen: growthPct(setara2026Sales, setara2025Sales),
+    growthRevPersen: growthPct(setara2026Rev, setara2025Rev),
+    pertumbuhanPeriodeSetara: {
+      bulanDibandingkan: sudahLewat.map((m) => m.label),
+      sales: { tahun2025: setara2025Sales, tahun2026: setara2026Sales, persen: growthPct(setara2026Sales, setara2025Sales) },
+      revenue: { tahun2025: setara2025Rev, tahun2026: setara2026Rev, persen: growthPct(setara2026Rev, setara2025Rev) },
+      catatan: 'INI angka pertumbuhan yang sah — hanya bulan yang sudah berjalan di 2026 dibanding bulan yang sama di 2025.',
+    },
+    pertumbuhanTidakSetaraJanganDipakai: {
+      sales: growthPct(totalSales2026, yoy.totalSales2025),
+      revenue: growthPct(totalRev2026, yoy.totalRev2025),
+      catatan: '2025 setahun PENUH dibanding 2026 yang baru berjalan sebagian. JANGAN dipakai menyimpulkan naik/turun, dan jangan disebut tanpa menjelaskan ketidaksetaraannya.',
+    },
     achievementSalesPersen: yoy.totalTarget > 0 ? (totalSales2026 / yoy.totalTarget) * 100 : null,
     achievementRevPersen: yoy.totalTarget > 0 ? (totalRev2026 / yoy.totalTarget) * 100 : null,
-    catatanPenyelarasan: `Angka bulan berjalan (${diselaraskan.bulan}) diambil dari buku transaksi yang hidup, bukan dari kolom rekap sheet yang belum tersegarkan. Pakai angka ini; jangan sebut angka lain untuk bulan yang sama.`,
   };
+  if (diselaraskan) {
+    hasil.catatanPenyelarasan = `Angka bulan berjalan (${diselaraskan.bulan}) diambil dari buku transaksi yang hidup, bukan dari kolom rekap sheet yang belum tersegarkan. Pakai angka ini; jangan sebut angka lain untuk bulan yang sama.`;
+  }
+  return hasil;
 }
 
 function findSisaTarget(message, yoy, dailyPerfTargets) {
@@ -4834,7 +4858,7 @@ Aturan:
 - Customer lama tidak belanja rentang hari spesifik, nama spesifik, ATAU follow-up umum tanpa rentang → "customerTidakAktif" (default churn ≥60hr untuk follow-up umum, BUKAN null). Beda dari "customerInsights.totalChurned" (cuma total). "modeCustomerSpesifik":true → field "customer" satu orang. False → "daftar" banyak orang urut PALING LAMA. Null padahal jelas ditanya → kata kunci tak terdeteksi, minta rentang/nama.
 - Kaitkan customer tidak aktif/1x-belanja dengan PIUTANG: "daftarNamaCustomerPerBucket"/"customerTidakAktif" punya "piutangBelumLunas" per customer (0=tak ada tagihan). >0 (apalagi besar) → WAJIB sampaikan sebagai insight, kemungkinan itu SEBAB belum belanja lagi — sarankan PENAGIHAN dulu (atau bareng follow-up), bukan cuma "hubungi jualan lagi". =0 → murni kandidat follow-up biasa.
 - Boleh proaktif kasih SARAN operasional/penjualan kalau diminta, DASARKAN pada data (bukan taktik di luar itu): bucket "1x"/churn≥60hr = kandidat follow-up (cek piutangBelumLunas dulu); stok tidak bergerak = kandidat promo; piutang aging/tertinggi = kandidat penagihan; topProduk = acuan fokus stok/promosi. Sebutkan NAMA/DATA KONKRET, bukan saran generik.
-- TARGET SALES/REVENUE (Rupiah, bulanan/tahunan) + perbandingan tahun lalu → "perbandinganTahunSebelumnya": "months" (12 bulan, tiap ada "targetSalesRevenue"=target Rupiah SATU angka dipakai sales&revenue, plus sales2025/2026 rev2025/2026). Target bulan tertentu → cari di "months" pakai "label". Target tahunan → "totalTarget" (sudah dijumlah, jangan hitung ulang). PENTING: target HANYA ada untuk 2026 — 2025 tak punya target tercatat (cuma realisasi). "Komparasi target 2025&2026" → WAJIB jujur tak ada target 2025, yang bisa dibandingkan REALISASI 2025 vs 2026 + pencapaian ke target 2026 ("achievementSalesPersen"/"achievementRevPersen") — JANGAN mengarang target 2025. Pertumbuhan murni → "growthSalesPersen"/"growthRevPersen". Beda dari "targetPerformaHarianBulanan" (target OPERASIONAL invoice/OTD, bukan Rupiah) — tentukan dari konteks pertanyaan mana yang dimaksud.
+- TARGET SALES/REVENUE (Rupiah, bulanan/tahunan) + perbandingan tahun lalu → "perbandinganTahunSebelumnya": "months" (12 bulan, tiap ada "targetSalesRevenue"=target Rupiah SATU angka dipakai sales&revenue, plus sales2025/2026 rev2025/2026). Target bulan tertentu → cari di "months" pakai "label". Target tahunan → "totalTarget" (sudah dijumlah, jangan hitung ulang). PENTING: target HANYA ada untuk 2026 — 2025 tak punya target tercatat (cuma realisasi). "Komparasi target 2025&2026" → WAJIB jujur tak ada target 2025, yang bisa dibandingkan REALISASI 2025 vs 2026 + pencapaian ke target 2026 ("achievementSalesPersen"/"achievementRevPersen") — JANGAN mengarang target 2025. Pertumbuhan dibanding tahun lalu → "growthSalesPersen"/"growthRevPersen" (SUDAH periode setara: hanya bulan yang berjalan di 2026 vs bulan sama 2025 — pakai ini). Rincian & daftar bulannya di "pertumbuhanPeriodeSetara". Field "pertumbuhanTidakSetaraJanganDipakai" membandingkan 2025 penuh dengan 2026 sebagian — JANGAN dipakai menyimpulkan naik/turun. Beda dari "targetPerformaHarianBulanan" (target OPERASIONAL invoice/OTD, bukan Rupiah) — tentukan dari konteks pertanyaan mana yang dimaksud.
 - "Zona wilayah" (merah/kuning/hijau by jumlah invoice, beda dari ekspedisi), "wilayah tanpa pembelanjaan", zona per provinsi → "zonaWilayahRelevan". Zona: hijau>50, kuning 20-50, merah<20. Baca "tipe": "ringkasan" → pertanyaan umum soal zona/wilayah: sebutkan "jumlahWilayah", sebaran "jumlahPerZona", "wilayahTeratas", dan soroti "wilayahZonaMerah" sebagai yang perlu digarap. "satuWilayah"/"perZona"/"tanpaPembelanjaan" → sesuai namanya.
 - Target performa OPERASIONAL harian/bulanan (invoice 280/bulan, OTD 80% — BUKAN Rupiah, itu di atas) → "targetPerformaHarianBulanan"/bulan (invoiceUnik, pencapaianInvoicePersen, otdAccuracyPersen).
 - "Stok tidak bergerak/tidak laku"/"terjual di bawah 5 unit" → "stokTidakBergerakDanKurangLaku" (tidakBergerak=0 terjual 2026, terjualDibawah5=<5 unit).

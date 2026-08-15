@@ -395,9 +395,28 @@ t('bulan yang sudah tutup TIDAK ikut diubah', () => {
   const h = M.selaraskanYoyBulanBerjalan(yoy, perf, null);
   return h.months[0].sales2026 === 2157219279 ? null : 'bulan tutup ikut tertimpa';
 });
-t('tanpa buku transaksi pembanding, yoy dikembalikan apa adanya', () => {
-  const yoy = { months: [{ monthIdx: BULAN_INI - 1, label: 'X', sales2026: 5, rev2026: 5 }], totalSales2026: 5 };
-  return M.selaraskanYoyBulanBerjalan(yoy, null, null) === yoy ? null : 'objek diubah padahal tak ada pembanding';
+t('tanpa buku transaksi pembanding, angka bulanan tidak disentuh', () => {
+  const yoy = { months: [{ monthIdx: BULAN_INI - 1, label: 'X', sales2025: 4, sales2026: 5, rev2025: 4, rev2026: 5 }], totalSales2025: 4, totalRev2025: 4 };
+  const h = M.selaraskanYoyBulanBerjalan(yoy, null, null);
+  return h.months[0].sales2026 === 5 && h.months[0].rev2026 === 5 ? null : 'angka bulanan ikut berubah padahal tak ada pembanding';
+});
+// Reported live: asked what the branch's biggest problem was, MIRA answered with a -33,7%
+// contraction. That number divides a part-year 2026 by a full-year 2025. The same eight months
+// side by side are +1,9%. Growth must always mean like-for-like months.
+t('pertumbuhan tahunan memakai periode setara, bukan tahun penuh vs sebagian', () => {
+  const months = [
+    { monthIdx: 0, label: 'Januari', sales2025: 100, sales2026: 110, rev2025: 100, rev2026: 110 },
+    { monthIdx: 1, label: 'Februari', sales2025: 100, sales2026: 0, rev2025: 100, rev2026: 0 },
+    { monthIdx: 2, label: 'Maret', sales2025: 100, sales2026: 0, rev2025: 100, rev2026: 0 },
+  ];
+  const yoy = { months, totalSales2025: 300, totalRev2025: 300, totalSales2026: 110, totalRev2026: 110, totalTarget: 0 };
+  const h = M.selaraskanYoyBulanBerjalan(yoy, null, null);
+  if (Math.round(h.growthSalesPersen) !== 10) return `growthSalesPersen ${h.growthSalesPersen} — seharusnya +10% (Januari saja)`;
+  if (Math.round(h.growthRevPersen) !== 10) return `growthRevPersen ${h.growthRevPersen} — seharusnya +10%`;
+  if (!h.pertumbuhanPeriodeSetara || h.pertumbuhanPeriodeSetara.bulanDibandingkan.join() !== 'Januari') return 'daftar bulan setara salah';
+  const tak = h.pertumbuhanTidakSetaraJanganDipakai;
+  if (!tak || Math.round(tak.sales) !== -63) return 'angka tidak setara hilang atau salah label';
+  return null;
 });
 
 grup('Rentang tahun & pertanyaan lanjutan (dua bug nyata)');

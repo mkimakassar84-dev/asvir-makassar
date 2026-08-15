@@ -102,6 +102,7 @@ Masing-masing lahir dari kesalahan nyata yang dilaporkan. Semuanya dijaga oleh `
 | **Data keluarga hanya milik yang sedang login** | Dulu seluruh daftar dikirim | Rekan kerja disebut sebagai istri |
 | **Tahun lampau hanya dari data khusus** | Transaksi mentah cuma tahun berjalan | Angka tahun ini dilabeli tahun lalu |
 | **Perbandingan tahun pakai periode setara** | 2025 penuh vs 2026 sebagian = −33,7% (menyesatkan); setara = +1,8% | Rencana kerja disusun atas defisit palsu |
+| **"growthSalesPersen"/"growthRevPersen" SUDAH periode setara** | Aturan di atas dulu hanya berlaku saat ditanya langsung soal perbandingan tahun; pada pertanyaan strategi, angka mentah tidak setara ikut terkirim dan dikutip sebagai fakta | MIRA menyebut cabang turun 33% padahal naik 1,9% |
 | **Duplikasi dipisah menurut jenis risikonya** | Nomor sama + tanggal beda ≠ tagih ganda | Angka risiko digelembungkan |
 | **Retur tidak menambah hitungan invoice** | Retur itu pembalikan, bukan transaksi baru | Jumlah transaksi menggelembung |
 | **Sinkronisasi kosong tidak menimpa data lama** | Google Sheets pernah membalas kosong | Seluruh data hilang, MIRA mengarang |
