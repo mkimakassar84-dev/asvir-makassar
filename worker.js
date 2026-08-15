@@ -2955,6 +2955,116 @@ function findSisaTarget(message, yoy, dailyPerfTargets) {
   };
 }
 
+// Reads month spans out of a question. Two shapes matter and they mean different things:
+// "Mei-Juli" / "sejak April sampai hari ini" is ONE continuous span, while "Maret dan Juni" is TWO
+// separate months to be set side by side. Getting that wrong silently answers a different question.
+function extractRentangBulan(message) {
+  const t = normText(message);
+  const now = nowMakassar();
+  const tahun = now.getFullYear();
+
+  const sebut = [];
+  for (const m of t.matchAll(/\b([a-z]+)\b/g)) {
+    const bln = MONTHS[m[1]];
+    if (bln) sebut.push({ bulan: bln, at: m.index });
+  }
+  if (/\bbulan ini\b/.test(t)) sebut.push({ bulan: now.getMonth() + 1, at: t.indexOf('bulan ini') });
+  if (/\bbulan lalu\b/.test(t)) sebut.push({ bulan: now.getMonth() || 12, at: t.indexOf('bulan lalu') });
+  sebut.sort((a, b) => a.at - b.at);
+  if (!sebut.length) return null;
+
+  const sampaiKini = /(sampai|hingga|s\/d|sd|ke)\s*(hari ini|sekarang|kini|saat ini|now)/.test(t);
+  const mintaBanding = /banding|perbandingan|\bvs\b|versus|dibanding/.test(t);
+
+  if (sebut.length >= 2) {
+    const a = sebut[0], b = sebut[1];
+    const antara = t.slice(a.at, b.at);
+    const penghubungRentang = /-|s\/d|\bsd\b|sampai|hingga|ke\b/.test(antara);
+    const penghubungBanding = /\bdan\b|\bvs\b|versus|dibanding|banding|atau/.test(antara);
+    // An explicit range connector wins; otherwise "dan"/"vs" (or the word "bandingkan" anywhere)
+    // means two discrete months rather than everything in between.
+    const modeBanding = penghubungRentang ? false : (penghubungBanding || mintaBanding);
+    if (modeBanding) {
+      return { mode: 'perbandingan', periode: [{ dari: a.bulan, sampai: a.bulan, tahun }, { dari: b.bulan, sampai: b.bulan, tahun }] };
+    }
+    return { mode: 'rentang', periode: [{ dari: a.bulan, sampai: b.bulan, tahun }] };
+  }
+
+  // Single month named. "sejak April" (with or without "sampai hari ini") spans to the current
+  // month; a bare month name means just that month.
+  const satu = sebut[0];
+  const sejak = /\b(sejak|semenjak|dari|mulai)\b/.test(t.slice(0, satu.at + 12));
+  if (sejak || sampaiKini) {
+    return { mode: 'rentang', periode: [{ dari: satu.bulan, sampai: now.getMonth() + 1, tahun }] };
+  }
+  return { mode: 'rentang', periode: [{ dari: satu.bulan, sampai: satu.bulan, tahun }] };
+}
+
+// Branch performance for a period — or two periods side by side with the change between them.
+// Built for planning conversations, so it returns the whole picture at once (sales, revenue,
+// unique invoices, unique customers, best sellers) rather than one metric per question.
+function findPerformaPeriode(message, allTransactions, paymentDetail, allStock) {
+  if (!allTransactions || !allTransactions.length) return null;
+  const nMsg = normText(message);
+  const wants = /performa|kinerja|perbandingan|bandingkan|\bvs\b|dibanding|tren|trend|perkembangan|pergerakan/.test(nMsg);
+  if (!wants) return null;
+  const rentang = extractRentangBulan(message);
+  if (!rentang) return null;
+
+  const namaBulan = ['', 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+  const namaByKode = {};
+  for (const p of allStock || []) if (p.kode) namaByKode[p.kode] = p.nama;
+
+  const hitung = ({ dari, sampai, tahun }) => {
+    const cocok = (s) => {
+      const d = parseFlexibleDate(s);
+      if (!d || d.getFullYear() !== tahun) return false;
+      const b = d.getMonth() + 1;
+      return b >= dari && b <= sampai;
+    };
+    const tx = allTransactions.filter((t) => cocok(t.tanggal));
+    const bayar = (paymentDetail || []).filter((p) => cocok(p.tanggal));
+    const byKode = {};
+    for (const t of tx) {
+      if (!t.kode) continue;
+      if (!byKode[t.kode]) byKode[t.kode] = { kode: t.kode, nama: namaByKode[t.kode] || null, amount: 0, qty: 0 };
+      byKode[t.kode].amount += t.amount;
+      byKode[t.kode].qty += t.qty;
+    }
+    const produk = Object.values(byKode).sort((a, b) => b.amount - a.amount);
+    return {
+      label: dari === sampai ? `${namaBulan[dari]} ${tahun}` : `${namaBulan[dari]}-${namaBulan[sampai]} ${tahun}`,
+      sales: tx.reduce((s, t) => s + t.amount, 0),
+      revenue: bayar.reduce((s, p) => s + p.amount, 0),
+      invoiceUnik: new Set(tx.filter((t) => !t.isRetur).map((t) => t.invoice)).size,
+      customerUnik: new Set(tx.filter((t) => t.customer).map((t) => t.customer)).size,
+      totalQty: tx.reduce((s, t) => s + t.qty, 0),
+      produkTerlaris: produk.slice(0, 5),
+    };
+  };
+
+  const hasil = rentang.periode.map(hitung);
+  const out = { mode: rentang.mode, periode: hasil };
+
+  if (hasil.length === 2) {
+    const [a, b] = hasil;
+    const delta = (x, y) => ({ dari: x, ke: y, selisih: y - x, persen: x ? Math.round(((y - x) / x) * 1000) / 10 : null });
+    out.perubahan = {
+      keterangan: `${a.label} -> ${b.label}`,
+      sales: delta(a.sales, b.sales),
+      revenue: delta(a.revenue, b.revenue),
+      invoiceUnik: delta(a.invoiceUnik, b.invoiceUnik),
+      customerUnik: delta(a.customerUnik, b.customerUnik),
+    };
+  }
+  out.catatan =
+    'Semua angka SUDAH dihitung untuk periode di "label" masing-masing — jangan hitung ulang manual. ' +
+    '"sales" dari data penjualan, "revenue" dari data pelunasan (dua sumber berbeda, wajar berbeda angkanya), "invoiceUnik" sudah tanpa retur, "customerUnik" = jumlah customer berbeda yang bertransaksi di periode itu. ' +
+    (hasil.length === 2 ? '"perubahan" berisi selisih dan persentase antar kedua periode, "persen":null berarti periode awal nol jadi persentase tidak bisa dihitung. ' : '') +
+    '"produkTerlaris" = 5 kode teratas berdasarkan nilai penjualan di periode itu.';
+  return out;
+}
+
 function findPencapaianRingkasan(message, performance, revenueMonthly, totalSales2026, totalRevenue2026, allTransactions, paymentDetail) {
   const nMsg = normText(message);
   if (!/pencapaian/.test(nMsg)) return null;
@@ -4249,6 +4359,7 @@ async function handleChat(request, env) {
   const customerBucketMatch = findCustomerBucketMatch(message, customerBucketsRaw ? JSON.parse(customerBucketsRaw) : null, history, piutangData?.detail);
   const inactiveCustomerMatch = findInactiveCustomers(message, customerActivityRaw ? JSON.parse(customerActivityRaw) : null, history, piutangData?.detail);
   const customerAktifPeriodeMatch = findCustomerAktifPeriode(message, allTransactions);
+  const performaPeriodeMatch = findPerformaPeriode(message, allTransactions, revenueData?.detail, allStock);
   const referensi = matchReferences(message, allStock);
   const kpiNames = Array.isArray(kpiData?.kpi) ? kpiData.kpi.map((p) => p.nama).filter(Boolean) : [];
   const absensi = await fetchAttendanceContext(message, kpiNames, history);
@@ -4341,6 +4452,7 @@ async function handleChat(request, env) {
     daftarNamaCustomerPerBucket: customerBucketMatch,
     customerTidakAktif: inactiveCustomerMatch,
     customerAktifPeriode: customerAktifPeriodeMatch,
+    performaPeriode: performaPeriodeMatch,
     fiberOptic1Core: wantsFo1Core && fo1coreRaw ? JSON.parse(fo1coreRaw) : null,
     // (wantsTarget || wantsYoy): "target sales/revenue bulan ini" fires wantsTarget (keyword
     // "target") but not wantsYoy (no "2025"/"pertumbuhan") — this field is the ONLY place the
@@ -4423,6 +4535,7 @@ Aturan:
 - FOKUS JAWABAN PRODUK — berlaku untuk SEMUA pertanyaan produk (stok, kabelKategoriCore, katalog Falcom, dst), JANGAN menggabung info yang tidak diminta walau tersedia di field yang sama: tanya STOK saja (mis. "stok KSFO108", "ada stok kabel 1 core?") → jawab kode+nama singkat+angka stok SAJA, JANGAN sertakan harga/spesifikasi teknis lengkap/data penjualan. Tanya SPESIFIKASI/SPEK saja (mis. "spek KSFO108 apa?", "kabel 1 core itu produk apa saja?") → jawab nama lengkap/deskripsi/spesifikasi SAJA, JANGAN sertakan angka stok/harga/penjualan. Baru boleh gabung kalau user EKSPLISIT minta gabungan (mis. "spek dan stok KSFO108", "harga sekaligus stok kabel 1 core").
 - "Kabel 1 core"/"fiber optic 1 core" sebagai section dashboard spesifik → "fiberOptic1Core" (5 kode: KSFO028/108/083/113/128, tren bulanan+per kode) — pencarian stok umum tetap "stokRelevan".
 - PO Gudang (HANYA kalau eksplisit tulis "PO") → "poGudangRingkasan" (per status+tren bulanan, umum) atau "poGudangRelevan" ("poGudangCatatan" jelaskan filter, spesifik).
+- PERFORMA / PERBANDINGAN ANTAR PERIODE (mis. "performa penjualan sejak April sampai hari ini", "performa Mei-Juli", "perbandingan penjualan Maret dan Juni", "tren Mei vs Juli") → WAJIB jawab dari "performaPeriode". Tiap entri di "periode" punya "label" (pakai persis sebagai judul periodenya) berisi: "sales", "revenue", "invoiceUnik", "customerUnik", "totalQty", dan "produkTerlaris" (5 kode teratas + nama). WAJIB sebutkan KELIMA ukuran utama (sales, revenue, invoice unik, customer unik, produk terlaris) — jangan cuma sales. Kalau "mode":"perbandingan" atau ada dua periode, WAJIB juga sampaikan "perubahan": selisih DAN persentasenya untuk sales/revenue/invoiceUnik/customerUnik ("persen":null artinya periode awal nol sehingga persentase tak bisa dihitung — katakan begitu, jangan tulis 0%). Setelah angkanya, JANGAN berhenti di tabel: baca polanya dan beri 1-3 kesimpulan singkat plus saran tindak lanjut yang konkret (mengacu MODE PARTNER DISKUSI BISNIS) — misalnya kalau sales turun tapi customer unik tetap, artinya nilai belanja per customer yang mengecil, bukan customer yang hilang. Ini dipakai Branch Manager untuk menyusun rencana kerja, jadi bantu tarik maknanya, bukan cuma membacakan angka.
 - "Berapa jumlah/total customer kita?" → "customerInsights.totalCustomer" (jumlah customer UNIK yang pernah bertransaksi tahun berjalan). JANGAN jawab pakai jumlah wilayah, jumlah transaksi, atau jumlah invoice — itu ukuran BERBEDA (kesalahan nyata: ditanya jumlah customer, MIRA menjawab "20 wilayah" beserta jumlah transaksi per wilayah). Kalau user memang minta jumlah transaksi/invoice, itu ukuran lain lagi — sebutkan terpisah dan jelaskan bedanya.
 - "Customer aktif" dalam suatu periode / "persentase customer aktif sejak <bulan>" → "customerAktifPeriode" (SUDAH dihitung: "customerAktifDiPeriode", "persenAktif", "customerTidakAktifDiPeriode", "persenTidakAktif", "customerBelanjaLebihDariSekali", dengan "periode" sebagai label). Pakai apa adanya, jangan hitung ulang. Baca juga "catatan": sistem tidak punya penanda peristiwa bisnis (mis. kenaikan harga), jadi kalau user mengaitkan periode dengan suatu peristiwa, jelaskan angkanya dihitung dari RENTANG TANGGAL-nya saja — itu tetap menjawab pertanyaannya, JANGAN menolak dengan "data tidak tersedia".
 - "Frekuensi customer"/"paling sering belanja"/"churn"/"by sales"/customer mana paling besar belanjanya → "customerInsights" (totalCustomer, totalChurned=tak beli≥60hr, buckets, topByFrekuensi, topBySales) — termasuk follow-up pendek yang pivot metrik dari topik customer-ranking yang baru dibahas (mis. "kalau by sales?"). Field ini null → JANGAN mengarang nama customer/perusahaan yang terdengar masuk akal (pelanggaran serius, sama seperti aturan anti-karang piutang di atas) — jujur bilang belum bisa jawab dari data yang ada.
