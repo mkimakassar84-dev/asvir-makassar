@@ -358,15 +358,22 @@ Format: 1 paragraf pendek per penasihat menerapkan kerangka kerjanya ke kasus ca
 
 const CHART_MODULE = `
 
-MODE GRAFIK/CHART — aktif kalau user minta grafik/chart/diagram/visualisasi/tren digambarkan (bukan cuma angka teks):
+MODE GRAFIK/CHART — aktif kalau user minta grafik/chart/diagram/visualisasi/tren digambarkan, ATAU minta dikirimi GAMBAR grafik (gambar itu dibuat dari blok chart ini, jadi perlakuannya sama):
 - Jawab dulu dengan teks singkat seperti biasa (angka, insight, saran) — chart ini TAMBAHAN, bukan pengganti teks.
-- WAJIB akhiri jawaban dengan TEPAT SATU blok berpagar \`\`\`chart berisi JSON valid, format persis begini (tanpa teks lain di dalam pagar):
+- WAJIB akhiri jawaban dengan TEPAT SATU blok berpagar \`\`\`chart berisi JSON valid, tanpa teks lain di dalam pagar:
   \`\`\`chart
-  {"type":"line","title":"judul singkat","labels":["Jan","Feb"],"datasets":[{"label":"nama seri","data":[1000000,1200000]}]}
+  {"type":"line","title":"Tren Sales per Bulan 2026","labels":["Jan","Feb"],"datasets":[{"label":"Sales","peran":"sales","data":[1000000,1200000]}]}
   \`\`\`
-- "type" HANYA "line" (untuk tren dari waktu ke waktu — bulanan/tahunan) atau "bar" (untuk perbandingan antar kategori — zona wilayah, top produk, dst). Tidak ada tipe lain.
-- SETIAP angka di "data" WAJIB persis sama dengan angka yang sudah kamu sebutkan/hitung dari DATA KONTEKS — JANGAN PERNAH mengarang angka baru khusus untuk chart yang tidak ada dasarnya.
-- Kalau data yang diminta tidak cukup untuk digrafikkan (mis. cuma 1 angka tunggal, bukan deret waktu atau perbandingan kategori), JANGAN paksa buat blok chart — cukup jawab teks biasa saja.`;
+- "type": "line" (tren waktu), "bar" (perbandingan antar kategori/bulan), atau "doughnut" (komposisi/porsi dari satu keseluruhan).
+- "peran" tiap dataset menentukan warnanya supaya SAMA PERSIS dengan dashboard kinerja cabang. Pakai: "sales" (terakota), "revenue" (hijau sage), "target" (kuning putus-putus), "tahunLalu" (abu-abu biru). Kalau tidak ada yang cocok, boleh dikosongkan.
+- Satu dataset boleh punya "type" sendiri untuk menimpa tipe utama. Inilah cara membuat kartu "Komparasi Sales 2025 vs 2026 & Target" seperti di dashboard — dua batang plus satu garis target:
+  \`\`\`chart
+  {"type":"bar","title":"Komparasi Sales 2025 vs 2026 & Target","labels":["Jan","Feb"],"datasets":[{"label":"Sales 2025","peran":"tahunLalu","data":[1,2]},{"label":"Sales 2026","peran":"sales","data":[3,4]},{"label":"Target","peran":"target","type":"line","data":[5,5]}]}
+  \`\`\`
+- SETIAP angka di "data" WAJIB persis sama dengan angka yang sudah kamu sebutkan/hitung dari DATA KONTEKS — JANGAN PERNAH mengarang angka baru khusus untuk chart.
+- Kalau user minta perbandingan dengan tahun lalu, ambil dari "perbandinganTahunSebelumnya.months" (sales2025/sales2026/rev2025/rev2026/targetSalesRevenue). Bulan yang belum berjalan di 2026 tetap ditulis 0, jangan dibuang.
+- Kalau data yang diminta tidak cukup untuk digrafikkan (mis. cuma 1 angka tunggal, bukan deret waktu atau perbandingan kategori), JANGAN paksa buat blok chart — cukup jawab teks biasa saja.
+- Setelah grafik tampil, di bawahnya ADA tombol "Kirim gambar" dan "Simpan" di aplikasi. Jadi kalau user minta dikirimi gambar, buat grafiknya lalu beri tahu tombol itu — jangan bilang kamu tidak bisa mengirim gambar.`;
 
 // ==== MODUL SKILL SALES & MARKETING ====
 // Twenty condensed Indonesian modules distilled from the installed marketing/sales skill library

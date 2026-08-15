@@ -279,33 +279,145 @@
   // Renders one Chart.js canvas inside the AI bubble. Fails silently (removes the canvas) on any
   // malformed spec instead of breaking the rest of the answer — a chart is a bonus, not a
   // requirement, the text answer next to it is always the source of truth.
+  // Palette and chart styling lifted verbatim from the branch dashboard's calc.js/render.js, so a
+  // chart shared out of MIRA is visually the same report card the team already knows — same
+  // terracotta for sales, sage for revenue, dashed amber for target, slate for last year.
+  const PALET = { terra: '#c17a5a', sage: '#8a9a82', amber: '#cf9b3f', slate: '#a3aebb', grid: '#eae3d6', kertas: '#fbf8f2' };
+  // MIRA names the ROLE of each series and the colour follows automatically — asking the model for
+  // hex codes invited it to invent off-brand ones.
+  const PERAN_WARNA = { sales: PALET.terra, revenue: PALET.sage, target: PALET.amber, tahunlalu: PALET.slate };
+  const URUTAN_CADANGAN = [PALET.terra, PALET.sage, PALET.amber, PALET.slate];
+  const rupiahSingkat = (n) => {
+    const abs = Math.abs(n);
+    if (abs >= 1e9) return (n / 1e9).toFixed(1).replace(/\.0$/, '') + ' M';
+    if (abs >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + ' Jt';
+    return new Intl.NumberFormat('id-ID').format(n);
+  };
+
+  // Chart.js leaves the canvas transparent. Saved or shared as PNG that turns into black on
+  // WhatsApp, so the background is painted in explicitly before anything else is drawn.
+  const latarPutih = {
+    id: 'latarPutih',
+    beforeDraw(chart) {
+      const { ctx } = chart;
+      ctx.save();
+      ctx.globalCompositeOperation = 'destination-over';
+      ctx.fillStyle = PALET.kertas;
+      ctx.fillRect(0, 0, chart.width, chart.height);
+      ctx.restore();
+    },
+  };
+
   function renderChart(bubbleEl, spec) {
-    if (!spec || (spec.type !== 'line' && spec.type !== 'bar')) return;
+    if (!spec || !['line', 'bar', 'doughnut'].includes(spec.type)) return;
     if (!Array.isArray(spec.labels) || !Array.isArray(spec.datasets) || !spec.datasets.length) return;
     const canvas = document.createElement('canvas');
-    canvas.className = 'mt-2 w-full';
-    canvas.style.maxHeight = '220px';
+    canvas.className = 'mt-2 w-full rounded-xl';
+    canvas.style.maxHeight = '240px';
     bubbleEl.appendChild(canvas);
+    const bulat = spec.type === 'doughnut';
+
+    const warnaSeri = (d, i) => PERAN_WARNA[String(d.peran || '').toLowerCase()] || URUTAN_CADANGAN[i % URUTAN_CADANGAN.length];
+    const bangunSeri = (d, i) => {
+      const warna = warnaSeri(d, i);
+      if (bulat) {
+        return {
+          label: d.label || '',
+          data: d.data,
+          borderWidth: 0,
+          backgroundColor: spec.labels.map((_, j) => URUTAN_CADANGAN[j % URUTAN_CADANGAN.length]),
+        };
+      }
+      // A dataset may override the chart type — that is how the dashboard draws its target line
+      // on top of the 2025-vs-2026 bars, and MIRA reproduces the same shape.
+      const tipe = d.type === 'line' || d.type === 'bar' ? d.type : spec.type;
+      if (tipe === 'bar') {
+        return { type: 'bar', label: d.label || '', data: d.data, backgroundColor: warna, borderRadius: 4 };
+      }
+      const putus = String(d.peran || '').toLowerCase() === 'target' || d.dash === true;
+      return {
+        type: 'line',
+        label: d.label || '',
+        data: d.data,
+        borderColor: warna,
+        backgroundColor: warna + '22', // isian tipis di bawah garis, seperti kartu tren di dashboard
+        fill: putus ? false : spec.datasets.length === 1,
+        tension: 0.35,
+        borderWidth: putus ? 2 : 2.5,
+        borderDash: putus ? [6, 4] : undefined,
+        pointRadius: putus ? 0 : 5,
+        pointBackgroundColor: warna,
+      };
+    };
+
     try {
       new Chart(canvas.getContext('2d'), {
-        type: spec.type,
-        data: {
-          labels: spec.labels,
-          datasets: spec.datasets.map((d) => ({ label: d.label || '', data: d.data, borderWidth: 2 })),
-        },
+        type: spec.type === 'doughnut' ? 'doughnut' : 'bar',
+        plugins: [latarPutih],
+        data: { labels: spec.labels, datasets: spec.datasets.map(bangunSeri) },
         options: {
           responsive: true,
           maintainAspectRatio: false,
+          // Animation off so the canvas is already complete the moment the share button is
+          // pressed — mid-animation the exported PNG comes out half-drawn.
+          animation: false,
           plugins: {
-            legend: { display: spec.datasets.length > 1 },
-            title: { display: !!spec.title, text: spec.title || '' },
+            legend: { display: bulat || spec.datasets.length > 1, labels: { boxWidth: 12, font: { size: 11 } } },
+            title: { display: !!spec.title, text: spec.title || '', font: { size: 13, weight: '600' }, color: '#4a3b2f' },
           },
-          scales: { y: { beginAtZero: true } },
+          scales: bulat
+            ? {}
+            : {
+                y: { beginAtZero: true, ticks: { callback: (v) => rupiahSingkat(v), font: { size: 10 } }, grid: { color: PALET.grid } },
+                x: { ticks: { font: { size: 10 } }, grid: { display: false } },
+              },
         },
       });
+      tambahTombolGambar(bubbleEl, canvas, spec.title || 'Grafik MIRA');
     } catch {
       canvas.remove();
     }
+  }
+
+  // Turns the rendered chart into a real PNG the user can send. Same mechanism the branch
+  // dashboard's own share pages already use (canvas -> toBlob -> navigator.share), so a chart from
+  // MIRA reaches WhatsApp exactly the way a dashboard card does. Falls back to a plain download on
+  // devices where file sharing is unavailable.
+  function tambahTombolGambar(bubbleEl, canvas, judul) {
+    const namaFile = judul.replace(/[^a-zA-Z0-9 ]/g, '').trim().replace(/\s+/g, '-').toLowerCase() + '.png';
+    const baris = document.createElement('div');
+    baris.className = 'flex gap-2 mt-2';
+    const buat = (label) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = label;
+      b.className = 'text-xs px-3 py-1.5 rounded-lg border border-black/10 bg-white/70 active:scale-95';
+      baris.appendChild(b);
+      return b;
+    };
+    const tblKirim = buat('Kirim gambar');
+    const tblSimpan = buat('Simpan');
+
+    const ambilBlob = () => new Promise((res) => canvas.toBlob(res, 'image/png'));
+    tblKirim.addEventListener('click', async () => {
+      try {
+        const blob = await ambilBlob();
+        if (!blob) return;
+        const file = new File([blob], namaFile, { type: 'image/png' });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], title: judul });
+        } else {
+          tblSimpan.click(); // tidak bisa berbagi berkas — simpan saja, lalu kirim manual
+        }
+      } catch { /* dibatalkan user, bukan error */ }
+    });
+    tblSimpan.addEventListener('click', () => {
+      const a = document.createElement('a');
+      a.download = namaFile;
+      a.href = canvas.toDataURL('image/png');
+      a.click();
+    });
+    bubbleEl.appendChild(baris);
   }
 
   function addUserBubble(text) {
