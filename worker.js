@@ -2269,6 +2269,126 @@ function findInvoiceCompanyMismatch(message, allTransactions, paymentDetail, piu
   };
 }
 
+// "Rekor" — hari dan bulan terbaik yang pernah dicatat cabang.
+// Batas datanya jujur dan berbeda per jenis, jadi ikut dikirim supaya tidak diklaim berlebihan:
+//   • rekor HARIAN hanya dari buku transaksi tahun berjalan (2026) — data harian 2025 tidak ada.
+//   • rekor BULANAN sales & revenue mencakup 2025 DAN 2026, karena sheet Sales SUM menyimpan
+//     total bulanan 2025.
+//   • rekor invoice unik BULANAN hanya 2026 — jumlah invoice 2025 tidak pernah tercatat.
+// Retur diperlakukan seperti di seluruh MIRA: nilainya ikut mengurangi sales (baris retur memang
+// negatif), tapi TIDAK pernah menambah hitungan invoice unik.
+function findRekor(message, allTransactions, paymentDetail, yoy) {
+  const nMsg = normText(message);
+  // Kata "rekor" sudah cukup jelas maksudnya — tidak perlu menyebut metriknya ("rekor cabang kita
+  // apa saja"). Sedangkan kata superlatif biasa BARU dianggap tanya rekor kalau disertai metrik
+  // DAN satuan waktu, supaya "wilayah dengan invoice terbanyak" atau "customer piutang tertinggi"
+  // tidak ikut tersedot ke sini.
+  const adaKataRekor = /\brekor\b|\bpuncak\b|\bhistoris\b|pernah dicapai|pernah tercatat/.test(nMsg);
+  const adaSuperlatif = /\btertinggi\b|\bterbanyak\b|paling banyak|paling tinggi|\bterbaik\b/.test(nMsg);
+  const bicaraAngka = /\bsales\b|penjualan|omzet|\brevenue\b|pendapatan|pelunasan|\binvoice\b|faktur|transaksi|pertumbuhan|growth/.test(nMsg);
+  const adaSatuanWaktu = /\bharian\b|\bbulanan\b|per hari|per bulan|dalam 1 hari|dalam 1 bulan|dalam sehari|dalam sebulan|satu hari|satu bulan/.test(nMsg);
+  if (!adaKataRekor && !(adaSuperlatif && bicaraAngka && adaSatuanWaktu)) return null;
+
+  const mintaHarian = /\bharian\b|per hari|dalam 1 hari|dalam sehari|satu hari/.test(nMsg);
+  const mintaBulanan = /\bbulanan\b|per bulan|dalam 1 bulan|dalam sebulan|satu bulan/.test(nMsg);
+  const mintaTumbuh = /pertumbuhan|growth|dibanding.*2025|vs.*2025/.test(nMsg);
+
+  const NAMA_BLN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+  const puncak = (peta, ambil) => {
+    const daftar = [...peta.values()].sort((a, b) => ambil(b) - ambil(a));
+    return { teratas: daftar[0] || null, peringkat: daftar.slice(0, 5) };
+  };
+
+  // ---- harian, dari buku transaksi (sales + invoice unik) ----
+  const perHari = new Map();
+  for (const t of allTransactions || []) {
+    const d = parseFlexibleDate(t && t.tanggal);
+    if (!d) continue;
+    const kunci = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (!perHari.has(kunci)) perHari.set(kunci, { tanggal: t.tanggal, kunci, sales: 0, invoiceSet: new Set() });
+    const h = perHari.get(kunci);
+    h.sales += toNumber(t.amount);
+    if (t.invoice && !t.isRetur) h.invoiceSet.add(t.invoice);
+  }
+  for (const h of perHari.values()) { h.jumlahInvoiceUnik = h.invoiceSet.size; delete h.invoiceSet; }
+  const salesHarian = puncak(perHari, (x) => x.sales);
+  const invoiceHarian = puncak(perHari, (x) => x.jumlahInvoiceUnik);
+
+  // ---- harian, dari buku pembayaran (revenue) ----
+  const revHari = new Map();
+  for (const r of paymentDetail || []) {
+    const d = parseFlexibleDate(r && r.tanggal);
+    if (!d) continue;
+    const kunci = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (!revHari.has(kunci)) revHari.set(kunci, { tanggal: r.tanggal, kunci, revenue: 0, jumlahPembayaran: 0 });
+    const h = revHari.get(kunci);
+    h.revenue += toNumber(r.amount);
+    h.jumlahPembayaran += 1;
+  }
+  const revenueHarian = puncak(revHari, (x) => x.revenue);
+
+  // ---- bulanan: invoice unik hanya 2026, sales & revenue dua tahun ----
+  const perBulan2026 = new Map();
+  for (const t of allTransactions || []) {
+    const d = parseFlexibleDate(t && t.tanggal);
+    if (!d) continue;
+    const kunci = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    if (!perBulan2026.has(kunci)) perBulan2026.set(kunci, { bulan: `${NAMA_BLN[d.getMonth()]} ${d.getFullYear()}`, kunci, invoiceSet: new Set() });
+    if (t.invoice && !t.isRetur) perBulan2026.get(kunci).invoiceSet.add(t.invoice);
+  }
+  for (const b of perBulan2026.values()) { b.jumlahInvoiceUnik = b.invoiceSet.size; delete b.invoiceSet; }
+  const invoiceBulanan = puncak(perBulan2026, (x) => x.jumlahInvoiceUnik);
+
+  const bulanDuaTahun = new Map();
+  for (const m of (yoy && yoy.months) || []) {
+    if (m.sales2025 || m.rev2025) bulanDuaTahun.set(`2025-${m.monthIdx}`, { bulan: `${m.label} 2025`, sales: m.sales2025 || 0, revenue: m.rev2025 || 0 });
+    if (m.sales2026 || m.rev2026) bulanDuaTahun.set(`2026-${m.monthIdx}`, { bulan: `${m.label} 2026`, sales: m.sales2026 || 0, revenue: m.rev2026 || 0 });
+  }
+  const salesBulanan = puncak(bulanDuaTahun, (x) => x.sales);
+  const revenueBulanan = puncak(bulanDuaTahun, (x) => x.revenue);
+
+  // ---- rekor pertumbuhan per bulan dibanding bulan yang sama 2025 ----
+  const tumbuh = [];
+  for (const m of (yoy && yoy.months) || []) {
+    if (!m.sales2026 && !m.rev2026) continue;
+    const s = m.sales2025 > 0 ? ((m.sales2026 - m.sales2025) / m.sales2025) * 100 : null;
+    const r = m.rev2025 > 0 ? ((m.rev2026 - m.rev2025) / m.rev2025) * 100 : null;
+    tumbuh.push({ bulan: m.label, sales2025: m.sales2025, sales2026: m.sales2026, pertumbuhanSalesPersen: s, rev2025: m.rev2025, rev2026: m.rev2026, pertumbuhanRevenuePersen: r });
+  }
+  const tertinggiSales = [...tumbuh].filter((x) => x.pertumbuhanSalesPersen != null).sort((a, b) => b.pertumbuhanSalesPersen - a.pertumbuhanSalesPersen)[0] || null;
+  const tertinggiRev = [...tumbuh].filter((x) => x.pertumbuhanRevenuePersen != null).sort((a, b) => b.pertumbuhanRevenuePersen - a.pertumbuhanRevenuePersen)[0] || null;
+
+  return {
+    yangDitanya: mintaTumbuh ? 'pertumbuhan' : mintaHarian && !mintaBulanan ? 'harian' : mintaBulanan && !mintaHarian ? 'bulanan' : 'semua',
+    harian: {
+      rekorSales: salesHarian.teratas,
+      lima_besar_sales: salesHarian.peringkat,
+      rekorInvoiceUnik: invoiceHarian.teratas,
+      lima_besar_invoice: invoiceHarian.peringkat,
+      rekorRevenue: revenueHarian.teratas,
+      lima_besar_revenue: revenueHarian.peringkat,
+      cakupan: 'Hanya tahun berjalan (2026). Rincian harian tahun 2025 tidak pernah tercatat, jadi rekor harian TIDAK boleh diklaim sebagai rekor sepanjang sejarah cabang.',
+    },
+    bulanan: {
+      rekorSales: salesBulanan.teratas,
+      lima_besar_sales: salesBulanan.peringkat,
+      rekorRevenue: revenueBulanan.teratas,
+      lima_besar_revenue: revenueBulanan.peringkat,
+      rekorInvoiceUnik: invoiceBulanan.teratas,
+      lima_besar_invoice: invoiceBulanan.peringkat,
+      cakupan: 'Sales & revenue bulanan mencakup 2025 DAN 2026. Rekor invoice unik bulanan hanya 2026 — jumlah invoice 2025 tidak tercatat, sebutkan batas ini kalau menyajikannya.',
+    },
+    pertumbuhan: {
+      bulanPertumbuhanSalesTertinggi: tertinggiSales,
+      bulanPertumbuhanRevenueTertinggi: tertinggiRev,
+      perBulan: tumbuh,
+      pertumbuhanKeseluruhanPeriodeSetara: yoy && yoy.pertumbuhanPeriodeSetara ? yoy.pertumbuhanPeriodeSetara : null,
+      cakupan: 'Persen dihitung per bulan yang sama antara 2026 dan 2025. Untuk kesimpulan keseluruhan pakai "pertumbuhanKeseluruhanPeriodeSetara".',
+    },
+    catatan: 'Semua angka sudah dihitung dan diurutkan — jangan hitung ulang. Sajikan jenis rekor yang ditanya lebih dulu ("yangDitanya"), boleh menyebut lima besarnya sebagai konteks. WAJIB sebutkan batas cakupan di "cakupan" kalau relevan, jangan mengklaim rekor sepanjang masa untuk data yang cuma setahun.',
+  };
+}
+
 function findInvoiceFormatIssues(message, allTransactions, paymentDetail, piutangDetail) {
   const nMsg = normText(message);
   // "Invoice salah input" itu pemeriksaan company, bukan pemeriksaan penulisan — biarkan
@@ -5006,6 +5126,7 @@ async function handleChat(request, env) {
   const arUntukAudit = (piutangData?.semuaFaktur || piutangData?.detail);
   const formatInvoiceMatch = findInvoiceFormatIssues(message, allTransactions, revenueData?.detail, arUntukAudit);
   const salahInputCompanyMatch = findInvoiceCompanyMismatch(message, allTransactions, revenueData?.detail, arUntukAudit);
+  const rekorMatch = findRekor(message, allTransactions, revenueData?.detail, yoyData);
   const paymentMatch = findPaymentsByCustomer(message, revenueData?.detail, piutangData?.detail);
   const paymentByDateMatch = findPaymentsByDate(message, revenueData?.detail, piutangData?.detail);
   const poMatch = findPoGudangMatches(message, poGudangData?.items);
@@ -5099,6 +5220,7 @@ async function handleChat(request, env) {
     cekDuplikasi: duplikasiMatch,
     cekPenulisanInvoice: formatInvoiceMatch,
     cekSalahInputCompany: salahInputCompanyMatch,
+    rekorCabang: rekorMatch,
     returRelevan: returMatch,
     wilayahEkspedisiRelevan: wilayahMatch,
     topProduk: wantsTopProduk && topProductsRaw ? enrichTopProdukWithNama(JSON.parse(topProductsRaw), allStock) : null,
@@ -5193,6 +5315,7 @@ Aturan:
    • "R-MKS/2026/II/005" dan "R/MKS/2026/II/005" = RETUR. Keduanya sama-sama SAH.
   CFN hanya punya SATU bentuk: "INV-CFN/2026/VIII/126", dipakai untuk reguler MAUPUN faktur pajak. KONSEP BORONGAN TIDAK ADA DI CFN.
   Di luar keterangan di atas, JANGAN mengarang arti/aturan tambahan apa pun tentang penomoran. Company sebuah faktur tetap WAJIB dibaca dari kolom Company, bukan disimpulkan dari nomornya — ada faktur bernomor CFN yang company-nya MKI.
+- REKOR CABANG ("rekor sales harian terbanyak", "rekor invoice harian terbanyak", "rekor revenue harian terbanyak", "rekor sales bulanan", "rekor invoice bulanan", "rekor revenue bulanan", "rekor pertumbuhan dibanding 2025", "hari/bulan terbaik kita kapan") → WAJIB dari "rekorCabang". Baca "yangDitanya" dan sajikan jenis itu LEBIH DULU: "harian" → dari "harian", "bulanan" → dari "bulanan", "pertumbuhan" → dari "pertumbuhan", "semua" → sajikan ringkas ketiganya. Tiap rekor sudah lengkap dengan tanggal/bulan dan angkanya; "lima_besar_*" boleh disebut sebagai konteks. WAJIB sampaikan batas di "cakupan" saat relevan — rekor HARIAN hanya dari tahun berjalan karena rincian harian 2025 tidak ada, dan rekor INVOICE UNIK bulanan juga hanya 2026. JANGAN menyebutnya "rekor sepanjang sejarah cabang" kalau datanya cuma setahun. Semua sudah dihitung dan diurutkan, jangan hitung ulang.
 - CEK INVOICE SALAH INPUT COMPANY ("invoice salah input", "salah input Sales/Revenue/AR", "nomor invoice tidak sesuai company", "invoice tertukar company") → WAJIB dari "cekSalahInputCompany", dan ini BERBEDA dari cek penulisan. Yang diperiksa: nomor berawalan "INV-CFN/" harus tercatat di company CFN, sedangkan "INV/MKS/", "R-MKS/", "R/MKS/" harus tercatat di company MKI. Sajikan tiap temuan dengan nomor faktur, "companyMenurutNomor", "companyTercatat", customer, tanggal, dan sumbernya. Baca "lingkup" — kalau user menyebut satu sumber saja, jangan menyinggung sumber lain. Kalau "jumlahTidakSinkron":0 → katakan bersih dan sebutkan berapa baris yang disisir dari sumber mana. JANGAN mencampurnya dengan temuan salah penulisan. Catatan penting: temuan ini adalah ketidakcocokan yang harus DIBETULKAN di sheet — tapi selama belum dibetulkan, semua perhitungan MIRA tetap memakai kolom Company yang tercatat, bukan tebakan dari nomornya.
 - CEK PENULISAN INVOICE YANG SALAH ("carikan penulisan invoice yang salah", "carikan no invoice salah di Sales/Revenue/AR", "cek penomoran faktur") → WAJIB dari "cekPenulisanInvoice". Kalau "tipe":"auditPenulisan" → sajikan "temuan" DIKELOMPOKKAN per sumber memakai "ditemukanDi", sebutkan "dugaanMasalah" tiap nomor supaya langsung bisa dibetulkan, dan sebutkan "jumlahMenyimpang" beserta "jumlahNomorDiperiksa". Baca "lingkup" — kalau user menyebut satu sumber saja (mis. "di Sales"), HANYA sumber itu yang disisir; jangan menyinggung sumber lain seolah sudah diperiksa. Satu nomor bisa muncul di lebih dari satu sumber — jangan dihitung dua kali. Kalau "tipe":"penjelasanFormat" → cukup jelaskan "formatResmi" beserta "jenis" tiap bentuk. Kalau "jumlahMenyimpang":0 → katakan semuanya sudah sesuai, sebut sumber mana yang diperiksa. Semua sudah dihitung, jangan hitung ulang dan JANGAN menambah nomor yang tidak ada di "temuan".
 - NOMOR INVOICE/FAKTUR disebut (lengkap atau sepotong, mis. "INV-CFN/2026/VII/010", "CFN/2026/VII/010", "MKS/2026/VI/010", "MKS/2026/VI/F-", "MKS/2026/VI/FP-", "F-141") → WAJIB pakai "detailInvoice", JANGAN pakai field lain untuk ini. Catatan: nomor invoice company MKI ditulis "MKS" (mis. "INV/MKS/2026/VI/010"), sedangkan CFN ditulis "INV-CFN/..." — pencarian sudah menangani keduanya, jangan koreksi/ubah nomor yang diketik user. Cara baca hasilnya: "ditemukan":false → nomor itu MEMANG tidak ada, katakan terus terang, JANGAN mengarang isinya dan JANGAN menyodorkan invoice lain yang mirip. "modeDaftar":true → potongan nomor cocok ke BANYAK invoice (biasanya user memang mencari sekelompok invoice, mis. semua "F-" bulan itu): sajikan "daftar" (sudah urut terbaru dulu) beserta "jumlahCocok"/"totalNilaiSemua"/"totalSisaPiutangSemua" yang SUDAH dihitung. Selain itu = SATU invoice, sajikan LENGKAP: tanggal, customer, company, lokasi+ekspedisi, "barang" (SEBUTKAN tiap kode produk + namanya + qty + nilainya, ini yang paling sering ditanya), "totalNilaiTransaksi", lalu status pelunasannya — "statusPelunasan" LUNAS/BELUM LUNAS, "sisaPiutang", "totalDibayar", dan "riwayatPembayaran" (tanggal + jumlah tiap kali bayar, sebutkan kalau dicicil). SELALU baca "catatan" dan sampaikan isinya kalau ada peringatan di situ (mis. total pembayaran tidak sama dengan nilai transaksi) — jangan diperbaiki/dibulatkan sendiri.

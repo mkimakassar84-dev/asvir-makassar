@@ -38,7 +38,7 @@ module.exports = {
   findProductSalesBreakdown, findPiutangByCompany, findPiutangByCustomer, findDuplikasi,
   findPiutangLampau, findReturTransactions, findTransactionMatches, findOnuCredentials,
   findTopPiutangCustomers, findStockValueSummary, findPaymentsByCustomer, findTopProdukByMonth,
-  findKabelByCoreCategory, findZonaWilayahMatches, findInvoiceFormatIssues, bentukInvoiceSah, findInvoiceCompanyMismatch, selaraskanYoyBulanBerjalan,
+  findKabelByCoreCategory, findZonaWilayahMatches, findInvoiceFormatIssues, bentukInvoiceSah, findInvoiceCompanyMismatch, findRekor, selaraskanYoyBulanBerjalan,
   resolveAccessCode, piutangCompanyOf, normText, normCode, nowMakassar,
 };`;
 const tmp = path.join(os.tmpdir(), `mira-test-${process.pid}.cjs`);
@@ -531,6 +531,70 @@ t('pertanyaan penjelasan tidak memicu audit penuh', () => {
 t('pertanyaan di luar topik tidak menarik audit', () => {
   return M.findInvoiceFormatIssues('berapa sales bulan ini', [], [], []) === null ? null : 'audit menyala di pertanyaan lain';
 });
+
+grup('Rekor cabang');
+const TX_REKOR = [
+  // 5 Jan: sales 1.000 dari 2 invoice unik
+  { tanggal: tgl(5, 1), invoice: 'INV/MKS/2026/I/001', amount: 600, isRetur: false },
+  { tanggal: tgl(5, 1), invoice: 'INV/MKS/2026/I/002', amount: 400, isRetur: false },
+  // 6 Jan: sales 1.500 dari 1 invoice — hari sales tertinggi, tapi invoice-nya lebih sedikit
+  { tanggal: tgl(6, 1), invoice: 'INV/MKS/2026/I/003', amount: 1500, isRetur: false },
+  // 7 Jan: 3 invoice unik tapi nilainya kecil — hari invoice terbanyak
+  { tanggal: tgl(7, 1), invoice: 'INV/MKS/2026/I/004', amount: 100, isRetur: false },
+  { tanggal: tgl(7, 1), invoice: 'INV/MKS/2026/I/005', amount: 100, isRetur: false },
+  { tanggal: tgl(7, 1), invoice: 'INV/MKS/2026/I/006', amount: 100, isRetur: false },
+  // retur pada 6 Jan: mengurangi sales, TIDAK menambah hitungan invoice
+  { tanggal: tgl(6, 1), invoice: 'R-MKS/2026/I/001', amount: -200, isRetur: true },
+];
+const BAYAR_REKOR = [
+  { tanggal: tgl(5, 1), noFaktur: 'INV/MKS/2026/I/001', amount: 300 },
+  { tanggal: tgl(8, 1), noFaktur: 'INV/MKS/2026/I/002', amount: 900 },
+  { tanggal: tgl(8, 1), noFaktur: 'INV/MKS/2026/I/003', amount: 100 },
+];
+t('rekor sales harian memakai nilai, bukan jumlah invoice', () => {
+  const r = M.findRekor('rekor sales harian terbanyak', TX_REKOR, BAYAR_REKOR, YOY);
+  const h = r && r.harian && r.harian.rekorSales;
+  // 6 Jan = 1500 - 200 retur = 1300, masih tertinggi lawan 1000 dan 300
+  return h && h.sales === 1300 ? null : `dapat ${h && h.tanggal} nilai ${h && h.sales}, seharusnya 1300`;
+});
+t('rekor invoice harian menghitung invoice unik dan mengabaikan retur', () => {
+  const r = M.findRekor('rekor invoice harian terbanyak', TX_REKOR, BAYAR_REKOR, YOY);
+  const h = r.harian.rekorInvoiceUnik;
+  if (h.jumlahInvoiceUnik !== 3) return `dapat ${h.jumlahInvoiceUnik} invoice, seharusnya 3`;
+  const enam = r.harian.lima_besar_invoice.find((x) => /^6-/.test(x.tanggal));
+  return enam && enam.jumlahInvoiceUnik === 1 ? null : `retur ikut menambah hitungan invoice: ${JSON.stringify(enam)}`;
+});
+t('rekor revenue harian dari buku pembayaran', () => {
+  const r = M.findRekor('rekor revenue harian terbanyak', TX_REKOR, BAYAR_REKOR, YOY);
+  const h = r.harian.rekorRevenue;
+  return h && h.revenue === 1000 && h.jumlahPembayaran === 2 ? null : `dapat ${JSON.stringify(h)}`;
+});
+t('rekor bulanan sales mencakup 2025 dan 2026', () => {
+  const r = M.findRekor('rekor sales bulanan', TX_REKOR, BAYAR_REKOR, YOY);
+  const semua = r.bulanan.lima_besar_sales.map((x) => x.bulan);
+  const ada2025 = semua.some((b) => /2025$/.test(b));
+  const ada2026 = semua.some((b) => /2026$/.test(b));
+  return ada2025 && ada2026 ? null : `hanya memuat ${semua.join(', ')}`;
+});
+t('batas cakupan ikut dikirim, bukan disembunyikan', () => {
+  const r = M.findRekor('rekor sales harian terbanyak', TX_REKOR, BAYAR_REKOR, YOY);
+  if (!/2026/.test(r.harian.cakupan || '')) return 'batas rekor harian tidak disebut';
+  if (!/invoice unik bulanan hanya 2026/i.test(r.bulanan.cakupan || '')) return 'batas invoice bulanan tidak disebut';
+  return null;
+});
+t('jenis yang ditanya dikenali', () => {
+  const kasus = [['rekor sales harian terbanyak', 'harian'], ['rekor invoice bulanan', 'bulanan'],
+    ['rekor pertumbuhan dibanding 2025', 'pertumbuhan'], ['rekor cabang kita apa saja', 'semua']];
+  for (const [kalimat, harus] of kasus) {
+    const r = M.findRekor(kalimat, TX_REKOR, BAYAR_REKOR, YOY);
+    if (!r) return `"${kalimat}" tidak terjawab`;
+    if (r.yangDitanya !== harus) return `"${kalimat}" dikenali sebagai ${r.yangDitanya}, seharusnya ${harus}`;
+  }
+  return null;
+});
+t('pertanyaan biasa tidak menarik rekor', () => (
+  M.findRekor('berapa sales bulan ini', TX_REKOR, BAYAR_REKOR, YOY) === null ? null : 'rekor menyala di pertanyaan biasa'
+));
 
 grup('Invoice salah input company');
 // Kejadian nyata: INV-CFN/2026/VI/078 (UMAR BATARA) bernomor CFN tapi kolom Company-nya MKI,
