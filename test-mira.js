@@ -38,7 +38,7 @@ module.exports = {
   findProductSalesBreakdown, findPiutangByCompany, findPiutangByCustomer, findDuplikasi,
   findPiutangLampau, findReturTransactions, findTransactionMatches, findOnuCredentials,
   findTopPiutangCustomers, findStockValueSummary, findPaymentsByCustomer, findTopProdukByMonth,
-  findKabelByCoreCategory, findZonaWilayahMatches, selaraskanYoyBulanBerjalan,
+  findKabelByCoreCategory, findZonaWilayahMatches, findInvoiceFormatIssues, bentukInvoiceSah, selaraskanYoyBulanBerjalan,
   resolveAccessCode, piutangCompanyOf, normText, normCode, nowMakassar,
 };`;
 const tmp = path.join(os.tmpdir(), `mira-test-${process.pid}.cjs`);
@@ -436,6 +436,61 @@ t('lanjutan tanpa kata "piutang" tetap terjawab', () => {
   const h = [{ role: 'user', text: 'list piutang lampau 2015 sampai 2025' }, { role: 'model', text: 'arsip piutang lampau 2015-2025' }];
   const r = M.findPiutangLampau('kalau tahun 2017', h);
   return r && r.mode === 'perTahun' && r.tahun === 2017 ? null : 'follow-up tidak terjawab';
+});
+
+grup('Format penomoran invoice per company');
+// Format ditetapkan langsung oleh Branch Manager. Dikunci di sini supaya daftar bentuk yang sah
+// tidak diam-diam berubah dan audit penulisan jadi salah menuduh.
+t('enam bentuk resmi dikenali sebagai sah (retur punya dua)', () => {
+  const sah = ['INV/MKS/2026/I/001', 'INV/MKS/2026/I/F-001', 'INV/MKS/2026/I/FP-001', 'R-MKS/2026/II/005', 'R/MKS/2026/II/005', 'INV-CFN/2026/VIII/126'];
+  const tolak = sah.filter((n) => !M.bentukInvoiceSah(n));
+  return tolak.length ? `bentuk resmi ditolak: ${tolak.join(', ')}` : null;
+});
+t('penulisan menyimpang tertangkap semuanya', () => {
+  const salah = ['INV/MKS/2026/V/F001', 'INV/MKS/2026/IV/f-347', 'SC/MKS/2026/I/001',
+    'INV/MKS/2026/VII//030', 'INV/MKS/2026/V/005.', 'INV/MKS/2026/VII/fF-035', 'INV-CFN/2026/VI/08-046',
+    'IN/MKS/2026/VII/F-107', 'INV/MKS/2026/VII/.029'];
+  const lolos = salah.filter((n) => M.bentukInvoiceSah(n));
+  return lolos.length ? `penulisan salah dianggap sah: ${lolos.join(', ')}` : null;
+});
+t('bulan romawi di luar I-XII ditolak', () => {
+  const tolak = ['INV/MKS/2026/XIII/001', 'INV/MKS/2026/IIII/001', 'INV/MKS/2026/VIIII/001'];
+  const lolos = tolak.filter((n) => M.bentukInvoiceSah(n));
+  return lolos.length ? `bulan romawi tak sah diterima: ${lolos.join(', ')}` : null;
+});
+t('audit menyisir SALES, REVENUE, dan AR sekaligus', () => {
+  const tx = [{ invoice: 'RX/MKS/2026/V/001', customer: 'BUDI', tanggal: '1-May-2026', amount: -100 },
+    { invoice: 'INV/MKS/2026/I/F-001', customer: 'BUDI', tanggal: '2-Jan-2026', amount: 100 }];
+  const bayar = [{ noFaktur: 'SC/MKS/2026/I/001', customer: 'SITI', tanggal: '3-Jan-2026', amount: 50 }];
+  const ar = [{ noFaktur: 'INV/MKS/2026/VII//030', customer: 'UMAR', tanggal: '4-Jul-2026', nilaiSisa: 70 }];
+  const r = M.findInvoiceFormatIssues('carikan saya penulisan invoice yang salah', tx, bayar, ar);
+  if (!r || r.tipe !== 'auditPenulisan') return `tipe ${r && r.tipe}`;
+  if (r.jumlahMenyimpang !== 3) return `dapat ${r.jumlahMenyimpang} temuan, seharusnya 3`;
+  const s = r.menyimpangPerSumber;
+  if (s.SALES !== 1 || s.REVENUE !== 1 || s.AR !== 1) return `sebaran sumber salah: ${JSON.stringify(s)}`;
+  if (r.temuan.some((x) => x.noFaktur === 'INV/MKS/2026/I/F-001')) return 'nomor yang sah ikut dilaporkan salah';
+  return null;
+});
+t('satu nomor di dua sumber tidak dihitung dua kali', () => {
+  const tx = [{ invoice: 'SC/MKS/2026/I/001', customer: 'BUDI', tanggal: '2-Jan-2026', amount: 100 }];
+  const bayar = [{ noFaktur: 'SC/MKS/2026/I/001', customer: 'BUDI', tanggal: '3-Jan-2026', amount: 100 }];
+  const r = M.findInvoiceFormatIssues('cek penulisan invoice yang salah', tx, bayar, []);
+  if (r.jumlahMenyimpang !== 1) return `dapat ${r.jumlahMenyimpang}, seharusnya 1 nomor unik`;
+  const t0 = r.temuan[0];
+  return t0.ditemukanDi.length === 2 && t0.ditemukanDi.includes('SALES') && t0.ditemukanDi.includes('REVENUE')
+    ? null : `ditemukanDi = ${JSON.stringify(t0.ditemukanDi)}`;
+});
+t('data bersih dijawab tidak ada temuan, bukan null', () => {
+  const tx = [{ invoice: 'INV-CFN/2026/VIII/126', customer: 'BUDI', tanggal: '1-Aug-2026', amount: 100 }];
+  const r = M.findInvoiceFormatIssues('carikan penulisan invoice yang salah', tx, [], []);
+  return r && r.tipe === 'auditPenulisan' && r.jumlahMenyimpang === 0 ? null : 'data bersih tidak dilaporkan dengan benar';
+});
+t('pertanyaan penjelasan tidak memicu audit penuh', () => {
+  const r = M.findInvoiceFormatIssues('apa format penulisan invoice MKI?', [], [], []);
+  return r && r.tipe === 'penjelasanFormat' && r.formatResmi.length === 6 ? null : `tipe ${r && r.tipe}`;
+});
+t('pertanyaan di luar topik tidak menarik audit', () => {
+  return M.findInvoiceFormatIssues('berapa sales bulan ini', [], [], []) === null ? null : 'audit menyala di pertanyaan lain';
 });
 
 grup('Kata sehari-hari tidak boleh tersambar jadi produk');

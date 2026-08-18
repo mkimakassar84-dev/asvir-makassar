@@ -2137,6 +2137,109 @@ function normInvoiceNo(s) {
   return String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
+// ==== Format penomoran invoice yang berlaku di cabang ====
+// Ditetapkan langsung oleh Branch Manager, bukan disimpulkan dari pola data. Dipakai untuk
+// memeriksa penulisan nomor faktur di TIGA sumber sekaligus: sales (Grand Data), revenue
+// (Rev SUM), dan piutang (AR) — kesalahan ketik di satu sumber sering tidak ikut terlihat di
+// sumber lain, jadi memeriksa satu tempat saja meninggalkan sisa.
+const INVOICE_ROMAWI = 'I{1,3}|IV|VI{0,3}|IX|XI{0,2}';
+const FORMAT_INVOICE = [
+  { bentuk: 'MKI biasa', company: 'MKI', contoh: 'INV/MKS/2026/I/001', re: new RegExp(`^INV/MKS/\\d{4}/(?:${INVOICE_ROMAWI})/\\d+$`) },
+  { bentuk: 'MKI F-', company: 'MKI', contoh: 'INV/MKS/2026/I/F-001', re: new RegExp(`^INV/MKS/\\d{4}/(?:${INVOICE_ROMAWI})/F-\\d+$`) },
+  { bentuk: 'MKI FP-', company: 'MKI', contoh: 'INV/MKS/2026/I/FP-001', re: new RegExp(`^INV/MKS/\\d{4}/(?:${INVOICE_ROMAWI})/FP-\\d+$`) },
+  // Retur punya DUA bentuk yang sama-sama sah, "R-MKS/" dan "R/MKS/" — ditegaskan Branch Manager.
+  // Sebelum ini "R/MKS/" dilaporkan sebagai salah tulis dan sembilan retur Mei ikut tertuduh.
+  { bentuk: 'MKI retur', company: 'MKI', contoh: 'R-MKS/2026/II/005', re: new RegExp(`^R-MKS/\\d{4}/(?:${INVOICE_ROMAWI})/\\d+$`) },
+  { bentuk: 'MKI retur', company: 'MKI', contoh: 'R/MKS/2026/II/005', re: new RegExp(`^R/MKS/\\d{4}/(?:${INVOICE_ROMAWI})/\\d+$`) },
+  { bentuk: 'CFN', company: 'CFN', contoh: 'INV-CFN/2026/VIII/126', re: new RegExp(`^INV-CFN/\\d{4}/(?:${INVOICE_ROMAWI})/\\d+$`) },
+];
+function bentukInvoiceSah(no) {
+  const s = String(no || '').trim();
+  for (const f of FORMAT_INVOICE) if (f.re.test(s)) return f;
+  return null;
+}
+// Dugaan penyebab, murni mekanis (bentuk penulisan), bukan menebak maksud bisnisnya.
+function dugaanSalahTulis(no) {
+  const s = String(no || '').trim();
+  const sebab = [];
+  if (/\/\//.test(s)) sebab.push('ada garis miring ganda "//"');
+  if (/[a-z]/.test(s)) sebab.push('ada huruf kecil');
+  if (/\/F\d/i.test(s)) sebab.push('"F" tanpa tanda hubung — seharusnya "F-"');
+  if (/\/fF-/i.test(s)) sebab.push('huruf F ganda "fF-"');
+  if (/\.$/.test(s)) sebab.push('ada titik di akhir');
+  if (/\/\./.test(s)) sebab.push('ada titik sebelum nomor');
+  if (/\/\d+-\d+$/.test(s)) sebab.push('nomor urut memuat tanda hubung');
+  // Alasan awalan hanya disebut kalau tidak ada sebab yang lebih spesifik — "R/MKS" sudah jelas
+  // dijelaskan oleh aturan retur di atas, tidak perlu diulang dengan kalimat umum.
+  if (!sebab.length && /^(?!INV\/MKS|INV-CFN|R-MKS|R\/MKS)[A-Z]+[/-]MKS/i.test(s)) sebab.push('awalan bukan "INV/MKS", "R-MKS", "R/MKS", atau "INV-CFN"');
+  return sebab.length ? sebab.join('; ') : 'tidak cocok dengan satu pun format resmi';
+}
+
+function findInvoiceFormatIssues(message, allTransactions, paymentDetail, piutangDetail) {
+  const nMsg = normText(message);
+  const bicaraInvoice = /invoice|faktur|no\s*inv|nomor\s*inv/.test(nMsg);
+  const bicaraSalah = /salah|keliru|tidak sesuai|ga sesuai|gak sesuai|menyimpang|aneh|typo|keliru tulis|salah tulis|tidak standar|tidak baku|melenceng|periksa penulisan|cek penulisan|format.*(cek|periksa|benar|sesuai)/.test(nMsg);
+  const bicaraPenulisan = /penulisan|format|penomoran/.test(nMsg);
+  if (!bicaraInvoice || (!bicaraSalah && !bicaraPenulisan)) return null;
+  // "Apa format penulisan invoice MKI?" itu pertanyaan penjelasan, bukan permintaan audit —
+  // biarkan dijawab dari daftar format saja tanpa menyeret ratusan nomor ke dalam konteks.
+  const mintaAudit = bicaraSalah || /carikan|cari|temukan|daftar|list|audit|periksa|cek|scan|sisir/.test(nMsg);
+  if (!mintaAudit) {
+    return { tipe: 'penjelasanFormat', formatResmi: FORMAT_INVOICE.map((f) => ({ bentuk: f.bentuk, company: f.company, contoh: f.contoh })) };
+  }
+
+  const kumpul = new Map(); // noFaktur -> { sumber:Set, contohBaris }
+  const catat = (no, sumber, info) => {
+    const s = String(no || '').trim();
+    if (!s) return;
+    if (!kumpul.has(s)) kumpul.set(s, { noFaktur: s, sumber: new Set(), info: info || {} });
+    kumpul.get(s).sumber.add(sumber);
+  };
+  const diperiksa = { sales: new Set(), revenue: new Set(), ar: new Set() };
+  for (const t of allTransactions || []) {
+    if (!t || !t.invoice) continue;
+    diperiksa.sales.add(String(t.invoice).trim());
+    if (!bentukInvoiceSah(t.invoice)) catat(t.invoice, 'SALES', { tanggal: t.tanggal, customer: t.customer, company: t.company, nilai: t.amount });
+  }
+  for (const r of paymentDetail || []) {
+    if (!r || !r.noFaktur) continue;
+    diperiksa.revenue.add(String(r.noFaktur).trim());
+    if (!bentukInvoiceSah(r.noFaktur)) catat(r.noFaktur, 'REVENUE', { tanggal: r.tanggal, customer: r.customer, company: r.company, nilai: r.amount });
+  }
+  for (const p of piutangDetail || []) {
+    if (!p || !p.noFaktur) continue;
+    diperiksa.ar.add(String(p.noFaktur).trim());
+    if (!bentukInvoiceSah(p.noFaktur)) catat(p.noFaktur, 'AR', { tanggal: p.tanggal, customer: p.customer, company: p.company, nilai: p.nilaiSisa });
+  }
+
+  const temuan = [...kumpul.values()]
+    .map((x) => ({
+      noFaktur: x.noFaktur,
+      ditemukanDi: [...x.sumber],
+      tanggal: x.info.tanggal || null,
+      customer: x.info.customer || null,
+      company: x.info.company || null,
+      nilai: x.info.nilai != null ? x.info.nilai : null,
+      dugaanMasalah: dugaanSalahTulis(x.noFaktur),
+    }))
+    .sort((a, b) => a.noFaktur.localeCompare(b.noFaktur));
+
+  const perSumber = { SALES: 0, REVENUE: 0, AR: 0 };
+  for (const t of temuan) for (const s of t.ditemukanDi) perSumber[s] += 1;
+
+  return {
+    tipe: 'auditPenulisan',
+    formatResmi: FORMAT_INVOICE.map((f) => ({ bentuk: f.bentuk, company: f.company, contoh: f.contoh })),
+    jumlahNomorDiperiksa: { sales: diperiksa.sales.size, revenue: diperiksa.revenue.size, ar: diperiksa.ar.size },
+    jumlahMenyimpang: temuan.length,
+    menyimpangPerSumber: perSumber,
+    temuan,
+    catatan: temuan.length
+      ? 'Semua nomor di sini TIDAK cocok dengan format resmi mana pun. Sajikan dikelompokkan per sumber (SALES / REVENUE / AR) dan sebutkan "dugaanMasalah" tiap nomor supaya langsung bisa dibetulkan. Satu nomor bisa muncul di lebih dari satu sumber — itu ditulis di "ditemukanDi". Angka-angka sudah dihitung, jangan hitung ulang.'
+      : 'Tidak ada penulisan yang menyimpang di ketiga sumber. Katakan semuanya sudah sesuai format.',
+  };
+}
+
 // "INV-CFN/2026/VII/010" / "CFN/2026/VII/010" / "F-141" — full picture for ONE invoice: what was
 // bought (every product line), and whether it's been paid off. Deliberately returns an explicit
 // "ditemukan: false" instead of null when a genuine invoice-looking query matches nothing, because
@@ -4768,6 +4871,7 @@ async function handleChat(request, env) {
   const companyBreakdownMatch = findCompanyPeriodBreakdown(message, allTransactions, revenueData?.detail);
   const invoiceDetailMatch = findInvoiceDetail(message, allTransactions, revenueData?.detail, piutangData?.detail, allStock);
   const duplikasiMatch = findDuplikasi(message, allTransactions, revenueData?.detail, piutangData?.detail);
+  const formatInvoiceMatch = findInvoiceFormatIssues(message, allTransactions, revenueData?.detail, piutangData?.detail);
   const paymentMatch = findPaymentsByCustomer(message, revenueData?.detail, piutangData?.detail);
   const paymentByDateMatch = findPaymentsByDate(message, revenueData?.detail, piutangData?.detail);
   const poMatch = findPoGudangMatches(message, poGudangData?.items);
@@ -4859,6 +4963,7 @@ async function handleChat(request, env) {
     ringkasanTanggalTransaksi: txMatch.ringkasanTanggal,
     detailInvoice: invoiceDetailMatch,
     cekDuplikasi: duplikasiMatch,
+    cekPenulisanInvoice: formatInvoiceMatch,
     returRelevan: returMatch,
     wilayahEkspedisiRelevan: wilayahMatch,
     topProduk: wantsTopProduk && topProductsRaw ? enrichTopProdukWithNama(JSON.parse(topProductsRaw), allStock) : null,
@@ -4943,6 +5048,8 @@ Aturan:
 - Harga/nilai barang → field "harga" di "stokRelevan" (harga satuan Rupiah); "total nilai stok" = harga × stokTotal/stokMKI/stokCFN, tunjukkan cara hitung singkat. "harga" tidak ada di data lain — kalau butuh tapi item tak ada di stokRelevan, jujur tidak tersedia.
 - "CEK DUPLIKASI"/"ada yang ganda?"/"dobel"/"kembar" → WAJIB jawab dari "cekDuplikasi" SAJA. Tujuannya MENCEGAH TAGIH GANDA dan PENAGIHAN SALAH SASARAN, jadi susun jawaban per kategori dan DAHULUKAN yang berisiko tinggi: (1) "piutangFakturGanda" — faktur tercatat >1 kali di piutang. Sebutkan "totalKasusDuplikasi" sebagai angka utama, lalu RINCI per jenis (WAJIB dibedakan, jangan disamakan): "TAGIH_GANDA" (tanggal DAN nilai sama persis) = customer berisiko ditagih dobel, sebutkan "jumlahTagihGanda" + "totalNilaiBerisikoTagihGanda". "NOMOR_SAMA_TANGGAL_BEDA" (nomor faktur sama, tanggal beda) = TETAP DUPLIKASI dan tetap wajib ditindaklanjuti — sebutkan "jumlahNomorSamaTanggalBeda" beserta nomor+tanggal-tanggalnya, risikonya tagihan tertukar/salah sasaran karena satu nomor dipakai dua tagihan; TAPI jangan sebut nilainya sebagai "tagihan dobel". "SATU_FAKTUR_BANYAK_BARIS" (tanggal sama, nilai beda) = lazim, sebutkan sebagai catatan ringan saja. Kesalahan nyata yang pernah terjadi: MIRA menyebut 4 faktur "kuat dugaan tagih ganda Rp47 juta" padahal tanggalnya berbeda — salah karena menyamakan dua jenis ini; SELALU baca "jenisTemuan" dan "tanggal" dulu. (2) "invoiceBedaTanggal" — nomor invoice sama muncul di tanggal berbeda; yang "customerBerbeda":true itu PALING BAHAYA (bisa menagih orang yang salah), sebutkan duluan lengkap dengan tanggal+customer tiap kejadiannya. (3) "pembayaranKembar" — pembayaran identik tercatat dua kali. Sebutkan "jumlahKasus" tiap kategori; kalau 0 katakan kategori itu bersih. WAJIB sampaikan sebagai TEMUAN YANG PERLU DICEK, bukan vonis salah — sebagian bisa wajar (mis. satu faktur beberapa baris, atau entri koreksi). Angka sudah dihitung, jangan hitung ulang.
 - ATURAN KERAS ANTI-KARANG NOMOR INVOICE & DAFTAR BARANG (pelanggaran paling parah yang pernah terjadi, jangan diulang): nomor invoice, nilai invoice, dan daftar kode barang HANYA boleh kamu sebut kalau nilainya BENAR-BENAR ADA di DATA KONTEKS giliran ini (di "detailInvoice", "transaksiRelevan", atau "piutangRelevan.invoices"). DILARANG menyusun sendiri nomor invoice yang "kelihatan masuk akal" (mis. menebak pola bulan/urutan), DILARANG menempelkan nomor invoice ke customer yang tidak terbukti memilikinya di data, dan DILARANG mengarang daftar produk untuk sebuah invoice. Kejadian nyata: ditanya pembelanjaan satu customer, MIRA menyebut nomor invoice milik CUSTOMER LAIN, nilai invoice yang tidak ada, dan daftar 9 produk yang seluruhnya fiktif. Kalau field yang memuat nomor invoice/rincian barang KOSONG atau tidak ada, jawab jujur: "nomor invoice/rincian barangnya tidak tersedia di data yang saya akses" — itu jawaban yang BENAR, jauh lebih baik daripada menebak. Jangan pula memakai angka dari satu field (mis. total belanja dari "customerTidakAktif"/"daftarNamaCustomerPerBucket", yang TIDAK memuat nomor invoice) lalu melengkapinya dengan nomor invoice karangan.
+- FORMAT PENOMORAN INVOICE RESMI CABANG (ditetapkan langsung oleh Branch Manager — ini FAKTA, bukan pola tebakan). Company MKI punya bentuk: "INV/MKS/2026/I/001", "INV/MKS/2026/I/F-001", "INV/MKS/2026/I/FP-001", dan untuk RETUR ADA DUA yang sama-sama SAH: "R-MKS/2026/II/005" dan "R/MKS/2026/II/005". Company CFN satu bentuk: "INV-CFN/2026/VIII/126". Bagian tahun 4 digit, bagian bulan angka ROMAWI (I sampai XII), lalu nomor urut. ATURAN KERAS: ARTI dari huruf F- dan FP- TIDAK tercatat di mana pun. JANGAN PERNAH mengarang maknanya (jangan bilang "F- berarti faktur reguler", "FP- berarti faktur pajak", "tanpa huruf berarti transaksi internal", atau tebakan senada) — sekalipun terdengar masuk akal. Kalau ditanya artinya, katakan terus terang bahwa yang tercatat adalah bentuk penulisannya, bukan artinya. Company sebuah faktur tetap WAJIB dibaca dari kolom Company, bukan disimpulkan dari nomornya — ada faktur bernomor CFN yang company-nya MKI.
+- CEK PENULISAN INVOICE YANG SALAH ("carikan penulisan invoice yang salah", "cek penomoran faktur", "ada nomor invoice yang tidak sesuai format?") → WAJIB dari "cekPenulisanInvoice". Kalau "tipe":"auditPenulisan" → sajikan "temuan" DIKELOMPOKKAN per sumber (SALES / REVENUE / AR) memakai "ditemukanDi", sebutkan "dugaanMasalah" tiap nomor supaya langsung bisa dibetulkan, dan sebutkan "jumlahMenyimpang" beserta "jumlahNomorDiperiksa". Satu nomor bisa muncul di lebih dari satu sumber — jangan dihitung dua kali. Kalau "tipe":"penjelasanFormat" → cukup jelaskan "formatResmi". Kalau "jumlahMenyimpang":0 → katakan semuanya sudah sesuai. Semua sudah dihitung, jangan hitung ulang dan JANGAN menambah nomor yang tidak ada di "temuan".
 - NOMOR INVOICE/FAKTUR disebut (lengkap atau sepotong, mis. "INV-CFN/2026/VII/010", "CFN/2026/VII/010", "MKS/2026/VI/010", "MKS/2026/VI/F-", "MKS/2026/VI/FP-", "F-141") → WAJIB pakai "detailInvoice", JANGAN pakai field lain untuk ini. Catatan: nomor invoice company MKI ditulis "MKS" (mis. "INV/MKS/2026/VI/010"), sedangkan CFN ditulis "INV-CFN/..." — pencarian sudah menangani keduanya, jangan koreksi/ubah nomor yang diketik user. Cara baca hasilnya: "ditemukan":false → nomor itu MEMANG tidak ada, katakan terus terang, JANGAN mengarang isinya dan JANGAN menyodorkan invoice lain yang mirip. "modeDaftar":true → potongan nomor cocok ke BANYAK invoice (biasanya user memang mencari sekelompok invoice, mis. semua "F-" bulan itu): sajikan "daftar" (sudah urut terbaru dulu) beserta "jumlahCocok"/"totalNilaiSemua"/"totalSisaPiutangSemua" yang SUDAH dihitung. Selain itu = SATU invoice, sajikan LENGKAP: tanggal, customer, company, lokasi+ekspedisi, "barang" (SEBUTKAN tiap kode produk + namanya + qty + nilainya, ini yang paling sering ditanya), "totalNilaiTransaksi", lalu status pelunasannya — "statusPelunasan" LUNAS/BELUM LUNAS, "sisaPiutang", "totalDibayar", dan "riwayatPembayaran" (tanggal + jumlah tiap kali bayar, sebutkan kalau dicicil). SELALU baca "catatan" dan sampaikan isinya kalau ada peringatan di situ (mis. total pembayaran tidak sama dengan nilai transaksi) — jangan diperbaiki/dibulatkan sendiri.
 - Tanggal/kode/customer spesifik → "transaksiRelevan" (field "ekspedisi"/"company" tiap baris = cara kirim). "transaksiCatatan" bilang "PALING BARU" → baris PERTAMA = transaksi terakhir. "isRetur" true → sebutkan sebagai retur, bukan penjualan normal. "Siapa (yang) belanja/berbelanja pada tanggal X" → JANGAN cuma sebut daftar NAMA customer — WAJIB rinci tiap transaksi dari "transaksiRelevan": nama customer, nomor invoice ("invoice"), kode produk ("kode"), qty, dan amount (kalau baris banyak, boleh kelompokkan per customer/invoice, tapi detail invoice+kode produknya tetap harus ada, jangan cuma nama).
 - "Nama X cocok ke BEBERAPA customer berbeda" di "transaksiCatatan" (atau catatan sejenis di field lain) → JANGAN pilih satu sendiri, tanya balik ke user sebutkan semua nama kandidat yang ada di catatan itu supaya user bisa pilih mana yang dimaksud.
