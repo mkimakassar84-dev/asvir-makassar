@@ -2269,6 +2269,82 @@ function findInvoiceCompanyMismatch(message, allTransactions, paymentDetail, piu
   };
 }
 
+// "Berapa qty dan koli hari ini?", "ekspedisi apa saja hari ini?" — ringkasan logistik untuk satu
+// hari, satu rentang, atau satu bulan. Dihitung dari buku transaksi supaya berlaku untuk tanggal
+// APA PUN, bukan cuma hari berjalan seperti papan KPI.
+function findLogistikHarian(message, allTransactions) {
+  const nMsg = normText(message);
+  const bicaraQty = /\bqty\b|kuantitas|kuantiti|jumlah unit|berapa unit|\bunit\b/.test(nMsg);
+  const bicaraKoli = /\bkoli\b|kemasan|\bkoly\b/.test(nMsg);
+  const bicaraEkspedisi = /ekspedisi|kurir|pengiriman|dikirim lewat|jasa kirim|kirim ke mana|wilayah tujuan/.test(nMsg);
+  if (!bicaraQty && !bicaraKoli && !bicaraEkspedisi) return null;
+
+  const rentang = extractDateRangeMention(message);
+  const tanggal = !rentang ? extractAnyDateMention(message) : null;
+  const bulan = !rentang && !tanggal ? extractMonthMention(message) : null;
+  // Tanpa penyebutan waktu sama sekali, anggap yang dimaksud HARI INI — "berapa koli hari ini"
+  // dan "berapa koli" sama-sama pertanyaan harian.
+  let mulai = null;
+  let periode = '';
+  const now = nowMakassar();
+  const cocok = (d) => {
+    if (!d) return false;
+    if (rentang) return d.getMonth() + 1 === rentang.month && d.getFullYear() === rentang.year && d.getDate() >= rentang.startDay && d.getDate() <= rentang.endDay;
+    if (tanggal) return d.getDate() === tanggal.day && d.getMonth() + 1 === tanggal.month && d.getFullYear() === tanggal.year;
+    if (bulan) return d.getMonth() + 1 === bulan.month && d.getFullYear() === bulan.year;
+    return d.getDate() === now.getDate() && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  };
+  if (rentang) periode = `${rentang.startDay}-${rentang.endDay}/${rentang.month}/${rentang.year}`;
+  else if (tanggal) periode = `${tanggal.day}/${tanggal.month}/${tanggal.year}`;
+  else if (bulan) periode = `${String(bulan.month).padStart(2, '0')}/${bulan.year}`;
+  else periode = `${now.getDate()}/${now.getMonth() + 1}/${now.getFullYear()} (hari ini)`;
+
+  const baris = (allTransactions || []).filter((t) => cocok(parseFlexibleDate(t && t.tanggal)));
+  const nonRetur = baris.filter((t) => !t.isRetur);
+  const perEkspedisi = new Map();
+  for (const t of nonRetur) {
+    const nama = (t.ekspedisi || '').trim() || 'TIDAK TERCATAT';
+    if (!perEkspedisi.has(nama)) perEkspedisi.set(nama, { ekspedisi: nama, invoiceSet: new Set(), qty: 0, koli: 0 });
+    const e = perEkspedisi.get(nama);
+    if (t.invoice) e.invoiceSet.add(t.invoice);
+    e.qty += toNumber(t.qty);
+    e.koli += toNumber(t.koli);
+  }
+  const daftarEkspedisi = [...perEkspedisi.values()]
+    .map((e) => ({ ekspedisi: e.ekspedisi, jumlahInvoiceUnik: e.invoiceSet.size, qty: e.qty, koli: e.koli }))
+    .sort((a, b) => b.jumlahInvoiceUnik - a.jumlahInvoiceUnik);
+
+  // Wilayah tujuan (Grand Data kolom M / "Lokasi") — dihitung sekalian, karena pertanyaan
+  // "hari ini kirim ke mana saja" datang bersamaan dengan pertanyaan qty/koli/ekspedisi.
+  const perWilayah = new Map();
+  for (const t of nonRetur) {
+    const nama = (t.lokasi || '').trim() || 'TIDAK TERCATAT';
+    if (!perWilayah.has(nama)) perWilayah.set(nama, { wilayah: nama, invoiceSet: new Set(), qty: 0, koli: 0 });
+    const w = perWilayah.get(nama);
+    if (t.invoice) w.invoiceSet.add(t.invoice);
+    w.qty += toNumber(t.qty);
+    w.koli += toNumber(t.koli);
+  }
+  const daftarWilayah = [...perWilayah.values()]
+    .map((w) => ({ wilayah: w.wilayah, jumlahInvoiceUnik: w.invoiceSet.size, qty: w.qty, koli: w.koli }))
+    .sort((a, b) => b.jumlahInvoiceUnik - a.jumlahInvoiceUnik);
+
+  const returBaris = baris.filter((t) => t.isRetur);
+  return {
+    periode,
+    totalQty: nonRetur.reduce((s, t) => s + toNumber(t.qty), 0),
+    totalKoli: nonRetur.reduce((s, t) => s + toNumber(t.koli), 0),
+    jumlahInvoiceUnik: new Set(nonRetur.map((t) => t.invoice).filter(Boolean)).size,
+    jumlahBarisBarang: nonRetur.length,
+    jumlahEkspedisiBerbeda: daftarEkspedisi.length,
+    perEkspedisi: daftarEkspedisi,
+    jumlahWilayahBerbeda: daftarWilayah.length,
+    perWilayah: daftarWilayah,
+    retur: returBaris.length ? { jumlahBaris: returBaris.length, qty: returBaris.reduce((s, t) => s + toNumber(t.qty), 0), koli: returBaris.reduce((s, t) => s + toNumber(t.koli), 0) } : null,
+    catatan: 'Qty dan koli dihitung dari baris penjualan periode ini, retur TIDAK ikut (dipisah di "retur" kalau ada). "perEkspedisi" dan "perWilayah" sudah urut dari yang paling banyak invoicenya; "jumlahEkspedisiBerbeda" adalah banyaknya jasa kirim yang dipakai dan "jumlahWilayahBerbeda" banyaknya kabupaten/kota tujuan. Semua sudah dijumlahkan — jangan hitung ulang.',
+  };
+}
+
 // "Rekor" — hari dan bulan terbaik yang pernah dicatat cabang.
 // Batas datanya jujur dan berbeda per jenis, jadi ikut dikirim supaya tidak diklaim berlebihan:
 //   • rekor HARIAN hanya dari buku transaksi tahun berjalan (2026) — data harian 2025 tidak ada.
@@ -4491,6 +4567,10 @@ async function runSync(env) {
         stage,
         isRetur,
         company,
+        // Kolom J "Koli" — jumlah kemasan yang dikirim. Selama ini tidak pernah dibaca sama
+        // sekali, jadi "berapa koli hari ini" tidak pernah bisa dijawab meski datanya ada
+        // (24.715 koli sepanjang 2026).
+        koli: toNumber(r['Koli']),
         ekspedisi,
         lokasi,
         tglTerkirim: r['Tanggal Terkirim'],
@@ -5127,6 +5207,7 @@ async function handleChat(request, env) {
   const formatInvoiceMatch = findInvoiceFormatIssues(message, allTransactions, revenueData?.detail, arUntukAudit);
   const salahInputCompanyMatch = findInvoiceCompanyMismatch(message, allTransactions, revenueData?.detail, arUntukAudit);
   const rekorMatch = findRekor(message, allTransactions, revenueData?.detail, yoyData);
+  const logistikHarianMatch = findLogistikHarian(message, allTransactions);
   const paymentMatch = findPaymentsByCustomer(message, revenueData?.detail, piutangData?.detail);
   const paymentByDateMatch = findPaymentsByDate(message, revenueData?.detail, piutangData?.detail);
   const poMatch = findPoGudangMatches(message, poGudangData?.items);
@@ -5221,6 +5302,7 @@ async function handleChat(request, env) {
     cekPenulisanInvoice: formatInvoiceMatch,
     cekSalahInputCompany: salahInputCompanyMatch,
     rekorCabang: rekorMatch,
+    qtyKoliEkspedisiPerPeriode: logistikHarianMatch,
     returRelevan: returMatch,
     wilayahEkspedisiRelevan: wilayahMatch,
     topProduk: wantsTopProduk && topProductsRaw ? enrichTopProdukWithNama(JSON.parse(topProductsRaw), allStock) : null,
@@ -5315,6 +5397,7 @@ Aturan:
    • "R-MKS/2026/II/005" dan "R/MKS/2026/II/005" = RETUR. Keduanya sama-sama SAH.
   CFN hanya punya SATU bentuk: "INV-CFN/2026/VIII/126", dipakai untuk reguler MAUPUN faktur pajak. KONSEP BORONGAN TIDAK ADA DI CFN.
   Di luar keterangan di atas, JANGAN mengarang arti/aturan tambahan apa pun tentang penomoran. Company sebuah faktur tetap WAJIB dibaca dari kolom Company, bukan disimpulkan dari nomornya — ada faktur bernomor CFN yang company-nya MKI.
+- QTY, KOLI, DAN EKSPEDISI PER PERIODE ("berapa qty hari ini", "berapa koli kita kirim hari ini", "ekspedisi apa saja hari ini", "koli tanggal 5 Agustus", "qty bulan ini") → WAJIB dari "qtyKoliEkspedisiPerPeriode". Sebutkan "totalQty", "totalKoli", "jumlahInvoiceUnik", dan "jumlahEkspedisiBerbeda" sesuai yang ditanya, lalu rinci "perEkspedisi" (tiap jasa kirim beserta invoice unik, qty, dan kolinya) kalau user menanyakan ekspedisi atau minta rincian. Tanpa penyebutan waktu, "periode" sudah otomatis HARI INI — pakai label periode itu apa adanya. Retur dipisah di "retur" dan TIDAK ikut di totalQty/totalKoli; sebutkan kalau ada. Semua sudah dijumlahkan, jangan hitung ulang.
 - REKOR CABANG ("rekor sales harian terbanyak", "rekor invoice harian terbanyak", "rekor revenue harian terbanyak", "rekor sales bulanan", "rekor invoice bulanan", "rekor revenue bulanan", "rekor pertumbuhan dibanding 2025", "hari/bulan terbaik kita kapan") → WAJIB dari "rekorCabang". Baca "yangDitanya" dan sajikan jenis itu LEBIH DULU: "harian" → dari "harian", "bulanan" → dari "bulanan", "pertumbuhan" → dari "pertumbuhan", "semua" → sajikan ringkas ketiganya. Tiap rekor sudah lengkap dengan tanggal/bulan dan angkanya; "lima_besar_*" boleh disebut sebagai konteks. WAJIB sampaikan batas di "cakupan" saat relevan — rekor HARIAN hanya dari tahun berjalan karena rincian harian 2025 tidak ada, dan rekor INVOICE UNIK bulanan juga hanya 2026. JANGAN menyebutnya "rekor sepanjang sejarah cabang" kalau datanya cuma setahun. Semua sudah dihitung dan diurutkan, jangan hitung ulang.
 - CEK INVOICE SALAH INPUT COMPANY ("invoice salah input", "salah input Sales/Revenue/AR", "nomor invoice tidak sesuai company", "invoice tertukar company") → WAJIB dari "cekSalahInputCompany", dan ini BERBEDA dari cek penulisan. Yang diperiksa: nomor berawalan "INV-CFN/" harus tercatat di company CFN, sedangkan "INV/MKS/", "R-MKS/", "R/MKS/" harus tercatat di company MKI. Sajikan tiap temuan dengan nomor faktur, "companyMenurutNomor", "companyTercatat", customer, tanggal, dan sumbernya. Baca "lingkup" — kalau user menyebut satu sumber saja, jangan menyinggung sumber lain. Kalau "jumlahTidakSinkron":0 → katakan bersih dan sebutkan berapa baris yang disisir dari sumber mana. JANGAN mencampurnya dengan temuan salah penulisan. Catatan penting: temuan ini adalah ketidakcocokan yang harus DIBETULKAN di sheet — tapi selama belum dibetulkan, semua perhitungan MIRA tetap memakai kolom Company yang tercatat, bukan tebakan dari nomornya.
 - CEK PENULISAN INVOICE YANG SALAH ("carikan penulisan invoice yang salah", "carikan no invoice salah di Sales/Revenue/AR", "cek penomoran faktur") → WAJIB dari "cekPenulisanInvoice". Kalau "tipe":"auditPenulisan" → sajikan "temuan" DIKELOMPOKKAN per sumber memakai "ditemukanDi", sebutkan "dugaanMasalah" tiap nomor supaya langsung bisa dibetulkan, dan sebutkan "jumlahMenyimpang" beserta "jumlahNomorDiperiksa". Baca "lingkup" — kalau user menyebut satu sumber saja (mis. "di Sales"), HANYA sumber itu yang disisir; jangan menyinggung sumber lain seolah sudah diperiksa. Satu nomor bisa muncul di lebih dari satu sumber — jangan dihitung dua kali. Kalau "tipe":"penjelasanFormat" → cukup jelaskan "formatResmi" beserta "jenis" tiap bentuk. Kalau "jumlahMenyimpang":0 → katakan semuanya sudah sesuai, sebut sumber mana yang diperiksa. Semua sudah dihitung, jangan hitung ulang dan JANGAN menambah nomor yang tidak ada di "temuan".

@@ -38,7 +38,7 @@ module.exports = {
   findProductSalesBreakdown, findPiutangByCompany, findPiutangByCustomer, findDuplikasi,
   findPiutangLampau, findReturTransactions, findTransactionMatches, findOnuCredentials,
   findTopPiutangCustomers, findStockValueSummary, findPaymentsByCustomer, findTopProdukByMonth,
-  findKabelByCoreCategory, findZonaWilayahMatches, findInvoiceFormatIssues, bentukInvoiceSah, findInvoiceCompanyMismatch, findRekor, selaraskanYoyBulanBerjalan,
+  findKabelByCoreCategory, findZonaWilayahMatches, findInvoiceFormatIssues, bentukInvoiceSah, findInvoiceCompanyMismatch, findRekor, findLogistikHarian, selaraskanYoyBulanBerjalan,
   resolveAccessCode, piutangCompanyOf, normText, normCode, nowMakassar,
 };`;
 const tmp = path.join(os.tmpdir(), `mira-test-${process.pid}.cjs`);
@@ -531,6 +531,54 @@ t('pertanyaan penjelasan tidak memicu audit penuh', () => {
 t('pertanyaan di luar topik tidak menarik audit', () => {
   return M.findInvoiceFormatIssues('berapa sales bulan ini', [], [], []) === null ? null : 'audit menyala di pertanyaan lain';
 });
+
+grup('Qty, koli, dan ekspedisi per periode');
+const TX_LOG = [
+  { tanggal: tgl(5, 1), invoice: 'INV/MKS/2026/I/001', qty: 10, koli: 3, ekspedisi: 'HAND CARRY', lokasi: 'MAKASSAR', isRetur: false, amount: 100 },
+  { tanggal: tgl(5, 1), invoice: 'INV/MKS/2026/I/001', qty: 5, koli: 2, ekspedisi: 'HAND CARRY', lokasi: 'MAKASSAR', isRetur: false, amount: 50 },
+  { tanggal: tgl(5, 1), invoice: 'INV/MKS/2026/I/002', qty: 7, koli: 4, ekspedisi: 'JNE', lokasi: 'BONE', isRetur: false, amount: 70 },
+  { tanggal: tgl(5, 1), invoice: 'R-MKS/2026/I/001', qty: -2, koli: -1, ekspedisi: 'HAND CARRY', lokasi: 'MAKASSAR', isRetur: true, amount: -20 },
+  { tanggal: tgl(6, 1), invoice: 'INV/MKS/2026/I/003', qty: 99, koli: 99, ekspedisi: 'CAMAR', lokasi: 'PALU', isRetur: false, amount: 990 },
+];
+t('qty dan koli dijumlah untuk tanggal yang diminta, retur dipisah', () => {
+  const r = M.findLogistikHarian('berapa qty dan koli tanggal 5 Januari 2026', TX_LOG);
+  if (!r) return 'tidak terjawab';
+  if (r.totalQty !== 22) return `totalQty ${r.totalQty}, seharusnya 22`;
+  if (r.totalKoli !== 9) return `totalKoli ${r.totalKoli}, seharusnya 9`;
+  if (!r.retur || r.retur.qty !== -2) return `retur tidak dipisah: ${JSON.stringify(r.retur)}`;
+  return null;
+});
+t('invoice unik tidak dihitung dua kali walau banyak baris barang', () => {
+  const r = M.findLogistikHarian('berapa koli tanggal 5 Januari 2026', TX_LOG);
+  return r.jumlahInvoiceUnik === 2 ? null : `dapat ${r.jumlahInvoiceUnik}, seharusnya 2`;
+});
+t('rincian per ekspedisi lengkap dan terurut', () => {
+  const r = M.findLogistikHarian('ekspedisi apa saja tanggal 5 Januari 2026', TX_LOG);
+  if (r.jumlahEkspedisiBerbeda !== 2) return `dapat ${r.jumlahEkspedisiBerbeda} ekspedisi, seharusnya 2`;
+  const hc = r.perEkspedisi.find((e) => e.ekspedisi === 'HAND CARRY');
+  if (!hc || hc.qty !== 15 || hc.koli !== 5 || hc.jumlahInvoiceUnik !== 1) return `HAND CARRY salah: ${JSON.stringify(hc)}`;
+  return r.perEkspedisi[0].ekspedisi === 'HAND CARRY' ? null : 'tidak urut dari invoice terbanyak';
+});
+t('tanpa penyebutan waktu, yang dimaksud hari ini', () => {
+  const now = M.nowMakassar();
+  const hariIni = `${now.getDate()}/${now.getMonth() + 1}/${now.getFullYear()}`;
+  for (const kalimat of ['berapa koli hari ini', 'berapa koli', 'ekspedisi apa saja']) {
+    const r = M.findLogistikHarian(kalimat, TX_LOG);
+    if (!r) return `"${kalimat}" tidak terjawab`;
+    if (!r.periode.startsWith(hariIni)) return `"${kalimat}" periode ${r.periode}, seharusnya ${hariIni}`;
+  }
+  return null;
+});
+t('wilayah tujuan ikut dirinci', () => {
+  const r = M.findLogistikHarian('kirim ke mana saja tanggal 5 Januari 2026', TX_LOG);
+  if (!r) return 'tidak terjawab';
+  if (r.jumlahWilayahBerbeda !== 2) return `dapat ${r.jumlahWilayahBerbeda} wilayah, seharusnya 2`;
+  const mks = r.perWilayah.find((w) => w.wilayah === 'MAKASSAR');
+  return mks && mks.qty === 15 && mks.koli === 5 ? null : `MAKASSAR salah: ${JSON.stringify(mks)}`;
+});
+t('pertanyaan tanpa qty/koli/ekspedisi tidak menarik field ini', () => (
+  M.findLogistikHarian('berapa sales bulan ini', TX_LOG) === null ? null : 'menyala di pertanyaan lain'
+));
 
 grup('Rekor cabang');
 const TX_REKOR = [
