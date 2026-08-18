@@ -38,7 +38,7 @@ module.exports = {
   findProductSalesBreakdown, findPiutangByCompany, findPiutangByCustomer, findDuplikasi,
   findPiutangLampau, findReturTransactions, findTransactionMatches, findOnuCredentials,
   findTopPiutangCustomers, findStockValueSummary, findPaymentsByCustomer, findTopProdukByMonth,
-  findKabelByCoreCategory, findZonaWilayahMatches, findInvoiceFormatIssues, bentukInvoiceSah, selaraskanYoyBulanBerjalan,
+  findKabelByCoreCategory, findZonaWilayahMatches, findInvoiceFormatIssues, bentukInvoiceSah, findInvoiceCompanyMismatch, selaraskanYoyBulanBerjalan,
   resolveAccessCode, piutangCompanyOf, normText, normCode, nowMakassar,
 };`;
 const tmp = path.join(os.tmpdir(), `mira-test-${process.pid}.cjs`);
@@ -531,6 +531,60 @@ t('pertanyaan penjelasan tidak memicu audit penuh', () => {
 t('pertanyaan di luar topik tidak menarik audit', () => {
   return M.findInvoiceFormatIssues('berapa sales bulan ini', [], [], []) === null ? null : 'audit menyala di pertanyaan lain';
 });
+
+grup('Invoice salah input company');
+// Kejadian nyata: INV-CFN/2026/VI/078 (UMAR BATARA) bernomor CFN tapi kolom Company-nya MKI,
+// membuat pembagian piutang MKI/CFN meleset persis Rp1.475.000 sebelum ketahuan.
+const TX_SALAH = [
+  { invoice: 'INV-CFN/2026/VIII/999', company: 'MKI', customer: 'UJI SALES', tanggal: '1-Aug-2026', amount: 1000 },
+  { invoice: 'INV/MKS/2026/I/F-001', company: 'MKI', customer: 'BENAR', tanggal: '2-Jan-2026', amount: 500 },
+];
+const BAYAR_SALAH = [{ noFaktur: 'INV/MKS/2026/I/010', company: 'CFN', customer: 'UJI REVENUE', tanggal: '3-Jan-2026', amount: 200 }];
+const AR_SALAH = [{ noFaktur: 'R-MKS/2026/II/005', company: 'CFN', customer: 'UJI AR', tanggal: '4-Feb-2026', nilaiSisa: 300 }];
+
+t('nomor CFN tercatat MKI tertangkap', () => {
+  const r = M.findInvoiceCompanyMismatch('invoice salah input', TX_SALAH, [], []);
+  if (!r || r.jumlahTidakSinkron !== 1) return `dapat ${r && r.jumlahTidakSinkron} temuan`;
+  const x = r.temuan[0];
+  return x.noFaktur === 'INV-CFN/2026/VIII/999' && x.companyMenurutNomor === 'CFN' && x.companyTercatat === 'MKI'
+    ? null : `temuan salah: ${JSON.stringify(x)}`;
+});
+t('nomor MKS tercatat CFN tertangkap, termasuk retur', () => {
+  const r = M.findInvoiceCompanyMismatch('invoice salah input', [], BAYAR_SALAH, AR_SALAH);
+  if (r.jumlahTidakSinkron !== 2) return `dapat ${r.jumlahTidakSinkron}, seharusnya 2`;
+  const semua = r.temuan.map((x) => x.noFaktur).sort().join(',');
+  return semua === 'INV/MKS/2026/I/010,R-MKS/2026/II/005' ? null : `dapat ${semua}`;
+});
+t('baris yang company-nya sudah cocok tidak ikut dilaporkan', () => {
+  const r = M.findInvoiceCompanyMismatch('invoice salah input', TX_SALAH, [], []);
+  return r.temuan.some((x) => x.noFaktur === 'INV/MKS/2026/I/F-001') ? 'baris yang benar ikut dituduh' : null;
+});
+t('lingkup salah input bisa dipersempit per sumber', () => {
+  const kasus = [['salah input Sales', 1], ['salah input Revenue', 1], ['salah input AR', 1]];
+  for (const [kalimat, harus] of kasus) {
+    const r = M.findInvoiceCompanyMismatch(kalimat, TX_SALAH, BAYAR_SALAH, AR_SALAH);
+    if (!r || r.jumlahTidakSinkron !== harus) return `"${kalimat}" dapat ${r && r.jumlahTidakSinkron}, seharusnya ${harus}`;
+  }
+  return null;
+});
+t('penulisan menyimpang bukan urusan cek company', () => {
+  const tx = [{ invoice: 'SC/MKS/2026/I/001', company: 'CFN', customer: 'X', tanggal: '1-Jan-2026', amount: 10 }];
+  const r = M.findInvoiceCompanyMismatch('invoice salah input', tx, [], []);
+  return r.jumlahTidakSinkron === 0 ? null : 'nomor berformat menyimpang ikut dituduh salah company';
+});
+t('data sinkron dijawab bersih, bukan null', () => {
+  const tx = [{ invoice: 'INV-CFN/2026/VIII/126', company: 'CFN', customer: 'X', tanggal: '1-Aug-2026', amount: 10 }];
+  const r = M.findInvoiceCompanyMismatch('invoice salah input', tx, [], []);
+  return r && r.tipe === 'auditSalahInputCompany' && r.jumlahTidakSinkron === 0 ? null : 'data bersih tidak dilaporkan';
+});
+t('dua audit tidak saling tercampur', () => {
+  if (M.findInvoiceFormatIssues('invoice salah input', TX_SALAH, [], []) !== null) return 'audit penulisan ikut menyala saat ditanya salah input';
+  if (M.findInvoiceCompanyMismatch('carikan penulisan invoice yang salah', TX_SALAH, [], []) !== null) return 'audit company ikut menyala saat ditanya penulisan';
+  return null;
+});
+t('pertanyaan lain tidak menarik audit company', () => (
+  M.findInvoiceCompanyMismatch('berapa sales bulan ini', TX_SALAH, [], []) === null ? null : 'audit menyala di pertanyaan lain'
+));
 
 grup('Kata sehari-hari tidak boleh tersambar jadi produk');
 // Dilaporkan live: ditanya "Kekurangan cabang kita apa saat ini?", MIRA menyebut Software BASEMAP
