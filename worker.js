@@ -1405,6 +1405,14 @@ const STOPWORDS = new Set([
   'tolong', 'berapa', 'bagaimana', 'gimana', 'dong', 'ya', 'nih', 'kah', 'ada', 'apakah', 'dan',
   'atau', 'saat', 'sekarang', 'tentang', 'soal', 'info', 'informasi', 'kode', 'barang', 'produk',
   'nya', 'nya?', 'nya.', 'pakai', 'pake', 'itu?', 'nih?',
+  // Kata percakapan sehari-hari di cabang. Tanpa ini, toleransi typo pada NAMA produk menyalakan
+  // kecocokan palsu pada kalimat yang sama sekali bukan soal barang — terbukti live: "kita"
+  // tercocok ke "Kota" (Software BASEMAP Kota Makassar), "target" ke "Karet", "kerja" ke "KERAS".
+  // MIRA lalu melaporkan produk itu sebagai temuan, dan dari sisi pembaca terlihat seperti
+  // mengarang padahal produknya nyata, cuma sama sekali tidak relevan.
+  'kita', 'kami', 'kamu', 'anda', 'cabang', 'target', 'kerja', 'kinerja', 'rencana', 'masalah',
+  'kekurangan', 'kelemahan', 'kondisi', 'keadaan', 'situasi', 'evaluasi', 'strategi', 'performa',
+  'perusahaan', 'operasional', 'sekiranya', 'menurut', 'bulan', 'tahun', 'minggu', 'depan', 'lalu',
   // 'atas'/'nama' ditambahkan supaya pertanyaan "customer atas nama X" tidak ikut menganggap
   // "atas"/"nama" sebagai token nama yang harus dicocokkan (lihat customerNameFuzzyMatch Rule B).
   'atas', 'nama',
@@ -1513,6 +1521,13 @@ function findStockMatches(message, allStock, history) {
     });
   });
   if (!matched.length) {
+    // Typo tolerance on the product NAME is only safe when the user is plainly naming a thing.
+    // In a full sentence ("Kekurangan cabang kita apa saat ini?") an ordinary word landing one
+    // edit away from a product name is a coincidence, not a typo — and acting on it injected an
+    // irrelevant product into a strategy answer, which read as MIRA making things up. So fuzzy is
+    // allowed only for short, product-shaped queries; exact and substring matching still work
+    // everywhere. Threshold raised to 5 characters too: at 4, "kita" reached "Kota".
+    const bolehFuzzy = effectiveKeywords.length <= 2;
     matched = allStock.filter((p) => {
       const nKode = normCode(p.kode);
       const nNama = normText(p.nama);
@@ -1529,7 +1544,7 @@ function findStockMatches(message, allStock, history) {
         // fuzzy. Typo tolerance on the product NAME (words, not the code) is still fine below,
         // since name text isn't systematically enumerated the same way — mis. "splicr" still
         // finds "Fusion Splicer ...".
-        if (nkw.length >= 4 && nNama.split(/\s+/).some((nw) => fuzzyWordEquals(nkw, nw))) return true;
+        if (bolehFuzzy && nkw.length >= 5 && nNama.split(/\s+/).some((nw) => fuzzyWordEquals(nkw, nw))) return true;
         return false;
       });
     });
@@ -1551,8 +1566,17 @@ function findStockMatches(message, allStock, history) {
   }
   if (wantsReady) {
     const before = matched.length;
-    matched = matched.filter((p) => p.stokTotal > 0);
-    note += `Difilter hanya stok > 0 (dari ${before} hasil cocok kata kunci). `;
+    const adaIsi = matched.filter((p) => p.stokTotal > 0);
+    if (adaIsi.length) {
+      matched = adaIsi;
+      note += `Difilter hanya stok > 0 (dari ${before} hasil cocok kata kunci). `;
+    } else if (before > 0) {
+      // Never let this filter turn a real product into "not found". The word "stok" alone switches
+      // it on, so asking about any out-of-stock item — 1.541 of 2.007 products right now — used to
+      // answer "datanya belum tercatat di sistem". "Barangnya habis" and "barangnya tidak ada"
+      // are completely different answers for a branch manager placing an order.
+      note += 'Semua produk yang cocok stoknya 0 — barangnya TERCATAT tapi sedang KOSONG. Katakan stoknya habis/0, JANGAN katakan produknya tidak ada atau belum tercatat. ';
+    }
   }
 
   const total = matched.length;

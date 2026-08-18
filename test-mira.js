@@ -71,6 +71,9 @@ const STOK = [
   { kode: 'KSFO028', nama: 'Kabel Fiber Optik 1Core Premium', harga: 1030000, stokMKI: 0, stokCFN: 64, stokTotal: 64 },
   { kode: 'KSFO020', nama: 'Kabel Fiber Optik 6 Core', harga: 15670000, stokMKI: 1, stokCFN: 0, stokTotal: 1 },
   { kode: 'KSFO113', nama: 'Kabel Fiber Optik 1Core Cablelink', harga: 940000, stokMKI: 10, stokCFN: 0, stokTotal: 10 },
+  // Produk nyata yang namanya memuat kata sehari-hari — inilah yang dulu tersambar oleh kata
+  // "kita" dalam kalimat "Kekurangan cabang kita apa saat ini?".
+  { kode: 'SFT002', nama: 'Software BASEMAP Kota Makassar', harga: 8000000, stokMKI: 0, stokCFN: 0, stokTotal: 0 },
 ];
 const NAMA_BULAN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
 // Includes whichever month is running right now, so "sisa target bulan ini" has something to find
@@ -433,6 +436,36 @@ t('lanjutan tanpa kata "piutang" tetap terjawab', () => {
   const h = [{ role: 'user', text: 'list piutang lampau 2015 sampai 2025' }, { role: 'model', text: 'arsip piutang lampau 2015-2025' }];
   const r = M.findPiutangLampau('kalau tahun 2017', h);
   return r && r.mode === 'perTahun' && r.tahun === 2017 ? null : 'follow-up tidak terjawab';
+});
+
+grup('Kata sehari-hari tidak boleh tersambar jadi produk');
+// Dilaporkan live: ditanya "Kekurangan cabang kita apa saat ini?", MIRA menyebut Software BASEMAP
+// Kota Makassar sebagai kekurangan cabang. Produknya nyata dan memang ada di sheet, tapi sama
+// sekali tidak relevan — kata "kita" tercocok ke "Kota" lewat toleransi typo pada nama produk.
+// Dari sisi pembaca itu terlihat seperti mengarang.
+[
+  'Kekurangan cabang kita apa saat ini?',
+  'apa masalah kita sekarang',
+  'piutang kita berapa',
+  'target kita bulan ini',
+  'bagaimana kinerja kita',
+  'rencana kerja kita ke depan',
+].forEach((kalimat) => {
+  t(`"${kalimat}" tidak menarik produk apa pun`, () => {
+    const dapat = (M.findStockMatches(kalimat, STOK, []) || {}).items || [];
+    return dapat.length ? `menarik ${dapat.map((x) => x.kode).join(',')} padahal bukan pertanyaan produk` : null;
+  });
+});
+t('pencarian produk sungguhan tetap jalan', () => {
+  for (const [kalimat, harus] of [['stok KSFO028', 'KSFO028'], ['KSFO113', 'KSFO113'], ['stok BASEMAP', 'SFT002']]) {
+    const dapat = ((M.findStockMatches(kalimat, STOK, []) || {}).items || []).map((x) => x.kode);
+    if (!dapat.includes(harus)) return `"${kalimat}" kehilangan ${harus} (dapat: ${dapat.join(',') || 'kosong'})`;
+  }
+  return null;
+});
+t('typo pada nama produk tetap dimaafkan kalau pertanyaannya pendek', () => {
+  const dapat = (M.findStockMatches('kabell', STOK, []) || {}).items || [];
+  return dapat.length ? null : 'typo pendek tidak lagi ditoleransi — terlalu ketat';
 });
 
 console.log(`\n${'='.repeat(52)}`);
