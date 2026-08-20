@@ -1801,6 +1801,131 @@ function detectCoreCategoriesFromText(nMsg) {
   }
   return categories;
 }
+// "Siapa customer yang pernah membeli kabel 1 core di atas 20 roll?" — cari PEMBELI sebuah
+// kelompok produk, disaring menurut jumlah yang dibeli.
+// "Pernah membeli di atas 20" itu dua arti yang sama masuk akal: total sepanjang tahun, atau
+// sekali beli langsung sebanyak itu. Keduanya dihitung dan dikirim terpisah supaya MIRA bisa
+// menjawab yang dimaksud tanpa menebak — dan supaya tidak ada angka yang diam-diam tertukar.
+function findCustomerPembeliProduk(message, allTransactions, allStock) {
+  const nMsg = normText(message);
+  const tanyaSiapa = /\bsiapa\b|customer mana|pelanggan mana|\bcustomer\b|\bpelanggan\b|daftar pembeli|siapa saja/.test(nMsg);
+  const tanyaBeli = /\bmembeli\b|\bbeli\b|\bpembeli\b|belanja|pembelian|\border\b|\bambil\b|pernah pesan/.test(nMsg);
+  if (!tanyaSiapa || !tanyaBeli) return null;
+  if (!Array.isArray(allTransactions) || !allTransactions.length) return null;
+
+  // --- kelompok produk yang dimaksud ---
+  let kodeSet = null;
+  let labelProduk = '';
+  const kategoriCore = /\bkabel\b/.test(nMsg) ? detectCoreCategoriesFromText(nMsg) : [];
+  if (kategoriCore.length) {
+    const kat = kategoriCore[0];
+    const cocok = (allStock || []).filter((p) => {
+      if (!/kabel/i.test(p.nama || '')) return false;
+      const c = extractCoreCount(p.nama);
+      if (!c) return false;
+      const core = parseInt(c, 10);
+      return kat.type === 'exact' ? core === kat.value : core > kat.value;
+    });
+    kodeSet = new Set(cocok.map((p) => p.kode));
+    labelProduk = kat.type === 'exact' ? `kabel ${kat.value} core` : `kabel di atas ${kat.value} core`;
+  } else {
+    // Kode barang disebut langsung ("siapa yang pernah beli KSFO113 lebih dari 10")
+    const kodeDisebut = (message.match(/\b[A-Za-z]{2,6}\d{2,4}[A-Za-z-]*\b/g) || [])
+      .map((k) => normCode(k))
+      .filter((k) => (allStock || []).some((p) => normCode(p.kode) === k));
+    if (kodeDisebut.length) {
+      kodeSet = new Set((allStock || []).filter((p) => kodeDisebut.includes(normCode(p.kode))).map((p) => p.kode));
+      labelProduk = [...kodeSet].join(', ');
+    } else if (/\bkabel\b/.test(nMsg)) {
+      // "Siapa customer dengan belanja kabel terbanyak?" — tanpa menyebut jumlah core, yang
+      // dimaksud SELURUH kabel.
+      kodeSet = new Set((allStock || []).filter((p) => /kabel/i.test(p.nama || '')).map((p) => p.kode));
+      labelProduk = 'semua jenis kabel';
+    }
+  }
+  if (!kodeSet || !kodeSet.size) return null;
+
+  // --- ambang jumlah ---
+  const amb = nMsg.match(/(di\s*atas|lebih\s*dari|melebihi|minimal|min\.?|sekurang[- ]?kurangnya|paling sedikit|>=?|≥)\s*(\d[\d.]*)/);
+  let ambang = null;
+  let ketatLebihBesar = true;
+  if (amb) {
+    ambang = toNumber(amb[2]);
+    ketatLebihBesar = !/minimal|min\.?|sekurang|paling sedikit|>=|≥/.test(amb[1]);
+  }
+  const satuan = (nMsg.match(/\b(roll|rol|unit|pcs|pieces|batang|meter|box|dus|pack)\b/) || [])[1] || null;
+  const lolos = (n) => (ambang == null ? n > 0 : ketatLebihBesar ? n > ambang : n >= ambang);
+
+  // --- kumpulkan per customer ---
+  const perCustomer = new Map();
+  for (const t of allTransactions) {
+    if (!t || !kodeSet.has(t.kode)) continue;
+    if (t.isRetur) continue; // retur bukan pembelian
+    const nama = (t.customer || '').trim().toUpperCase();
+    if (!nama) continue;
+    if (!perCustomer.has(nama)) perCustomer.set(nama, { customer: nama, totalQty: 0, totalNilai: 0, invoiceSet: new Set(), perInvoice: new Map(), terakhirBeli: null });
+    const c = perCustomer.get(nama);
+    const qty = toNumber(t.qty);
+    c.totalQty += qty;
+    c.totalNilai += toNumber(t.amount);
+    if (t.invoice) {
+      c.invoiceSet.add(t.invoice);
+      c.perInvoice.set(t.invoice, (c.perInvoice.get(t.invoice) || 0) + qty);
+    }
+    const d = parseFlexibleDate(t.tanggal);
+    const lama = c.terakhirBeli ? parseFlexibleDate(c.terakhirBeli) : null;
+    if (d && (!lama || d > lama)) c.terakhirBeli = t.tanggal;
+  }
+
+  const semua = [...perCustomer.values()].map((c) => {
+    let invTerbesar = null;
+    let qtyTerbesar = 0;
+    for (const [inv, q] of c.perInvoice) if (q > qtyTerbesar) { qtyTerbesar = q; invTerbesar = inv; }
+    return {
+      customer: c.customer,
+      totalQty: c.totalQty,
+      totalNilai: c.totalNilai,
+      jumlahInvoice: c.invoiceSet.size,
+      qtyTerbanyakSekaliBeli: qtyTerbesar,
+      invoiceTerbanyak: invTerbesar,
+      terakhirBeli: c.terakhirBeli,
+    };
+  });
+
+  const kumulatif = semua.filter((c) => lolos(c.totalQty)).sort((a, b) => b.totalQty - a.totalQty);
+  const sekaliBeli = semua.filter((c) => lolos(c.qtyTerbanyakSekaliBeli)).sort((a, b) => b.qtyTerbanyakSekaliBeli - a.qtyTerbanyakSekaliBeli);
+
+  // "Terbanyak" itu sendiri ambigu: terbanyak rupiahnya, terbanyak jumlah barangnya, atau paling
+  // sering belanjanya. Ketiganya diurutkan supaya MIRA menyajikan yang diminta dan bisa menyebut
+  // kalau juaranya ternyata berbeda antar ukuran.
+  const peringkat = {
+    menurutNilaiBelanja: [...semua].sort((a, b) => b.totalNilai - a.totalNilai).slice(0, 15),
+    menurutFrekuensiBelanja: [...semua].sort((a, b) => b.jumlahInvoice - a.jumlahInvoice).slice(0, 15),
+    menurutQty: [...semua].sort((a, b) => b.totalQty - a.totalQty).slice(0, 15),
+  };
+  const juara = {
+    nilaiTertinggi: peringkat.menurutNilaiBelanja[0] || null,
+    palingSeringBelanja: peringkat.menurutFrekuensiBelanja[0] || null,
+    totalQtyTerbanyak: peringkat.menurutQty[0] || null,
+  };
+
+  return {
+    produk: labelProduk,
+    jumlahKodeProdukTercakup: kodeSet.size,
+    ambang: ambang == null ? null : { nilai: ambang, pembanding: ketatLebihBesar ? 'lebih besar dari' : 'minimal', satuanDisebut: satuan },
+    jumlahPembeliSemua: semua.length,
+    totalQtySemuaPembeli: semua.reduce((s, c) => s + c.totalQty, 0),
+    totalNilaiSemuaPembeli: semua.reduce((s, c) => s + c.totalNilai, 0),
+    juara,
+    peringkat,
+    memenuhiSecaraKumulatif: { jumlah: kumulatif.length, daftar: kumulatif.slice(0, 60) },
+    memenuhiDalamSekaliBeli: { jumlah: sekaliBeli.length, daftar: sekaliBeli.slice(0, 60) },
+    catatan: ambang == null
+      ? `Semua customer yang pernah membeli ${labelProduk} sepanjang data yang tersinkron. Kalau user tanya "TERBANYAK" tanpa menyebut ukurannya, sajikan "juara.nilaiTertinggi" (nilai belanja Rupiah) sebagai jawaban utama, lalu sebutkan "juara.palingSeringBelanja" (frekuensi) dan "juara.totalQtyTerbanyak" (TOTAL qty sepanjang periode, BUKAN sekali beli) sebagai pelengkap — dan katakan terus terang kalau ketiganya orang yang berbeda. Rincian peringkatnya ada di "peringkat". Retur tidak dihitung sebagai pembelian.`
+      : `"pernah membeli di atas ${ambang}${satuan ? ' ' + satuan : ''}" punya DUA tafsir dan keduanya sudah dihitung: "memenuhiSecaraKumulatif" = totalnya sepanjang periode data, "memenuhiDalamSekaliBeli" = pernah mencapai jumlah itu dalam SATU invoice. Sajikan yang kumulatif lebih dulu sebagai jawaban utama, lalu sebutkan yang sekali beli sebagai pembanding — dan jelaskan bedanya dalam satu kalimat singkat supaya tidak rancu. Angka qty memakai satuan yang tercatat di sheet. Retur tidak dihitung. Semua sudah dijumlahkan dan diurutkan, jangan hitung ulang.`,
+  };
+}
+
 function findKabelByCoreCategory(message, allStock, allTransactions) {
   if (!allStock.length) return null;
   const nMsg = normText(message);
@@ -5309,6 +5434,7 @@ async function handleChat(request, env) {
     topProdukPerBulan: findTopProdukByMonth(message, allTransactions, allStock),
     produkSalesDetailPerKode: findProductSalesBreakdown(message, allTransactions),
     kabelKategoriCore: findKabelByCoreCategory(message, allStock, allTransactions),
+    customerPembeliProduk: findCustomerPembeliProduk(message, allTransactions, allStock),
     deliveryOverview: wantsDeliveryOverview && deliveryRaw ? JSON.parse(deliveryRaw) : null,
     poGudangRingkasan: poGudangData ? { byStatus: poGudangData.byStatus, monthly: poGudangData.monthly } : null,
     poGudangRelevan: poMatch.items,
@@ -5397,6 +5523,7 @@ Aturan:
    • "R-MKS/2026/II/005" dan "R/MKS/2026/II/005" = RETUR. Keduanya sama-sama SAH.
   CFN hanya punya SATU bentuk: "INV-CFN/2026/VIII/126", dipakai untuk reguler MAUPUN faktur pajak. KONSEP BORONGAN TIDAK ADA DI CFN.
   Di luar keterangan di atas, JANGAN mengarang arti/aturan tambahan apa pun tentang penomoran. Company sebuah faktur tetap WAJIB dibaca dari kolom Company, bukan disimpulkan dari nomornya — ada faktur bernomor CFN yang company-nya MKI.
+- SIAPA CUSTOMER YANG PERNAH MEMBELI PRODUK TERTENTU, dengan atau tanpa batas jumlah ("siapa customer yang pernah membeli kabel 1 core di atas 20 roll", "siapa saja yang pernah beli KSFO113 lebih dari 10", "customer mana yang pernah membeli kabel di atas 4 core") → WAJIB dari "customerPembeliProduk". Field ini SUDAH menyaring produk yang dimaksud ("produk", "jumlahKodeProdukTercakup") dan ambang jumlahnya ("ambang"). PENTING: "pernah membeli di atas N" punya DUA tafsir dan keduanya sudah dihitung — "memenuhiSecaraKumulatif" (total sepanjang periode data) dan "memenuhiDalamSekaliBeli" (pernah sebanyak itu dalam SATU invoice). Sajikan yang KUMULATIF sebagai jawaban utama beserta jumlahnya, lalu sebutkan yang sekali beli sebagai pembanding, dan jelaskan bedanya satu kalimat supaya tidak rancu. Sebut nama customer beserta "totalQty", "jumlahInvoice", dan "qtyTerbanyakSekaliBeli" seperlunya. Kalau kedua daftar kosong, katakan terus terang tidak ada yang mencapai jumlah itu — JANGAN menurunkan ambangnya diam-diam dan jangan mengarang nama. Retur tidak dihitung sebagai pembelian. Field yang sama juga menjawab pertanyaan PERINGKAT tanpa ambang ("siapa customer dengan belanja kabel terbanyak", "siapa pembeli kabel 1 core terbanyak"): pakai "juara.nilaiTertinggi" (nilai belanja Rupiah) sebagai jawaban utama, lalu sebut "juara.palingSeringBelanja" (frekuensi belanja) dan "juara.totalQtyTerbanyak" (TOTAL qty sepanjang periode, BUKAN sekali beli) — kalau ketiganya orang berbeda, katakan terus terang supaya tidak menyesatkan. Daftar lengkapnya di "peringkat.menurutNilaiBelanja" / "menurutFrekuensiBelanja" / "menurutQty".
 - QTY, KOLI, DAN EKSPEDISI PER PERIODE ("berapa qty hari ini", "berapa koli kita kirim hari ini", "ekspedisi apa saja hari ini", "koli tanggal 5 Agustus", "qty bulan ini") → WAJIB dari "qtyKoliEkspedisiPerPeriode". Sebutkan "totalQty", "totalKoli", "jumlahInvoiceUnik", dan "jumlahEkspedisiBerbeda" sesuai yang ditanya, lalu rinci "perEkspedisi" (tiap jasa kirim beserta invoice unik, qty, dan kolinya) kalau user menanyakan ekspedisi atau minta rincian. Tanpa penyebutan waktu, "periode" sudah otomatis HARI INI — pakai label periode itu apa adanya. Retur dipisah di "retur" dan TIDAK ikut di totalQty/totalKoli; sebutkan kalau ada. Semua sudah dijumlahkan, jangan hitung ulang.
 - REKOR CABANG ("rekor sales harian terbanyak", "rekor invoice harian terbanyak", "rekor revenue harian terbanyak", "rekor sales bulanan", "rekor invoice bulanan", "rekor revenue bulanan", "rekor pertumbuhan dibanding 2025", "hari/bulan terbaik kita kapan") → WAJIB dari "rekorCabang". Baca "yangDitanya" dan sajikan jenis itu LEBIH DULU: "harian" → dari "harian", "bulanan" → dari "bulanan", "pertumbuhan" → dari "pertumbuhan", "semua" → sajikan ringkas ketiganya. Tiap rekor sudah lengkap dengan tanggal/bulan dan angkanya; "lima_besar_*" boleh disebut sebagai konteks. WAJIB sampaikan batas di "cakupan" saat relevan — rekor HARIAN hanya dari tahun berjalan karena rincian harian 2025 tidak ada, dan rekor INVOICE UNIK bulanan juga hanya 2026. JANGAN menyebutnya "rekor sepanjang sejarah cabang" kalau datanya cuma setahun. Semua sudah dihitung dan diurutkan, jangan hitung ulang.
 - CEK INVOICE SALAH INPUT COMPANY ("invoice salah input", "salah input Sales/Revenue/AR", "nomor invoice tidak sesuai company", "invoice tertukar company") → WAJIB dari "cekSalahInputCompany", dan ini BERBEDA dari cek penulisan. Yang diperiksa: nomor berawalan "INV-CFN/" harus tercatat di company CFN, sedangkan "INV/MKS/", "R-MKS/", "R/MKS/" harus tercatat di company MKI. Sajikan tiap temuan dengan nomor faktur, "companyMenurutNomor", "companyTercatat", customer, tanggal, dan sumbernya. Baca "lingkup" — kalau user menyebut satu sumber saja, jangan menyinggung sumber lain. Kalau "jumlahTidakSinkron":0 → katakan bersih dan sebutkan berapa baris yang disisir dari sumber mana. JANGAN mencampurnya dengan temuan salah penulisan. Catatan penting: temuan ini adalah ketidakcocokan yang harus DIBETULKAN di sheet — tapi selama belum dibetulkan, semua perhitungan MIRA tetap memakai kolom Company yang tercatat, bukan tebakan dari nomornya.

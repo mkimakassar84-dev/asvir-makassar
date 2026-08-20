@@ -38,7 +38,7 @@ module.exports = {
   findProductSalesBreakdown, findPiutangByCompany, findPiutangByCustomer, findDuplikasi,
   findPiutangLampau, findReturTransactions, findTransactionMatches, findOnuCredentials,
   findTopPiutangCustomers, findStockValueSummary, findPaymentsByCustomer, findTopProdukByMonth,
-  findKabelByCoreCategory, findZonaWilayahMatches, findInvoiceFormatIssues, bentukInvoiceSah, findInvoiceCompanyMismatch, findRekor, findLogistikHarian, selaraskanYoyBulanBerjalan,
+  findKabelByCoreCategory, findZonaWilayahMatches, findInvoiceFormatIssues, bentukInvoiceSah, findInvoiceCompanyMismatch, findRekor, findLogistikHarian, findCustomerPembeliProduk, selaraskanYoyBulanBerjalan,
   resolveAccessCode, piutangCompanyOf, normText, normCode, nowMakassar,
 };`;
 const tmp = path.join(os.tmpdir(), `mira-test-${process.pid}.cjs`);
@@ -530,6 +530,93 @@ t('pertanyaan penjelasan tidak memicu audit penuh', () => {
 });
 t('pertanyaan di luar topik tidak menarik audit', () => {
   return M.findInvoiceFormatIssues('berapa sales bulan ini', [], [], []) === null ? null : 'audit menyala di pertanyaan lain';
+});
+
+grup('Siapa customer yang pernah membeli produk tertentu');
+const STOK_KABEL = [
+  { kode: 'KSFO028', nama: 'Kabel Fiber Optik 1Core G657A 3Seling Messenger 1mm', harga: 1000, stokTotal: 5 },
+  { kode: 'KSFO113', nama: 'Kabel Fiber Optik 1 Core GJYXCH 1000 Meter', harga: 1000, stokTotal: 5 },
+  { kode: 'KSFO020', nama: 'Kabel Fiber Optik 6 Core', harga: 2000, stokTotal: 5 },
+];
+const TX_BELI = [
+  // BUDI: 25 kumulatif dari dua invoice, tapi sekali beli maksimal cuma 15
+  { tanggal: tgl(5, 1), invoice: 'INV/MKS/2026/I/001', customer: 'BUDI', kode: 'KSFO028', qty: 15, amount: 15000, isRetur: false },
+  { tanggal: tgl(6, 1), invoice: 'INV/MKS/2026/I/002', customer: 'BUDI', kode: 'KSFO113', qty: 10, amount: 10000, isRetur: false },
+  // SITI: 30 sekali beli — lolos di kedua tafsir
+  { tanggal: tgl(7, 1), invoice: 'INV/MKS/2026/I/003', customer: 'SITI', kode: 'KSFO028', qty: 30, amount: 30000, isRetur: false },
+  // UMAR: cuma 5, tidak lolos
+  { tanggal: tgl(8, 1), invoice: 'INV/MKS/2026/I/004', customer: 'UMAR', kode: 'KSFO028', qty: 5, amount: 5000, isRetur: false },
+  // JONI: 100 tapi produknya 6 core — tidak boleh ikut terhitung
+  { tanggal: tgl(9, 1), invoice: 'INV/MKS/2026/I/005', customer: 'JONI', kode: 'KSFO020', qty: 100, amount: 200000, isRetur: false },
+  // retur besar milik SITI — tidak boleh mengurangi/menambah hitungan pembelian
+  { tanggal: tgl(10, 1), invoice: 'R-MKS/2026/I/001', customer: 'SITI', kode: 'KSFO028', qty: -25, amount: -25000, isRetur: true },
+];
+const TANYA_KABEL = 'Siapa Customer yang pernah membeli kabel 1 core diatas 20 roll?';
+t('hanya produk kategori yang diminta yang dihitung', () => {
+  const r = M.findCustomerPembeliProduk(TANYA_KABEL, TX_BELI, STOK_KABEL);
+  if (!r) return 'tidak terjawab';
+  if (r.jumlahKodeProdukTercakup !== 2) return `${r.jumlahKodeProdukTercakup} kode tercakup, seharusnya 2`;
+  const semua = [...r.memenuhiSecaraKumulatif.daftar, ...r.memenuhiDalamSekaliBeli.daftar].map((c) => c.customer);
+  return semua.includes('JONI') ? 'pembeli kabel 6 core ikut terbawa' : null;
+});
+t('ambang dibaca dan dipakai dengan benar', () => {
+  const r = M.findCustomerPembeliProduk(TANYA_KABEL, TX_BELI, STOK_KABEL);
+  if (!r.ambang || r.ambang.nilai !== 20) return `ambang ${JSON.stringify(r.ambang)}`;
+  if (r.ambang.pembanding !== 'lebih besar dari') return `pembanding ${r.ambang.pembanding}`;
+  return r.ambang.satuanDisebut === 'roll' ? null : `satuan ${r.ambang.satuanDisebut}`;
+});
+t('dua tafsir dipisah: kumulatif lawan sekali beli', () => {
+  const r = M.findCustomerPembeliProduk(TANYA_KABEL, TX_BELI, STOK_KABEL);
+  const kum = r.memenuhiSecaraKumulatif.daftar.map((c) => c.customer).sort().join(',');
+  const sek = r.memenuhiDalamSekaliBeli.daftar.map((c) => c.customer).sort().join(',');
+  if (kum !== 'BUDI,SITI') return `kumulatif = ${kum}, seharusnya BUDI,SITI`;
+  if (sek !== 'SITI') return `sekali beli = ${sek}, seharusnya SITI saja`;
+  return null;
+});
+t('retur tidak dihitung sebagai pembelian', () => {
+  const r = M.findCustomerPembeliProduk(TANYA_KABEL, TX_BELI, STOK_KABEL);
+  const siti = r.memenuhiSecaraKumulatif.daftar.find((c) => c.customer === 'SITI');
+  return siti && siti.totalQty === 30 ? null : `SITI totalQty ${siti && siti.totalQty}, seharusnya 30 (retur -25 diabaikan)`;
+});
+t('"minimal" dibaca sebagai lebih besar SAMA DENGAN', () => {
+  const r = M.findCustomerPembeliProduk('siapa customer yang pernah membeli kabel 1 core minimal 25 roll', TX_BELI, STOK_KABEL);
+  if (r.ambang.pembanding !== 'minimal') return `pembanding ${r.ambang.pembanding}`;
+  const kum = r.memenuhiSecaraKumulatif.daftar.map((c) => c.customer).sort().join(',');
+  return kum === 'BUDI,SITI' ? null : `dapat ${kum} — BUDI tepat 25 seharusnya ikut`;
+});
+t('bisa dicari lewat kode barang langsung', () => {
+  const r = M.findCustomerPembeliProduk('siapa saja yang pernah beli KSFO113 lebih dari 5', TX_BELI, STOK_KABEL);
+  if (!r) return 'tidak terjawab';
+  const kum = r.memenuhiSecaraKumulatif.daftar.map((c) => c.customer).join(',');
+  return kum === 'BUDI' ? null : `dapat ${kum}, seharusnya BUDI`;
+});
+t('tanpa ambang, semua pembeli dikembalikan', () => {
+  const r = M.findCustomerPembeliProduk('siapa saja customer yang pernah membeli kabel 1 core', TX_BELI, STOK_KABEL);
+  return r && r.ambang === null && r.jumlahPembeliSemua === 3 ? null : `ambang ${JSON.stringify(r && r.ambang)}, pembeli ${r && r.jumlahPembeliSemua}`;
+});
+t('pertanyaan lain tidak menarik field ini', () => (
+  M.findCustomerPembeliProduk('berapa stok kabel 1 core', TX_BELI, STOK_KABEL) === null ? null : 'menyala di pertanyaan stok'
+));
+t('"kabel" tanpa core berarti SELURUH kabel', () => {
+  const r = M.findCustomerPembeliProduk('Siapa customer dengan belanja kabel terbanyak?', TX_BELI, STOK_KABEL);
+  if (!r) return 'tidak terjawab';
+  // ketiga kode di fixture semuanya kabel, termasuk yang 6 core
+  return r.jumlahKodeProdukTercakup === 3 && /semua jenis kabel/.test(r.produk) ? null : `${r.jumlahKodeProdukTercakup} kode, label "${r.produk}"`;
+});
+t('peringkat tersedia menurut nilai, frekuensi, dan qty', () => {
+  const r = M.findCustomerPembeliProduk('Siapa customer dengan belanja kabel terbanyak?', TX_BELI, STOK_KABEL);
+  // JONI beli 6 core senilai 200.000 -> tertinggi nilainya; BUDI 2 invoice -> paling sering
+  if (!r.juara || !r.juara.nilaiTertinggi) return 'juara tidak ada';
+  if (r.juara.nilaiTertinggi.customer !== 'JONI') return `juara nilai ${r.juara.nilaiTertinggi.customer}, seharusnya JONI`;
+  if (r.juara.palingSeringBelanja.customer !== 'BUDI') return `juara frekuensi ${r.juara.palingSeringBelanja.customer}, seharusnya BUDI`;
+  if (r.juara.totalQtyTerbanyak.customer !== 'JONI') return `juara qty ${r.juara.totalQtyTerbanyak.customer}, seharusnya JONI`;
+  return r.peringkat.menurutNilaiBelanja.length && r.peringkat.menurutFrekuensiBelanja.length && r.peringkat.menurutQty.length
+    ? null : 'salah satu daftar peringkat kosong';
+});
+t('"pembeli ... terbanyak" ikut memicu, bukan cuma "membeli"', () => {
+  const r = M.findCustomerPembeliProduk('Siapa customer pembeli kabel 1 core terbanyak', TX_BELI, STOK_KABEL);
+  if (!r) return 'tidak terjawab';
+  return r.jumlahKodeProdukTercakup === 2 ? null : `${r.jumlahKodeProdukTercakup} kode, seharusnya 2 (hanya 1 core)`;
 });
 
 grup('Qty, koli, dan ekspedisi per periode');
