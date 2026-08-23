@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<title>Buku Kemampuan MIRA</title>
+<style>
+  @page {
+    size: A4;
+    margin: 20mm 16mm 18mm 16mm;
+    @bottom-center { content: counter(page); }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body {
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 10.2pt;
+    line-height: 1.5;
+    color: #241c17;
+    margin: 0;
+  }
+  .sans { font-family: 'Segoe UI', system-ui, Arial, sans-serif; }
+  code, .mono { font-family: 'Consolas', 'Courier New', monospace; font-size: 8.8pt; }
+
+  /* ---------- sampul ---------- */
+  .sampul {
+    height: 247mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    page-break-after: always;
+    border-top: 6pt solid #9c2b2e;
+    border-bottom: 1pt solid #d8cdb8;
+    padding-top: 18mm;
+  }
+  .sampul .kop {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 8.5pt; letter-spacing: .18em; text-transform: uppercase;
+    color: #9c2b2e; font-weight: 700; margin-bottom: 10mm;
+  }
+  .sampul h1 {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 40pt; font-weight: 800; letter-spacing: -.03em;
+    line-height: 1.02; margin: 0 0 6mm;
+  }
+  .sampul .anak {
+    font-size: 13pt; color: #5d4c3d; max-width: 130mm; margin: 0 0 14mm;
+  }
+  .sampul dl { display: grid; grid-template-columns: 42mm 1fr; gap: 2mm 0; font-size: 9.5pt; margin: 0; }
+  .sampul dt { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 8pt; letter-spacing: .1em;
+               text-transform: uppercase; color: #8a7663; padding-top: .6mm; }
+  .sampul dd { margin: 0; }
+
+  /* ---------- struktur ---------- */
+  h2 {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 17pt; font-weight: 750; letter-spacing: -.02em;
+    margin: 0 0 1mm; padding-bottom: 2mm;
+    border-bottom: 2.5pt solid #241c17;
+    page-break-after: avoid;
+  }
+  h2 .no {
+    display: block; font-size: 8pt; letter-spacing: .16em; text-transform: uppercase;
+    color: #9c2b2e; font-weight: 700; margin-bottom: 1.5mm;
+  }
+  h3 {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 11.5pt; font-weight: 700; margin: 7mm 0 2mm;
+    page-break-after: avoid;
+  }
+  h4 {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 9.5pt; font-weight: 700; margin: 4.5mm 0 1.5mm; color: #6b4a2e;
+    page-break-after: avoid;
+  }
+  section { page-break-before: always; }
+  section.lanjut { page-break-before: auto; }
+  p { margin: 0 0 2.5mm; }
+  .intro { color: #5d4c3d; font-size: 10.6pt; margin-bottom: 5mm; }
+  ul, ol { margin: 0 0 3mm; padding-left: 6mm; }
+  li { margin-bottom: 1.2mm; }
+
+  /* ---------- tabel ---------- */
+  table { width: 100%; border-collapse: collapse; margin: 3mm 0 5mm; font-size: 9pt; page-break-inside: auto; }
+  thead { display: table-header-group; }
+  tr { page-break-inside: avoid; }
+  th {
+    font-family: 'Segoe UI', system-ui, sans-serif; font-size: 7.6pt; font-weight: 700;
+    letter-spacing: .08em; text-transform: uppercase; color: #6b5a4a;
+    text-align: left; padding: 1.6mm 2.5mm 1.6mm 0; border-bottom: 1pt solid #9a8873;
+  }
+  td { padding: 1.6mm 2.5mm 1.6mm 0; border-bottom: .4pt solid #ddd3c2; vertical-align: top; }
+  td.num { font-family: Consolas, monospace; font-size: 8.6pt; white-space: nowrap; }
+  .tanya { font-style: italic; color: #4a3b2f; }
+
+  /* ---------- kotak ---------- */
+  .kotak {
+    border-left: 3pt solid #c17a5a; background: #faf7f1;
+    padding: 3mm 4mm; margin: 4mm 0; page-break-inside: avoid;
+  }
+  .kotak.penting { border-left-color: #9c2b2e; }
+  .kotak.aman { border-left-color: #6f8467; }
+  .kotak h5 {
+    font-family: 'Segoe UI', system-ui, sans-serif; font-size: 7.6pt; letter-spacing: .1em;
+    text-transform: uppercase; margin: 0 0 1.5mm; color: #6b5a4a; font-weight: 700;
+  }
+  .kotak p { margin: 0 0 1.5mm; font-size: 9.3pt; }
+  .kotak p:last-child { margin-bottom: 0; }
+
+  /* ---------- angka ---------- */
+  .angka { display: flex; flex-wrap: wrap; gap: 0; border: .4pt solid #ddd3c2; margin: 4mm 0 6mm; }
+  .angka div { flex: 1 1 24mm; padding: 3mm 3mm; border-right: .4pt solid #ddd3c2; }
+  .angka div:last-child { border-right: 0; }
+  .angka b {
+    font-family: 'Segoe UI', system-ui, sans-serif; font-size: 15pt; font-weight: 800;
+    display: block; letter-spacing: -.02em; line-height: 1.1;
+  }
+  .angka span { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 7.4pt; color: #8a7663; }
+
+  .field { font-family: Consolas, monospace; font-size: 8.2pt; color: #7a6754; }
+  .pil { display: inline-block; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 7.5pt;
+         font-weight: 700; border: .6pt solid currentColor; border-radius: 8pt; padding: .3mm 2mm; }
+  .hijau { color: #6f8467; } .kuning { color: #b8852c; } .merah { color: #9c2b2e; } .abu { color: #7b8798; }
+
+  /* ---------- daftar isi ---------- */
+  .isi { page-break-after: always; }
+  .isi ol { list-style: none; padding: 0; counter-reset: bab; }
+  .isi li { counter-increment: bab; display: flex; gap: 3mm; padding: 1.8mm 0; border-bottom: .4pt dotted #ccc0ac; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 10pt; }
+  .isi li::before { content: counter(bab, upper-roman) '.'; width: 10mm; color: #9c2b2e; font-weight: 700; }
+  .isi li i { font-style: normal; color: #8a7663; font-size: 9pt; }
+</style>
+</head>
+<body>
+
+<!-- ================= SAMPUL ================= -->
+<div class="sampul">
+  <div class="kop">PT. Mitra Kabel Indonesia &middot; Cabang Makassar</div>
+  <h1>Buku Kemampuan<br>MIRA</h1>
+  <p class="anak">Dokumentasi menyeluruh atas seluruh yang bisa dilakukan MIRA: apa yang bisa ditanyakan, dari mana setiap angka diambil, aturan apa yang dipakai menghitungnya, dan apa saja yang belum bisa dia lakukan.</p>
+  <dl>
+    <dt>Nama lengkap</dt><dd>MIRA &mdash; Makassar Intelligent Response Assistant</dd>
+    <dt>Untuk</dt><dd>Tim Cabang Makassar</dd>
+    <dt>Disusun</dt><dd>23 Agustus 2026</dd>
+    <dt>Mesin bahasa</dt><dd>gemini-3.5-flash-lite</dd>
+    <dt>Sumber data</dt><dd>7 sheet Google Sheets, disinkronkan tiap 10 menit</dd>
+    <dt>Ukuran sistem</dt><dd>37 fungsi pencari data &middot; 56 bidang konteks &middot; 119 tes penjaga</dd>
+  </dl>
+</div>
+
+<!-- ================= DAFTAR ISI ================= -->
+<div class="isi">
+  <h2><span class="no">Isi Dokumen</span>Daftar Bab</h2>
+  <ol>
+    <li>Cara MIRA bekerja <i>&mdash; lapisan penyaring, jalur tanpa AI, sinkronisasi</i></li>
+    <li>Akses dan pengenalan pengguna <i>&mdash; 10 kode, sapaan, data keluarga</i></li>
+    <li>Penjualan dan pendapatan <i>&mdash; sales, revenue, per company</i></li>
+    <li>Target dan pencapaian <i>&mdash; harian, bulanan, tahunan, per persentase</i></li>
+    <li>Perbandingan periode dan tahun <i>&mdash; aturan periode setara</i></li>
+    <li>Rekor cabang <i>&mdash; harian, bulanan, pertumbuhan</i></li>
+    <li>Piutang <i>&mdash; umur, customer, company, arsip 2015&ndash;2025</i></li>
+    <li>Produk dan stok <i>&mdash; kode, kategori, nilai, restock</i></li>
+    <li>Customer <i>&mdash; jumlah, frekuensi, churn, pembeli produk tertentu</i></li>
+    <li>Invoice dan transaksi <i>&mdash; detail, retur, pembayaran</i></li>
+    <li>Audit penomoran invoice <i>&mdash; format resmi dan salah input company</i></li>
+    <li>Wilayah dan zona <i>&mdash; 124 kabupaten/kota, peta provinsi</i></li>
+    <li>Logistik dan gudang <i>&mdash; qty, koli, ekspedisi, PO</i></li>
+    <li>Personel dan KPI <i>&mdash; peringkat, absensi, indikator harian</i></li>
+    <li>Grafik dan gambar <i>&mdash; lima bentuk, tombol kirim gambar</i></li>
+    <li>Katalog dan pengetahuan tetap <i>&mdash; 230 produk, ONU, video</i></li>
+    <li>Diskusi dan strategi <i>&mdash; 18 modul, sifat MIRA saat berdebat</i></li>
+    <li>Aturan yang tidak boleh diubah <i>&mdash; 14 keputusan dan alasannya</i></li>
+    <li>Batas dan titik buta <i>&mdash; yang belum dan tidak bisa</i></li>
+    <li>Penjagaan mutu <i>&mdash; 119 tes, uji sabotase, alur aman</i></li>
+    <li>Lampiran <i>&mdash; daftar lengkap fungsi dan bidang data</i></li>
+  </ol>
+</div>
+
+<!-- ================= I ================= -->
+<section>
+<h2><span class="no">Bab I</span>Cara MIRA bekerja</h2>
+<p class="intro">Memahami bagian ini membuat sisa dokumen masuk akal &mdash; termasuk kenapa MIRA bisa sangat tepat di satu hal dan sama sekali buta di hal lain.</p>
+
+<div class="angka">
+  <div><b>37</b><span>fungsi pencari data</span></div>
+  <div><b>56</b><span>bidang konteks</span></div>
+  <div><b>7</b><span>sheet dibaca</span></div>
+  <div><b>10</b><span>kode akses</span></div>
+  <div><b>119</b><span>tes penjaga</span></div>
+  <div><b>5.816</b><span>baris kode inti</span></div>
+</div>
+
+<h3>Pertanyaan disaring dulu, baru dikirim</h3>
+<p>MIRA tidak mengirim seluruh data cabang ke mesin bahasa setiap kali ditanya &mdash; itu akan lambat, mahal, dan justru menurunkan ketepatan. Sebanyak 37 fungsi membaca pertanyaan lebih dulu lalu memutuskan data mana yang relevan. Hanya data itu yang dikirim, dikemas dalam maksimal 56 bidang bernama.</p>
+<p><strong>Akibatnya penting:</strong> yang menentukan benar-salahnya jawaban adalah lapisan penyaring ini, bukan kecerdasan mesin bahasanya. Kalau data yang tepat tidak ikut terkirim, mesin bahasa cenderung mengarang untuk menutupi kekosongan. Hampir seluruh kesalahan yang pernah dilaporkan berakar di sini, bukan di tempat lain.</p>
+
+<div class="kotak">
+  <h5>Berapa besar yang dikirim</h5>
+  <p>Pertanyaan sederhana seperti sapaan memakai sekitar <strong>19.500 token</strong>. Pertanyaan berat seperti mencari pembeli sebuah kategori produk bisa mencapai <strong>55.500 token</strong>. Waktu jawab terukur <strong>2,0 sampai 3,7 detik</strong>.</p>
+</div>
+
+<h3>Dua pertanyaan dijawab tanpa mesin bahasa sama sekali</h3>
+<p>Pertanyaan berbentuk persis <code>stok KODE</code> dan <code>piutang NAMA</code> dijawab langsung dari data lewat jalur template, tanpa melibatkan AI. Untuk dua hal itu, kesalahan penyampaian secara struktural mustahil. Jalurnya sengaja dijaga sempit: begitu ada kata tambahan, pertanyaan kembali melewati jalur biasa.</p>
+
+<h3>Data disegarkan tiap 10 menit</h3>
+<p>Sebuah tugas terjadwal menarik ulang seluruh sheet setiap 10 menit dan menyimpannya di penyimpanan cepat. Khusus pertanyaan stok, ada penyegaran langsung bila data sudah lebih dari 2 menit.</p>
+<p>Bila Google Sheets membalas kosong karena gangguan, sinkronisasi <strong>menolak menimpa</strong> data lama. Aturan ini lahir dari kejadian nyata: data pernah terhapus total dan MIRA mulai mengarang angka penjualan.</p>
+
+<h3>Tujuh sheet yang dibaca</h3>
+<table>
+  <thead><tr><th>Sheet</th><th>Isi</th><th>Dipakai untuk</th></tr></thead>
+  <tbody>
+    <tr><td>Grand Data 2026</td><td>Transaksi per baris barang</td><td>Sales, invoice, qty, koli, ekspedisi, wilayah</td></tr>
+    <tr><td>Rev SUM</td><td>Pembayaran masuk</td><td>Revenue, riwayat pelunasan</td></tr>
+    <tr><td>AR 2026</td><td>Piutang, dua blok</td><td>Blok L&ndash;S untuk piutang berjalan, blok A&ndash;J untuk audit</td></tr>
+    <tr><td>Stock GD MKS</td><td>Stok per SKU</td><td>Stok, harga, nilai persediaan, perputaran</td></tr>
+    <tr><td>Sales SUM</td><td>Kolom AS&ndash;BB</td><td>Target bulanan, realisasi 2025 dan 2026</td></tr>
+    <tr><td>KPI MONITORING</td><td>Kolom A&ndash;K dan M&ndash;Z</td><td>Target harian resmi, zona wilayah</td></tr>
+    <tr><td>PO Gudang</td><td>Kolom A&ndash;K</td><td>Pesanan masuk dari pusat</td></tr>
+  </tbody>
+</table>
+</section>
+
+<!-- ================= II ================= -->
+<section>
+<h2><span class="no">Bab II</span>Akses dan pengenalan pengguna</h2>
+<p class="intro">MIRA memegang piutang, harga, dan kredensial perangkat. Sejak gerbang akses dipasang, tidak ada lagi yang bisa membacanya hanya dengan mengetahui alamat servernya.</p>
+
+<h3>Sepuluh kode akses perorangan</h3>
+<p>Setiap personel memakai kodenya sendiri di HP masing-masing. Kode diperiksa <strong>paling awal</strong> &mdash; sebelum satu pun data dibaca dan sebelum mesin bahasa dipanggil &mdash; sehingga permintaan tanpa izin tidak memakan biaya sama sekali.</p>
+
+<table>
+  <thead><tr><th>Nama</th><th>Peran</th><th>Sapaan MIRA</th></tr></thead>
+  <tbody>
+    <tr><td>Rifqi</td><td>Branch Manager, sekaligus pencipta MIRA</td><td>Pak Rifqi</td></tr>
+    <tr><td>Astrid</td><td>Supervisor Marketing &amp; Customer Relation</td><td>Bu Astrid</td></tr>
+    <tr><td>Adi</td><td>Marketing Representative</td><td>tanpa gelar</td></tr>
+    <tr><td>Reza</td><td>Marketing Representative</td><td>tanpa gelar</td></tr>
+    <tr><td>Putri</td><td>General Admin Support &amp; Operation</td><td>tanpa gelar</td></tr>
+    <tr><td>Burhamin</td><td>Kordinator Logistik dan AR</td><td>tanpa gelar</td></tr>
+    <tr><td>Zul</td><td>Logistik Staff</td><td>Abang Zul</td></tr>
+    <tr><td>Aspar</td><td>Logistik Staff</td><td>Abang Aspar</td></tr>
+    <tr><td>Taufik</td><td>Logistik Staff</td><td>tanpa gelar</td></tr>
+    <tr><td>Ricky</td><td>Dewan Penasihat Cabang Makassar</td><td>Pak Ricky</td></tr>
+  </tbody>
+</table>
+
+<h3>MIRA tahu sedang bicara dengan siapa</h3>
+<p>Sapaan menyesuaikan orangnya, dan data keluarga hanya dikirim milik orang yang sedang login.</p>
+<div class="kotak penting">
+  <h5>Kenapa dibatasi begitu</h5>
+  <p>Dulu seluruh daftar keluarga ikut terkirim setiap percakapan. Akibatnya MIRA pernah menyebut rekan kerja sebagai istri seseorang. Sejak dibatasi, kekeliruan semacam itu tidak mungkin terjadi lagi.</p>
+</div>
+</section>
+
+<!-- ================= III ================= -->
+<section>
+<h2><span class="no">Bab III</span>Penjualan dan pendapatan</h2>
+<p class="intro">Dua hal yang paling sering tertukar. <strong>Sales</strong> adalah nilai order saat faktur terbit. <strong>Revenue</strong> adalah uang yang benar-benar masuk. MIRA memisahkannya dengan tegas dan tidak pernah mencampurnya.</p>
+
+<h3>Sales dan revenue untuk rentang waktu apa pun</h3>
+<table>
+  <thead><tr><th style="width:52%">Contoh pertanyaan</th><th>Cakupan</th></tr></thead>
+  <tbody>
+    <tr><td class="tanya">&ldquo;sales kemarin&rdquo;</td><td>satu hari</td></tr>
+    <tr><td class="tanya">&ldquo;revenue 4 Agustus&rdquo;</td><td>tanggal tertentu</td></tr>
+    <tr><td class="tanya">&ldquo;penjualan 16&ndash;29 Juli&rdquo;</td><td>rentang tanggal</td></tr>
+    <tr><td class="tanya">&ldquo;sales bulan ini&rdquo;, &ldquo;revenue Juli&rdquo;</td><td>bulan</td></tr>
+    <tr><td class="tanya">&ldquo;sales 2026&rdquo;</td><td>tahun berjalan</td></tr>
+  </tbody>
+</table>
+
+<h4>Tanggal boleh ditulis angka</h4>
+<p>Selain &ldquo;5 Agustus&rdquo;, MIRA memahami <code>5/8/2026</code> dan <code>tgl 5/8</code>. Pengamannya ketat agar nomor faktur seperti <code>INV/MKS/2026/VII/F-039</code> dan rentang umur piutang seperti &ldquo;30-45 hari&rdquo; tidak salah terbaca sebagai tanggal.</p>
+
+<h3>Dipisah per company MKI dan CFN</h3>
+<p>Semua pertanyaan di atas dapat dipersempit ke satu badan usaha untuk periode apa pun: <span class="tanya">&ldquo;sales MKI bulan ini&rdquo;</span>, <span class="tanya">&ldquo;revenue CFN hari ini&rdquo;</span>, <span class="tanya">&ldquo;invoice MKI minggu ini&rdquo;</span>.</p>
+
+<h3>Pencapaian gabungan sekali tanya</h3>
+<p>Sales, revenue, dan jumlah invoice unik disajikan berbarengan untuk satu periode &mdash; berguna saat menyiapkan rapat. Contoh: <span class="tanya">&ldquo;pencapaian Agustus&rdquo;</span>, <span class="tanya">&ldquo;pencapaian 2026&rdquo;</span>, <span class="tanya">&ldquo;pencapaian hari ini&rdquo;</span>.</p>
+
+<div class="kotak penting">
+  <h5>Aturan yang dijaga &mdash; satu bulan hanya boleh punya satu angka</h5>
+  <p>Kolom rekap di sheet baru bergerak saat sheet menghitung ulang, sedangkan buku transaksi hidup terus. Untuk bulan berjalan MIRA selalu memakai buku transaksi.</p>
+  <p>Selisihnya pernah mencapai <strong>Rp9.720.000</strong> dalam satu bulan, dan dulu jawaban MIRA berubah-ubah tergantung bidang mana yang kebetulan terbaca lebih dulu.</p>
+</div>
+</section>
+
+<!-- ================= IV ================= -->
+<section>
+<h2><span class="no">Bab IV</span>Target dan pencapaian</h2>
+<p class="intro">Target ada di tiga tingkat, dan ketiganya punya sumber berbeda. MIRA dijaga agar tidak pernah mencampurnya.</p>
+
+<h3>Target harian resmi</h3>
+<p>Diambil apa adanya dari papan KPI MONITORING &mdash; kolom C baris 10, 11, dan 13. Kolom B memberi realisasi hari berjalan dan kolom D memberi tanda tercapai atau belum.</p>
+<table>
+  <thead><tr><th>Ukuran</th><th>Sel sumber</th><th>Contoh nilai</th></tr></thead>
+  <tbody>
+    <tr><td>Target sales harian</td><td class="num">C10</td><td class="num">Rp83.539.062</td></tr>
+    <tr><td>Target invoice harian</td><td class="num">C11</td><td class="num">10 invoice</td></tr>
+    <tr><td>Target revenue harian</td><td class="num">C13</td><td class="num">Rp88.176.108</td></tr>
+  </tbody>
+</table>
+<div class="kotak penting">
+  <h5>Dilarang menghitung sendiri</h5>
+  <p>Sebelum kolom ini dibaca, MIRA menebak target harian dengan membagi target bulanan dengan asumsi 25 hari kerja. Hasil tebakannya Rp70,7 juta, sementara angka resmi tim Rp83,5 juta &mdash; meleset Rp12,8 juta.</p>
+  <p>Pembacaannya kini diverifikasi lewat label di kolom A, bukan sekadar nomor baris, sehingga tetap benar walau ada baris disisipkan di sheet.</p>
+</div>
+
+<h3>Sisa target dan pengejaran per persentase</h3>
+<p>MIRA menjawab berapa lagi yang perlu dikejar, tidak hanya sampai 100% tapi juga ke tingkat 60%, 70%, 80%, dan 90% dari target penuh. Persentase lain yang disebut &mdash; misalnya 65% &mdash; ikut dihitung.</p>
+<table>
+  <thead><tr><th>Tingkat</th><th>Target</th><th>Sisa sales</th><th>Sisa revenue</th></tr></thead>
+  <tbody>
+    <tr><td>60%</td><td class="num">Rp1.060.000.000</td><td>sudah tercapai</td><td class="num">Rp143.323.800</td></tr>
+    <tr><td>70%</td><td class="num">Rp1.236.666.667</td><td class="num">Rp166.058.417</td><td class="num">Rp319.990.467</td></tr>
+    <tr><td>80%</td><td class="num">Rp1.413.333.334</td><td class="num">Rp342.725.084</td><td class="num">Rp496.657.134</td></tr>
+    <tr><td>90%</td><td class="num">Rp1.590.000.000</td><td class="num">Rp519.391.750</td><td class="num">Rp673.323.800</td></tr>
+    <tr><td>100%</td><td class="num">Rp1.766.666.667</td><td class="num">Rp696.058.417</td><td class="num">Rp849.990.467</td></tr>
+  </tbody>
+</table>
+<p class="field">Contoh dari Agustus 2026. Ambang yang sudah dilewati dilaporkan sebagai tercapai, bukan ditulis &ldquo;sisa nol&rdquo; tanpa penjelasan.</p>
+
+<h3>Target bulanan dan tahunan</h3>
+<p>Target Rupiah diambil dari sheet Sales SUM. Satu angka target dipakai untuk sales sekaligus revenue &mdash; memang begitu di sumbernya, bukan salah baca. Target invoice tahunan diturunkan dari target bulanan dikali dua belas, dan MIRA wajib menyebutkan bahwa itu angka turunan.</p>
+</section>
+
+<!-- ================= V ================= -->
+<section>
+<h2><span class="no">Bab V</span>Perbandingan periode dan tahun</h2>
+<p class="intro">Bagian yang paling menentukan kualitas diskusi rencana kerja &mdash; dan yang paling mudah menyesatkan bila aturannya salah.</p>
+
+<h3>Dua periode disandingkan</h3>
+<p>Dua bulan, dua rentang, atau satu periode dibanding periode sebelumnya, lengkap dengan selisih dan persentasenya. Contoh: <span class="tanya">&ldquo;perbandingan penjualan Maret dan Juni&rdquo;</span>, <span class="tanya">&ldquo;performa Mei sampai Juli&rdquo;</span>, <span class="tanya">&ldquo;tren penjualan semester ini&rdquo;</span>.</p>
+
+<h3>Tahun ini dibanding tahun lalu</h3>
+<p>Data 2025 tersedia sebagai total bulanan. Bisa ditanya setahun penuh maupun bulan tertentu: <span class="tanya">&ldquo;sales 2025 vs 2026&rdquo;</span>, <span class="tanya">&ldquo;Juli 2025 dibanding Juli 2026&rdquo;</span>.</p>
+
+<div class="kotak penting">
+  <h5>Aturan paling mahal kalau dilanggar &mdash; pertumbuhan selalu berarti periode setara</h5>
+  <p>Membagi 2026 yang baru berjalan delapan bulan dengan 2025 setahun penuh menghasilkan <strong>&minus;33,7%</strong>. Delapan bulan yang sama disandingkan: <strong>+1,9% sales</strong> dan <strong>+3,6% revenue</strong>.</p>
+  <p>Itu selisih antara &ldquo;cabang turun sepertiga&rdquo; dan &ldquo;cabang tumbuh tipis&rdquo;. MIRA pernah mengutip angka &minus;33,7% sebagai fakta ketika ditanya masalah terbesar cabang. Sekarang nama polos &ldquo;pertumbuhan&rdquo; dimiliki angka yang adil, sementara rasio tidak setara disimpan dengan nama yang menyatakan dirinya sendiri.</p>
+</div>
+</section>
+
+<!-- ================= VI ================= -->
+<section>
+<h2><span class="no">Bab VI</span>Rekor cabang</h2>
+<p class="intro">Tujuh jenis rekor, masing-masing dengan lima besarnya sebagai konteks.</p>
+
+<table>
+  <thead><tr><th>Rekor</th><th>Pemicu</th><th>Cakupan data</th></tr></thead>
+  <tbody>
+    <tr><td>Sales terbanyak satu hari</td><td class="tanya">&ldquo;rekor sales harian terbanyak&rdquo;</td><td>2026 saja</td></tr>
+    <tr><td>Invoice unik terbanyak satu hari</td><td class="tanya">&ldquo;rekor invoice harian terbanyak&rdquo;</td><td>2026 saja</td></tr>
+    <tr><td>Revenue terbanyak satu hari</td><td class="tanya">&ldquo;rekor revenue harian terbanyak&rdquo;</td><td>2026 saja</td></tr>
+    <tr><td>Sales terbanyak satu bulan</td><td class="tanya">&ldquo;rekor sales bulanan&rdquo;</td><td>2025 dan 2026</td></tr>
+    <tr><td>Revenue terbanyak satu bulan</td><td class="tanya">&ldquo;rekor revenue bulanan&rdquo;</td><td>2025 dan 2026</td></tr>
+    <tr><td>Invoice unik terbanyak satu bulan</td><td class="tanya">&ldquo;rekor invoice bulanan&rdquo;</td><td>2026 saja</td></tr>
+    <tr><td>Pertumbuhan tertinggi vs 2025</td><td class="tanya">&ldquo;rekor pertumbuhan dibanding 2025&rdquo;</td><td>per bulan setara</td></tr>
+  </tbody>
+</table>
+
+<h3>Rekor yang tercatat saat dokumen ini disusun</h3>
+<table>
+  <thead><tr><th>Jenis</th><th>Pemegang</th><th>Nilai</th></tr></thead>
+  <tbody>
+    <tr><td>Sales harian</td><td>2 Februari 2026</td><td class="num">Rp584.849.000 &middot; 73 invoice</td></tr>
+    <tr><td>Invoice harian</td><td>2 Februari 2026</td><td class="num">73 invoice unik</td></tr>
+    <tr><td>Revenue harian</td><td>5 Januari 2026</td><td class="num">Rp237.396.023 &middot; 42 pembayaran</td></tr>
+    <tr><td>Sales bulanan</td><td>Februari 2026</td><td class="num">Rp2.193.415.825</td></tr>
+    <tr><td>Revenue bulanan</td><td>April 2026</td><td class="num">Rp2.136.212.042</td></tr>
+    <tr><td>Invoice bulanan</td><td>Januari &amp; April 2026</td><td class="num">468 invoice (seri)</td></tr>
+    <tr><td>Pertumbuhan sales</td><td>Februari</td><td class="num">+52,5% vs 2025</td></tr>
+    <tr><td>Pertumbuhan revenue</td><td>Maret</td><td class="num">+64,2% vs 2025</td></tr>
+  </tbody>
+</table>
+
+<div class="kotak">
+  <h5>Batas yang wajib disebut</h5>
+  <p>Rekor <strong>harian</strong> hanya dari tahun berjalan, karena rincian harian 2025 tidak pernah tercatat. Rekor <strong>invoice unik bulanan</strong> juga hanya 2026. Hanya sales dan revenue bulanan yang benar-benar mencakup dua tahun. MIRA dilarang menyebutnya &ldquo;rekor sepanjang sejarah cabang&rdquo; untuk data yang cuma setahun.</p>
+</div>
+</section>
+
+<!-- ================= VII ================= -->
+<section>
+<h2><span class="no">Bab VII</span>Piutang</h2>
+<p class="intro">Dibaca dari blok &ldquo;outstanding saja&rdquo; di sheet AR, dengan kategori umur dihitung ulang memakai definisi resmi dashboard, bukan label bawaan sheet.</p>
+
+<table>
+  <thead><tr><th>Kategori umur</th><th>Definisi</th><th>Yang bisa ditanya</th></tr></thead>
+  <tbody>
+    <tr><td><span class="pil hijau">0&ndash;30 Hari</span></td><td class="num">aging &le; 30</td><td>total, jumlah invoice, daftar nama</td></tr>
+    <tr><td><span class="pil kuning">30&ndash;45 Hari</span></td><td class="num">31&ndash;45</td><td>sama</td></tr>
+    <tr><td><span class="pil kuning">45&ndash;60 Hari</span></td><td class="num">46&ndash;60</td><td>sama</td></tr>
+    <tr><td><span class="pil merah">&gt; 60 Hari</span></td><td class="num">&gt; 60</td><td>sama, plus prioritas penagihan</td></tr>
+  </tbody>
+</table>
+
+<h3>Piutang per customer</h3>
+<p>Sisa saldo, umur, dan rincian fakturnya. Pertanyaan berbentuk persis <code>piutang NAMA</code> dijawab tanpa mesin bahasa. Bila nama yang diketik cocok ke lebih dari satu customer, MIRA menolak menebak dan meminta penegasan &mdash; lahir dari kejadian nyata ketika &ldquo;MUS MULIADI&rdquo; sempat terpetakan ke &ldquo;MUS MULYADI&rdquo; yang orangnya berbeda.</p>
+
+<h3>Peringkat dan prioritas penagihan</h3>
+<p>Siapa yang piutangnya terbesar, siapa yang paling lama menunggak, dan mana yang perlu ditagih lebih dulu.</p>
+
+<h3>Dipisah per company, dengan sisa saldo</h3>
+<p>Piutang MKI dan CFN dipisah menurut <strong>kolom Company yang asli</strong>, bukan ditebak dari nomor fakturnya. Ada faktur bernomor CFN yang company-nya MKI; sebelum diperbaiki, pembagiannya meleset persis <strong>Rp1.475.000</strong>.</p>
+
+<h3>Arsip piutang lampau 2015&ndash;2025</h3>
+<p>Tiga puluh pelanggan warisan dengan total <strong>Rp925.019.146</strong>, terpisah dari piutang berjalan. Bisa ditanya satu tahun, rentang tahun, atau &ldquo;yang terlama&rdquo;. Pertanyaan lanjutan tanpa mengulang kata &ldquo;piutang&rdquo; tetap dikenali.</p>
+
+<h3>Deteksi faktur ganda</h3>
+<p>Dipisah menurut jenis risikonya, bukan digabung jadi satu angka menakutkan:</p>
+<ul>
+  <li><strong>Tagih ganda sungguhan</strong> &mdash; nomor sama, tanggal sama, nilai sama.</li>
+  <li><strong>Nomor sama tanggal berbeda</strong> &mdash; penomoran perlu dibenahi, tapi nilainya bukan tagihan dobel.</li>
+  <li><strong>Satu faktur banyak baris barang</strong> &mdash; normal, bukan temuan.</li>
+</ul>
+</section>
+
+<!-- ================= VIII ================= -->
+<section>
+<h2><span class="no">Bab VIII</span>Produk dan stok</h2>
+<p class="intro">Stok dibaca dari sheet Stock GD MKS, terpisah antara gudang MKI dan CFN.</p>
+
+<h3>Stok per kode barang</h3>
+<p>Jumlah di gudang MKI, CFN, totalnya, harga satuan, dan perputarannya. Pertanyaan <code>stok KODE</code> dijawab tanpa mesin bahasa.</p>
+<div class="kotak penting">
+  <h5>Kode harus cocok persis &mdash; toleransi salah ketik sengaja dimatikan</h5>
+  <p>KSFO028 dan KSFO020 sama-sama produk asli yang bedanya satu digit. Ditanya satu, dijawab satunya lagi adalah kesalahan yang tidak terlihat oleh penanya. Kode kini harus cocok persis atau sebagai potongan nyata &mdash; tidak ada yang &ldquo;mirip cukup dekat&rdquo;.</p>
+</div>
+
+<h3>Barang habis dilaporkan habis, bukan tidak ada</h3>
+<p>Produk berstok nol tetap dilaporkan sebagai <strong>tercatat tapi kosong</strong>. Sebelum diperbaiki, kata &ldquo;stok&rdquo; saja membuang seluruh produk berstok nol, sehingga <span class="tanya">&ldquo;stok SFT002&rdquo;</span> dijawab &ldquo;belum tercatat di sistem&rdquo; &mdash; padahal tercatat, hanya kosong. Ini mengenai <strong>1.541 dari 2.007 produk</strong>.</p>
+
+<h3>Pencarian tanpa tahu kodenya</h3>
+<p>Bisa lewat nama produk, kategori, atau jumlah core kabel: <span class="tanya">&ldquo;stok OLT&rdquo;</span>, <span class="tanya">&ldquo;kabel 1 core apa saja&rdquo;</span>, <span class="tanya">&ldquo;kabel di atas 4 core&rdquo;</span>, <span class="tanya">&ldquo;splicer&rdquo;</span>.</p>
+
+<h3>Penjualan per kode, beberapa kode sekaligus</h3>
+<p>Qty dan nilai rupiah terjual, dengan rincian per bulan. Bulan tanpa penjualan ditulis <strong>0</strong>, bukan dihilangkan &mdash; bulan yang hilang dulu dibaca sebagai &ldquo;data belum tercatat&rdquo; dan sempat dilaporkan sebagai kerusakan sistem.</p>
+
+<h3>Terlaris, tidak bergerak, dan saran restock</h3>
+<p>Produk terlaris kumulatif maupun per bulan; produk yang stoknya diam; dan gabungan keduanya menjadi saran restock &mdash; barang yang larisnya tinggi tapi stoknya menipis.</p>
+
+<h3>Nilai rupiah stok, dan stok minus</h3>
+<p>Berapa modal yang mengendap di gudang, bisa dipisah per company. Produk berstok <strong>minus</strong> dikecualikan dari nilai persediaan tapi <strong>dilaporkan sebagai catatan</strong> &mdash; stok minus berarti barang keluar tanpa pernah tercatat masuk.</p>
+</section>
+
+<!-- ================= IX ================= -->
+<section>
+<h2><span class="no">Bab IX</span>Customer</h2>
+<p class="intro">Nama customer diseragamkan menjadi huruf besar sebelum dihitung. Tanpa itu, &ldquo;Ari&rdquo; dan &ldquo;ARI&rdquo; terhitung dua orang &mdash; persis penyebab selisih 283 lawan 274 yang pernah ditemukan.</p>
+
+<h3>Jumlah, daftar, dan keaktifan</h3>
+<p>Berapa customer unik tahun berjalan, siapa saja, dan berapa persen yang masih aktif sejak bulan tertentu.</p>
+
+<h3>Frekuensi belanja</h3>
+<p>Dikelompokkan menurut berapa kali mereka berbelanja &mdash; baru sekali, dua kali, sampai di atas sepuluh kali. Kelompok &ldquo;baru sekali&rdquo; adalah sumber paling murah untuk digarap ulang.</p>
+
+<h3>Customer yang berhenti belanja</h3>
+<p>Pernah membeli lalu diam 60 hari atau lebih, lengkap dengan tanggal order terakhir dan sisa piutangnya.</p>
+
+<h3>Siapa yang pernah membeli produk tertentu</h3>
+<p>Kemampuan ini menjawab pertanyaan seperti <span class="tanya">&ldquo;siapa customer yang pernah membeli kabel 1 core di atas 20 roll?&rdquo;</span>. Kelompok produk dikenali tiga cara: kategori core, kode barang yang disebut langsung, atau kata &ldquo;kabel&rdquo; saja yang berarti seluruh jenis kabel.</p>
+
+<div class="kotak">
+  <h5>Dua tafsir yang keduanya dihitung</h5>
+  <p>&ldquo;Pernah membeli di atas 20&rdquo; bisa berarti total sepanjang periode, atau sekali beli langsung sebanyak itu. Keduanya dihitung dan disajikan terpisah supaya tidak ada angka yang diam-diam tertukar. Pada data saat penyusunan: <strong>66 customer</strong> memenuhi secara kumulatif, <strong>29</strong> pernah mencapainya dalam satu invoice.</p>
+</div>
+
+<h3>Peringkat pembeli menurut tiga ukuran</h3>
+<p>Pertanyaan &ldquo;terbanyak&rdquo; itu sendiri ambigu, jadi MIRA mengurutkan tiga hal sekaligus dan menyebut terus terang bila juaranya berbeda orang.</p>
+<table>
+  <thead><tr><th>Ukuran</th><th>Semua kabel</th><th>Kabel 1 core</th></tr></thead>
+  <tbody>
+    <tr><td>Nilai belanja</td><td>FATUM BACHMID &mdash; Rp434.549.500</td><td>FATUM BACHMID &mdash; Rp337.500.000</td></tr>
+    <tr><td>Frekuensi belanja</td><td>SUCIPTO &mdash; 29 invoice</td><td>SUCIPTO &mdash; 22 invoice</td></tr>
+    <tr><td>Total qty</td><td>FATUM BACHMID &mdash; 518 unit</td><td>FATUM BACHMID &mdash; 450 unit</td></tr>
+  </tbody>
+</table>
+</section>
+
+<!-- ================= X ================= -->
+<section>
+<h2><span class="no">Bab X</span>Invoice dan transaksi</h2>
+<p class="intro">Satu invoice bisa terdiri dari banyak baris barang. MIRA selalu menghitung <strong>invoice unik</strong>, tidak pernah jumlah baris.</p>
+
+<h3>Detail satu faktur</h3>
+<p>Isi barangnya, nilainya, dan status pelunasannya &mdash; lunas, sebagian, atau masih menggantung, lengkap dengan riwayat pembayaran bila dicicil.</p>
+
+<h3>Pencarian sebagian nomor</h3>
+<p>Potongan seri sudah cukup untuk menarik seluruh fakturnya: <code>MKS/2026/VI/F-</code>, <code>MKS/2026/VI/FP-</code>, <code>CFN/2026/VII/010</code>.</p>
+
+<h3>Siapa belanja pada tanggal tertentu</h3>
+<p>Rinci per invoice dan per produk, lengkap dengan totalnya.</p>
+
+<h3>Retur</h3>
+<p>Punya hitungan sendiri, terpisah. <strong>Retur tidak pernah menambah jumlah invoice</strong> di mana pun &mdash; retur adalah pembalikan, bukan transaksi baru. Nilai rupiahnya tetap mengurangi sales karena memang tercatat negatif.</p>
+
+<h3>Pembayaran</h3>
+<p>Kapan seorang customer terakhir membayar, riwayat pelunasannya, dan siapa saja yang membayar pada tanggal tertentu.</p>
+</section>
+
+<!-- ================= XI ================= -->
+<section>
+<h2><span class="no">Bab XI</span>Audit penomoran invoice</h2>
+<p class="intro">Format penomoran ditetapkan langsung oleh Branch Manager, jadi ini fakta yang tertanam di MIRA &mdash; bukan pola yang disimpulkan sendiri dari data.</p>
+
+<h3>Susunan nomor</h3>
+<p>Kode (INV untuk penjualan, R-MKS atau R/MKS untuk retur) &rarr; garis miring &rarr; kode company (MKS untuk MKI; khusus CFN ditulis menyatu <code>INV-CFN</code>) &rarr; tahun &rarr; bulan dalam angka Romawi &rarr; nomor urut.</p>
+
+<table>
+  <thead><tr><th>Bentuk</th><th>Company</th><th>Arti</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">INV/MKS/2026/I/001</td><td>MKI</td><td><strong>Borongan</strong> &mdash; tidak bisa diberikan faktur pajak</td></tr>
+    <tr><td class="mono">INV/MKS/2026/I/F-001</td><td>MKI</td><td>Invoice <strong>reguler</strong></td></tr>
+    <tr><td class="mono">INV/MKS/2026/I/FP-001</td><td>MKI</td><td>Invoice <strong>berfaktur pajak</strong></td></tr>
+    <tr><td class="mono">R-MKS/2026/II/005</td><td>MKI</td><td>Retur &mdash; sah</td></tr>
+    <tr><td class="mono">R/MKS/2026/II/005</td><td>MKI</td><td>Retur &mdash; sama-sama sah</td></tr>
+    <tr><td class="mono">INV-CFN/2026/VIII/126</td><td>CFN</td><td>Satu bentuk untuk reguler <em>dan</em> faktur pajak</td></tr>
+  </tbody>
+</table>
+<p class="field">CFN tidak mengenal konsep borongan. Tahun tidak selalu 2026 &mdash; Revenue memuat pelunasan nota lama, di data hidup ada nomor bertahun 2021, 2023, 2024, dan 2025. Nomor bertahun lama bukan kesalahan.</p>
+
+<h3>Audit penulisan yang salah</h3>
+<p>Pemicu: <span class="tanya">&ldquo;carikan penulisan invoice yang salah&rdquo;</span>, dan bisa dipersempit ke satu sumber: <span class="tanya">&ldquo;carikan no invoice salah di Sales&rdquo;</span> / <span class="tanya">&ldquo;di Revenue&rdquo;</span> / <span class="tanya">&ldquo;di AR&rdquo;</span>.</p>
+<table>
+  <thead><tr><th>Jenis kesalahan</th><th>Contoh</th></tr></thead>
+  <tbody>
+    <tr><td>Garis miring ganda</td><td class="mono">INV/MKS/2026/VII//037</td></tr>
+    <tr><td>Huruf F ganda</td><td class="mono">INV/MKS/2026/VII/fF-035</td></tr>
+    <tr><td>Titik di akhir nomor</td><td class="mono">INV/MKS/2026/V/001.</td></tr>
+    <tr><td>Huruf kecil</td><td class="mono">INV/MKS/2026/IV/f-347</td></tr>
+    <tr><td>&ldquo;F&rdquo; tanpa tanda hubung</td><td class="mono">INV/MKS/2026/V/F001</td></tr>
+    <tr><td>Awalan asing</td><td class="mono">SC/MKS/&hellip; &middot; BK/MKS/&hellip; &middot; IN/MKS/&hellip;</td></tr>
+    <tr><td>Nomor urut bertanda hubung</td><td class="mono">INV-CFN/2026/VI/08-046</td></tr>
+  </tbody>
+</table>
+
+<h3>Audit salah input company</h3>
+<p>Pemicu: <span class="tanya">&ldquo;invoice salah input&rdquo;</span>, dan terpisah per sumber: <span class="tanya">&ldquo;salah input Sales&rdquo;</span> / <span class="tanya">&ldquo;Revenue&rdquo;</span> / <span class="tanya">&ldquo;AR&rdquo;</span>. Aturannya: nomor berawalan <code>INV-CFN/</code> harus tercatat di company CFN; <code>INV/MKS/</code>, <code>R-MKS/</code>, <code>R/MKS/</code> harus tercatat di MKI.</p>
+
+<div class="kotak">
+  <h5>Kolom sumber tiap audit</h5>
+  <p>Sales dari Grand Data 2026 kolom I &middot; Revenue dari Rev SUM kolom E &middot; AR dari AR 2026 kolom J. Blok A&ndash;J pada sheet AR adalah data input manual dan dipakai <strong>hanya</strong> untuk audit; seluruh perhitungan piutang tetap dari blok L&ndash;S.</p>
+</div>
+</section>
+
+<!-- ================= XII ================= -->
+<section>
+<h2><span class="no">Bab XII</span>Wilayah dan zona</h2>
+<p class="intro">124 kabupaten/kota dipetakan ke 121 kode provinsi. Zona ditentukan dari jumlah invoice unik sepanjang tahun berjalan, retur tidak dihitung.</p>
+
+<p>
+  <span class="pil hijau">Hijau &gt;50 invoice</span>&nbsp;
+  <span class="pil kuning">Kuning 20&ndash;50</span>&nbsp;
+  <span class="pil merah">Merah &lt;20</span>&nbsp;
+  <span class="pil abu">Belum ada data</span>
+</p>
+
+<h3>Ringkasan sebaran seluruh zona</h3>
+<p>Jumlah wilayah per warna, sepuluh wilayah teratas, daftar zona merah yang perlu digarap, dan wilayah yang sama sekali belum ada pembelanjaan.</p>
+
+<h3>Wilayah paling lemah punya daftarnya sendiri</h3>
+<div class="kotak penting">
+  <h5>Kenapa ini penting</h5>
+  <p>Sebelum diperbaiki, ditanya wilayah terlemah MIRA menyebut Barru dengan 46 invoice. Itu peringkat <strong>ke-20</strong>, diambil dari ekor daftar sepuluh besar. Wilayah yang sebenarnya terlemah hanya punya <strong>1 invoice</strong>.</p>
+</div>
+
+<h3>Satu wilayah, satu angka</h3>
+<p>Angka invoice per wilayah kini seluruhnya dari buku transaksi; papan KPI hanya menyediakan daftar nama wilayah termasuk yang belum pernah bertransaksi. Dulu dua sumber terkirim bersamaan &mdash; Makassar 482 dari satu sisi dan 499 dari sisi lain, beda persis 17 invoice retur &mdash; sehingga dua jawaban berselang dua menit bisa menyebut angka berbeda.</p>
+</section>
+
+<!-- ================= XIII ================= -->
+<section>
+<h2><span class="no">Bab XIII</span>Logistik dan gudang</h2>
+
+<h3>Qty, koli, ekspedisi, dan wilayah per periode</h3>
+<p>Untuk satu hari, satu rentang tanggal, atau satu bulan. Tanpa menyebut waktu, otomatis dianggap hari ini.</p>
+<table>
+  <thead><tr><th>Yang dilaporkan</th><th>Sumber kolom</th></tr></thead>
+  <tbody>
+    <tr><td>Total quantity</td><td>Grand Data kolom F</td></tr>
+    <tr><td>Total koli</td><td>Grand Data kolom J</td></tr>
+    <tr><td>Jumlah ekspedisi berbeda, rincian per jasa kirim</td><td>Grand Data kolom L</td></tr>
+    <tr><td>Jumlah wilayah tujuan, rincian per kabupaten/kota</td><td>Grand Data kolom M</td></tr>
+  </tbody>
+</table>
+<p>Retur dipisah dan tidak menambah qty maupun koli. Bila periode yang ditanya belum ada transaksinya sama sekali, MIRA menyatakan <strong>datanya belum tercatat</strong> &mdash; bukan sekadar menulis angka nol yang bisa disalahartikan sebagai tidak ada pengiriman.</p>
+
+<h3>Pengiriman dan ekspedisi</h3>
+<p>Same day, cut off, hand carry, dan pihak ketiga. Ekspedisi apa yang dipakai ke satu wilayah, diurutkan dari yang paling sering.</p>
+
+<h3>Transaksi yang belum dikirim</h3>
+<p>Order yang tahapannya belum &ldquo;Complete&rdquo; maupun &ldquo;Return&rdquo;, diurutkan dari yang terbaru.</p>
+
+<h3>PO Gudang</h3>
+<p>Pesanan masuk dari pusat: mana yang sudah diterima, mana yang retur, dan mana yang masih ditunggu. Qty pesan dibanding qty yang benar-benar masuk gudang.</p>
+</section>
+
+<!-- ================= XIV ================= -->
+<section>
+<h2><span class="no">Bab XIV</span>Personel dan KPI</h2>
+
+<h3>Peringkat kinerja tim</h3>
+<p>Skor akhir, persentase kepatuhan, jam kerja, dan hari submit. Bisa ditanya siapa yang tertinggi maupun terendah &mdash; daftarnya lengkap, jadi aman dibaca dari bawah.</p>
+
+<h3>Absensi dan indikator harian</h3>
+<p>Jam datang dan pulang, plus seluruh indikator harian per orang per tanggal &mdash; termasuk isi rinciannya seperti follow up piutang dan laporan piutang, bukan sekadar &ldquo;7 dari 10&rdquo;.</p>
+
+<h3>Jabatan, keluarga, dan info kantor</h3>
+<p>Peran tiap personel, alamat kantor, serta jam dan tanggal sekarang menurut waktu Makassar.</p>
+</section>
+
+<!-- ================= XV ================= -->
+<section>
+<h2><span class="no">Bab XV</span>Grafik dan gambar</h2>
+<p class="intro">MIRA menggambar sendiri memakai palet dan gaya yang sama persis dengan dashboard kinerja cabang, lalu gambarnya bisa langsung dikirim ke WhatsApp.</p>
+
+<h3>Lima bentuk</h3>
+<table>
+  <thead><tr><th>Bentuk</th><th>Untuk</th></tr></thead>
+  <tbody>
+    <tr><td>Garis</td><td>tren dari waktu ke waktu</td></tr>
+    <tr><td>Batang</td><td>perbandingan antar kategori atau bulan</td></tr>
+    <tr><td>Donat</td><td>komposisi dari satu keseluruhan</td></tr>
+    <tr><td>Peta Indonesia</td><td>sebaran zona per provinsi, 34 provinsi</td></tr>
+    <tr><td>Batang berfoto</td><td>perbandingan kepatuhan per personel</td></tr>
+  </tbody>
+</table>
+<p>Satu seri boleh menimpa bentuknya sendiri, sehingga kartu &ldquo;Komparasi Sales 2025 vs 2026 &amp; Target&rdquo; bisa digambar utuh: dua batang dengan garis target putus-putus di atasnya.</p>
+
+<h4>Warna mengikuti peran, bukan ditentukan model</h4>
+<p>Terakota untuk sales, hijau sage untuk revenue, kuning putus-putus untuk target, abu-abu biru untuk tahun lalu. Diminta memilih kode warna sendiri, model mengarang warna di luar merek.</p>
+
+<h3>Tombol Kirim gambar dan Simpan</h3>
+<p>Ada di bawah setiap grafik. Kanvas diubah menjadi PNG lalu diteruskan ke WhatsApp lewat menu berbagi HP, dengan unduhan biasa sebagai cadangan &mdash; mekanisme yang sama persis dengan halaman berbagi milik dashboard.</p>
+<p>Latar dicat lebih dulu karena kanvas grafik itu transparan dan akan menjadi hitam di WhatsApp; animasi dimatikan supaya gambar tidak tertangkap saat baru setengah tergambar.</p>
+
+<div class="kotak aman">
+  <h5>Aturan yang dijaga</h5>
+  <p>Setiap angka di dalam grafik <strong>wajib sama persis</strong> dengan angka yang sudah MIRA sebutkan di teksnya. Grafik adalah tambahan, bukan pengganti jawaban &mdash; teks di sebelahnya selalu menjadi sumber kebenaran.</p>
+</div>
+</section>
+
+<!-- ================= XVI ================= -->
+<section>
+<h2><span class="no">Bab XVI</span>Katalog dan pengetahuan tetap</h2>
+<p class="intro">Pengetahuan yang tertanam di dalam MIRA dan tidak ikut berubah mengikuti sheet.</p>
+
+<table>
+  <thead><tr><th>Isi</th><th>Jumlah</th><th>Untuk apa</th></tr></thead>
+  <tbody>
+    <tr><td>Katalog produk Falcom</td><td class="num">230</td><td>Spesifikasi, foto, dan tautan produk</td></tr>
+    <tr><td>Kategori produk</td><td class="num">14</td><td>Penelusuran per jenis barang</td></tr>
+    <tr><td>Kredensial ONU</td><td class="num">6 model</td><td>Username dan password bawaan</td></tr>
+    <tr><td>Video YouTube teknis</td><td class="num">25</td><td>Tutorial pemasangan dan konfigurasi</td></tr>
+    <tr><td>Video YouTube non-teknis</td><td class="num">6</td><td>Profil dan materi umum</td></tr>
+    <tr><td>Video TikTok</td><td class="num">15</td><td>Materi promosi pendek</td></tr>
+    <tr><td>Tautan tutorial tertulis</td><td class="num">4</td><td>Panduan langkah demi langkah</td></tr>
+    <tr><td>Arsip piutang lampau</td><td class="num">30</td><td>Pelanggan warisan 2015&ndash;2025</td></tr>
+    <tr><td>Pemetaan wilayah ke provinsi</td><td class="num">121</td><td>Peta sebaran zona</td></tr>
+  </tbody>
+</table>
+
+<h3>Jumlah core diperlakukan sebagai pembeda mutlak</h3>
+<p>Pertanyaan 1 core tidak boleh dijawab dengan foto produk 2 core &mdash; kesalahan yang pernah terjadi karena angka satu digit sempat diabaikan saat pencocokan.</p>
+</section>
+
+<!-- ================= XVII ================= -->
+<section>
+<h2><span class="no">Bab XVII</span>Diskusi dan strategi</h2>
+<p class="intro">Di luar tanya-jawab angka, MIRA membawa 18 modul kerangka pemasaran dan penjualan yang sudah diterjemahkan ke konteks distributor kabel dan perangkat jaringan, bukan perangkat lunak berlangganan.</p>
+
+<table>
+  <thead><tr><th>Modul</th><th>Modul</th><th>Modul</th></tr></thead>
+  <tbody>
+    <tr><td>Rancang Penawaran</td><td>Strategi Harga</td><td>Cari Calon Customer</td></tr>
+    <tr><td>Materi Jualan</td><td>Hadapi Kompetitor</td><td>Riset Pelanggan</td></tr>
+    <tr><td>Analisis Akar Masalah</td><td>Dewan Penasihat Simulasi</td><td>Psikologi Pemasaran</td></tr>
+    <tr><td>Cegah Customer Berhenti</td><td>Program Rujukan</td><td>Proses &amp; Pipeline Penjualan</td></tr>
+    <tr><td>Positioning Produk</td><td>Tulis Materi Promosi</td><td>Konten Media Sosial</td></tr>
+    <tr><td>Humas &amp; Event</td><td>Rencana Marketing Cabang</td><td>Bank Ide Pertumbuhan</td></tr>
+  </tbody>
+</table>
+<p>Hanya satu atau dua modul yang ikut terkirim, dipilih dari kata-kata di pertanyaan. Memuat semuanya akan jauh melampaui daya angkut satu panggilan. Bisa juga dipanggil langsung, misalnya <code>/offer</code> atau &ldquo;pakai skill penawaran&rdquo;.</p>
+
+<h3>Sifat MIRA saat diajak berdebat</h3>
+<div class="kotak penting">
+  <h5>Bertahan pada angka, mengalah pada pendapat</h5>
+  <p>Diuji dengan sanggahan yang salah &mdash; &ldquo;setahu saya piutangnya cuma 300 juta&rdquo; &mdash; MIRA tetap pada Rp848.638.045, memberi rincian per kategori, lalu menebak dengan sopan dari mana angka 300 juta itu mungkin berasal.</p>
+  <p>Tapi bila yang disanggah adalah <em>penilaian</em>, bukan angka, MIRA cenderung mengikuti lawan bicaranya &mdash; bahkan pernah minta maaf karena &ldquo;salah fokus&rdquo; padahal pendapatnya sudah benar sejak awal.</p>
+  <p><strong>Karena itu: jangan pakai persetujuan MIRA sebagai konfirmasi bahwa Anda benar. Pakai angkanya.</strong></p>
+</div>
+</section>
+
+<!-- ================= XVIII ================= -->
+<section>
+<h2><span class="no">Bab XVIII</span>Aturan yang tidak boleh diubah</h2>
+<p class="intro">Masing-masing lahir dari kesalahan nyata yang pernah dilaporkan. Semuanya dijaga otomatis oleh berkas tes.</p>
+
+<table>
+  <thead><tr><th style="width:34%">Aturan</th><th style="width:34%">Kenapa ada</th><th>Kalau dilanggar</th></tr></thead>
+  <tbody>
+    <tr><td>Kode barang harus cocok persis</td><td>KSFO028 dan KSFO020 sama-sama nyata, beda satu digit</td><td>Ditanya satu produk, dijawab produk lain</td></tr>
+    <tr><td>Company piutang dibaca dari kolom asli</td><td>Ada faktur bernomor CFN yang company-nya MKI</td><td>Pembagian MKI/CFN meleset Rp1.475.000</td></tr>
+    <tr><td>Semua kode yang disebut harus dikembalikan</td><td>Dulu hanya kode pertama yang diambil</td><td>&ldquo;Kode kedua tidak punya data&rdquo; padahal ada</td></tr>
+    <tr><td>Bulan tanpa penjualan ditulis 0</td><td>Bulan hilang dibaca sebagai data belum tercatat</td><td>Dilaporkan sebagai kerusakan sistem</td></tr>
+    <tr><td>Field jangan dikosongkan saat ambigu</td><td>Kekosongan memancing model mengarang</td><td>Nomor invoice dan daftar barang fiktif</td></tr>
+    <tr><td>Data keluarga hanya milik yang login</td><td>Dulu seluruh daftar dikirim</td><td>Rekan kerja disebut sebagai istri</td></tr>
+    <tr><td>Tahun lampau hanya dari data khusus</td><td>Transaksi mentah cuma tahun berjalan</td><td>Angka tahun ini dilabeli tahun lalu</td></tr>
+    <tr><td>Pertumbuhan pakai periode setara</td><td>Tahun penuh vs sebagian = &minus;33,7% (palsu)</td><td>Rencana kerja disusun atas defisit palsu</td></tr>
+    <tr><td>Duplikasi dipisah menurut jenis risikonya</td><td>Nomor sama tanggal beda bukan tagih ganda</td><td>Angka risiko digelembungkan</td></tr>
+    <tr><td>Retur tidak menambah hitungan invoice</td><td>Retur itu pembalikan, bukan transaksi baru</td><td>Jumlah transaksi menggelembung</td></tr>
+    <tr><td>Sinkronisasi kosong tidak menimpa data lama</td><td>Google Sheets pernah membalas kosong</td><td>Seluruh data hilang, MIRA mengarang</td></tr>
+    <tr><td>Target harian disalin, bukan dihitung</td><td>Tebakan meleset Rp12,8 juta dari angka resmi</td><td>Tim bekerja atas target yang salah</td></tr>
+    <tr><td>Satu periode hanya satu angka</td><td>Dua sumber bersaing untuk hal yang sama</td><td>Jawaban berubah-ubah antar percakapan</td></tr>
+    <tr><td>Arti F- dan FP- tidak boleh dikarang</td><td>Model pernah menebak dan menyajikannya sebagai fakta</td><td>Keterangan sistem yang tidak ada dasarnya</td></tr>
+  </tbody>
+</table>
+</section>
+
+<!-- ================= XIX ================= -->
+<section>
+<h2><span class="no">Bab XIX</span>Batas dan titik buta</h2>
+<p class="intro">Dari 23 sheet di spreadsheet, MIRA membaca 7. Sisanya sudah diperiksa satu per satu: sebagian besar memang tidak rugi karena isinya duplikat yang sudah dihitung sendiri.</p>
+
+<h3>Yang belum terbaca</h3>
+<table>
+  <thead><tr><th>Yang belum terbaca</th><th>Besarnya</th><th>Akibatnya</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Cara bayar</strong> &mdash; cash atau kredit TOP</td><td class="num">4.711 baris</td><td>Tidak bisa menjawab penjualan tunai vs kredit. Kredit lebih besar: Rp6,86 M lawan Rp5,77 M</td></tr>
+    <tr><td><strong>Sheet Delivery</strong> &mdash; surat jalan</td><td class="num">387 SJ</td><td>Nomor surat jalan tidak dikenali sama sekali</td></tr>
+    <tr><td><strong>Nomor HP customer</strong></td><td class="num">581 nama</td><td>Tidak bisa memberi kontak; datanya sendiri perlu dirapikan &mdash; ada satu nomor dipakai dua customer</td></tr>
+    <tr><td><strong>Tanggal update stok</strong></td><td class="num">2.506 produk</td><td>Stok disampaikan tanpa menyebut umurnya</td></tr>
+  </tbody>
+</table>
+
+<div class="kotak aman">
+  <h5>Kabar baiknya</h5>
+  <p>Di setiap titik buta yang diuji langsung, MIRA <strong>jujur mengaku tidak punya datanya</strong> &mdash; tidak ada satu pun yang dikarang. Untuk surat jalan dia bahkan menyatakan tidak ingin menebak-nebak isinya. Ini kekurangan cakupan, bukan kerusakan yang berbahaya.</p>
+</div>
+
+<h3>Batas yang sifatnya struktural</h3>
+<p>Bukan sesuatu yang tinggal ditambahkan:</p>
+<ul>
+  <li>MIRA <strong>hanya membaca</strong>, tidak pernah menulis apa pun ke Google Sheets.</li>
+  <li>Tidak bisa menerima atau membuat gambar, PDF, Excel, maupun Word.</li>
+  <li>Tidak bisa memotret layar dashboard &mdash; grafiknya digambar ulang, bukan diambil.</li>
+  <li>Tidak punya data jarak geografis atau peta kilometer.</li>
+  <li>Butuh internet; mode luring hanya menampilkan tampilan kosong.</li>
+</ul>
+
+<h3>Batas pada datanya</h3>
+<ul>
+  <li>Data 2025 <strong>hanya total bulanan</strong> &mdash; tidak ada rincian invoice, produk, atau customer tahun lalu.</li>
+  <li>PO Gudang baru mulai Maret 2026.</li>
+  <li>Katalog produk dan video di-input manual, tidak sinkron otomatis dari website.</li>
+  <li>Tidak ada penanda kejadian bisnis, misalnya tanggal kenaikan harga.</li>
+</ul>
+
+<h3>Hal yang perlu dipantau</h3>
+<p>Ukuran instruksi sistem kini <strong>67.500 karakter</strong>. Dulu angka 37.000 pernah membuat MIRA sangat lambat. Kecepatan saat ini masih sehat di 2,0&ndash;3,7 detik, tapi bila terus bertambah dan MIRA mulai terasa lambat, inilah tersangka pertama &mdash; padatkan kalimatnya, jangan hapus aturannya.</p>
+</section>
+
+<!-- ================= XX ================= -->
+<section>
+<h2><span class="no">Bab XX</span>Penjagaan mutu</h2>
+<p class="intro">Setiap kemampuan dalam dokumen ini lahir dari satu jawaban salah yang pernah dilaporkan. Beberapa sempat rusak lagi oleh perubahan berikutnya &mdash; itulah sebabnya penjagaannya dibuat otomatis.</p>
+
+<h3>119 tes lapisan pencari data</h3>
+<p>Menguji bagian yang menentukan data mana yang sampai ke mesin bahasa &mdash; bagian yang benar-benar menentukan benar-salahnya jawaban.</p>
+<p>Termasuk pengujian <strong>variasi kalimat</strong>: pertanyaan yang sama ditanyakan tiga sampai lima cara berbeda. Menguji satu kalimat saja memberi rasa aman palsu, dan itulah yang dulu membuat MIRA terasa &ldquo;kadang benar, lalu salah lagi&rdquo;.</p>
+
+<h3>Penjaga tampilan grafik</h3>
+<p>Menjalankan kode grafik yang asli lalu memeriksa palet, garis target putus-putus, isian tren, format sumbu rupiah, dan bahwa setiap kode provinsi punya jalur yang cocok di peta.</p>
+
+<h3>Setiap perbaikan dirusak dulu dengan sengaja</h3>
+<p>Sebuah tes yang ikut lulus tanpa benar-benar menguji apa pun lebih berbahaya daripada tidak ada tes. Karena itu tiap perbaikan baru dirusak lebih dulu untuk memastikan tesnya memang menangkapnya, baru dipulihkan dan dipasang.</p>
+
+<div class="kotak">
+  <h5>Alur yang aman sebelum mengubah MIRA</h5>
+  <p><code>node test-mira.js</code> sebelum mengubah &rarr; ubah <code>worker.js</code> &rarr; <code>node -c worker.js</code> &rarr; <code>node test-mira.js</code> lagi, wajib hijau &rarr; baru <code>npx wrangler deploy</code>.</p>
+  <p>Bila yang diubah tampilannya, naikkan versi cache di <code>sw.js</code> supaya HP memuat versi baru.</p>
+</div>
+</section>
+
+<!-- ================= LAMPIRAN ================= -->
+<section>
+<h2><span class="no">Lampiran</span>Daftar lengkap fungsi dan bidang data</h2>
+<p class="intro">Disertakan supaya bila suatu saat ada jawaban yang meleset, penelusurannya bisa langsung ke bagian yang tepat.</p>
+
+<h3>37 fungsi pencari data</h3>
+<p class="mono">findCompanyPeriodBreakdown &middot; findCustomerAktifPeriode &middot; findCustomerBucketMatch &middot; findCustomerPembeliProduk &middot; findDuplikasi &middot; findInactiveCustomers &middot; findInvoiceCompanyMismatch &middot; findInvoiceDetail &middot; findInvoiceFormatIssues &middot; findKabelByCoreCategory &middot; findKpiRanking &middot; findLastMentionedStockCode &middot; findLogistikHarian &middot; findOnuCredentials &middot; findPaymentsByCustomer &middot; findPaymentsByDate &middot; findPencapaianRingkasan &middot; findPerbandinganTahun &middot; findPerformaPeriode &middot; findPiutangByCompany &middot; findPiutangByCustomer &middot; findPiutangByKategoriUmur &middot; findPiutangLampau &middot; findPoGudangMatches &middot; findProductCatalogMatch &middot; findProductSalesBreakdown &middot; findRekor &middot; findRestockCandidates &middot; findReturTransactions &middot; findSisaTarget &middot; findStockMatches &middot; findStockValueSummary &middot; findTopPiutangCustomers &middot; findTopProdukByMonth &middot; findTransactionMatches &middot; findWilayahMatches &middot; findZonaWilayahMatches</p>
+
+<h3>56 bidang konteks</h3>
+<p class="mono">performa &middot; pencapaianRingkasan &middot; sisaTarget &middot; perCompanyPeriode &middot; revenue &middot; pembayaranRelevan &middot; pembayaranPerTanggal &middot; piutang &middot; piutangRelevan &middot; piutangCustomerTertinggi &middot; piutangPerKategoriUmur &middot; piutangPerCompany &middot; nilaiStokRelevan &middot; saranRestockProdukTerlaris &middot; stokRelevan &middot; stokCatatan &middot; transaksiRelevan &middot; transaksiCatatan &middot; ringkasanTanggalTransaksi &middot; detailInvoice &middot; cekDuplikasi &middot; cekPenulisanInvoice &middot; cekSalahInputCompany &middot; rekorCabang &middot; qtyKoliEkspedisiPerPeriode &middot; returRelevan &middot; wilayahEkspedisiRelevan &middot; topProduk &middot; topProdukPerBulan &middot; produkSalesDetailPerKode &middot; kabelKategoriCore &middot; customerPembeliProduk &middot; deliveryOverview &middot; poGudangRingkasan &middot; poGudangRelevan &middot; poGudangCatatan &middot; customerInsights &middot; daftarNamaCustomerPerBucket &middot; customerTidakAktif &middot; customerAktifPeriode &middot; performaPeriode &middot; perbandinganAntarTahun &middot; perbandinganTahunSebelumnya &middot; zonaWilayahRelevan &middot; targetPerformaHarianBulanan &middot; targetHarianResmi &middot; stokTidakBergerakDanKurangLaku &middot; transaksiBelumDikirim &middot; referensiLink &middot; absensiDanIndikatorHarian &middot; rankingKinerjaPersonel &middot; infoKantor &middot; jabatanPersonel &middot; penggunaSaatIni &middot; usernamePasswordOnu &middot; waktuSekarang</p>
+
+<div class="kotak" style="margin-top:8mm">
+  <h5>Penutup</h5>
+  <p>Dokumen ini menggambarkan MIRA per <strong>23 Agustus 2026</strong>. Angka contoh di dalamnya diambil dari data hidup pada tanggal tersebut dan akan bergerak seiring waktu; yang tidak berubah adalah aturan, sumber, dan batas yang dijelaskan di sini.</p>
+</div>
+</section>
+
+</body>
+</html>
