@@ -2466,7 +2466,12 @@ function findLogistikHarian(message, allTransactions) {
     jumlahWilayahBerbeda: daftarWilayah.length,
     perWilayah: daftarWilayah,
     retur: returBaris.length ? { jumlahBaris: returBaris.length, qty: returBaris.reduce((s, t) => s + toNumber(t.qty), 0), koli: returBaris.reduce((s, t) => s + toNumber(t.koli), 0) } : null,
-    catatan: 'Qty dan koli dihitung dari baris penjualan periode ini, retur TIDAK ikut (dipisah di "retur" kalau ada). "perEkspedisi" dan "perWilayah" sudah urut dari yang paling banyak invoicenya; "jumlahEkspedisiBerbeda" adalah banyaknya jasa kirim yang dipakai dan "jumlahWilayahBerbeda" banyaknya kabupaten/kota tujuan. Semua sudah dijumlahkan — jangan hitung ulang.',
+    // Nol karena belum ada input berbeda artinya dari nol karena memang tidak ada pengiriman.
+    // Tanpa penjelasan ini, "0 koli hari ini" terbaca seolah cabang tidak mengirim apa pun.
+    belumAdaData: nonRetur.length === 0,
+    catatan: (nonRetur.length === 0
+      ? 'TIDAK ADA satu pun baris transaksi tercatat untuk periode ini. Katakan bahwa datanya BELUM ADA / belum diinput, JANGAN menyimpulkan cabang tidak mengirim apa-apa. '
+      : '') + 'Qty dan koli dihitung dari baris penjualan periode ini, retur TIDAK ikut (dipisah di "retur" kalau ada). "perEkspedisi" dan "perWilayah" sudah urut dari yang paling banyak invoicenya; "jumlahEkspedisiBerbeda" adalah banyaknya jasa kirim yang dipakai dan "jumlahWilayahBerbeda" banyaknya kabupaten/kota tujuan. Semua sudah dijumlahkan — jangan hitung ulang.',
   };
 }
 
@@ -3681,7 +3686,12 @@ function findSisaTarget(message, yoy, dailyPerfTargets, targetHarian) {
   const nMsg = normText(message);
   // "berapa lagi yang perlu kita kejar" — dilaporkan dari layar HP: kalimat itu tidak memuat kata
   // "target" maupun "capai", jadi dulu tidak pernah terpicu dan MIRA menjawab datanya tidak ada.
-  const wants = /sisa\s*target|kekurangan\s*target|target.*(kurang|sisa)|(kurang|sisa).*target|berapa lagi.*(target|capai|kejar|masuk)|kurang berapa|perlu.*kejar|harus.*kejar|mengejar|butuh berapa lagi/.test(nMsg);
+  // "kejar"/"mengejar" hanya dianggap tanya sisa target kalau memang berhubungan dengan target,
+  // persentase, atau ukuran yang punya target. Tanpa pagar ini, "bagaimana strategi MENGEJAR
+  // customer baru" ikut menyeret angka sisa target ke dalam jawaban strategi.
+  const soalTarget = /\btarget\b|\d\s*(%|persen)|\bsales\b|penjualan|omzet|\brevenue\b|pendapatan|pelunasan|\binvoice\b|faktur|pencapaian/.test(nMsg);
+  const wants = /sisa\s*target|kekurangan\s*target|target.*(kurang|sisa)|(kurang|sisa).*target|kurang berapa/.test(nMsg)
+    || (soalTarget && /berapa lagi|perlu.*kejar|harus.*kejar|mengejar|\bkejar\b|butuh berapa lagi/.test(nMsg));
   if (!wants) return null;
   if (!yoy || !Array.isArray(yoy.months) || !yoy.months.length) return null;
 
