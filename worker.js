@@ -3677,23 +3677,63 @@ function selaraskanYoyBulanBerjalan(yoy, perfData, revenueData) {
   return hasil;
 }
 
-function findSisaTarget(message, yoy, dailyPerfTargets) {
+function findSisaTarget(message, yoy, dailyPerfTargets, targetHarian) {
   const nMsg = normText(message);
-  const wants = /sisa\s*target|kekurangan\s*target|target.*(kurang|sisa)|(kurang|sisa).*target|berapa lagi.*(target|capai)|kurang berapa/.test(nMsg);
+  // "berapa lagi yang perlu kita kejar" — dilaporkan dari layar HP: kalimat itu tidak memuat kata
+  // "target" maupun "capai", jadi dulu tidak pernah terpicu dan MIRA menjawab datanya tidak ada.
+  const wants = /sisa\s*target|kekurangan\s*target|target.*(kurang|sisa)|(kurang|sisa).*target|berapa lagi.*(target|capai|kejar|masuk)|kurang berapa|perlu.*kejar|harus.*kejar|mengejar|butuh berapa lagi/.test(nMsg);
   if (!wants) return null;
   if (!yoy || !Array.isArray(yoy.months) || !yoy.months.length) return null;
 
   const perf = Array.isArray(dailyPerfTargets) ? dailyPerfTargets : [];
-  const hitung = (target, realisasi) => ({
-    target: Math.round(target || 0),
-    realisasi: Math.round(realisasi || 0),
-    sisa: Math.max(0, Math.round((target || 0) - (realisasi || 0))),
-    kelebihan: Math.max(0, Math.round((realisasi || 0) - (target || 0))),
-    sudahTercapai: (realisasi || 0) >= (target || 0),
-    persenTercapai: target ? Math.round(((realisasi || 0) / target) * 1000) / 10 : null,
-  });
+
+  // Persentase target yang disebut di pertanyaan ("kalau mau kejar 80%"), plus tangga baku
+  // 60/70/80/90/100 supaya pertanyaan yang lebih longgar tetap terjawab tanpa hitung manual.
+  const disebut = [...nMsg.matchAll(/(\d{1,3})\s*(?:%|persen|perseratus)/g)]
+    .map((m) => Number(m[1]))
+    .filter((n) => n > 0 && n <= 100);
+  const tangga = [...new Set([...disebut, 60, 70, 80, 90, 100])].sort((a, b) => a - b);
+
+  const hitung = (target, realisasi) => {
+    const t = target || 0;
+    const r = realisasi || 0;
+    return {
+      target: Math.round(t),
+      realisasi: Math.round(r),
+      sisa: Math.max(0, Math.round(t - r)),
+      kelebihan: Math.max(0, Math.round(r - t)),
+      sudahTercapai: r >= t,
+      persenTercapai: t ? Math.round((r / t) * 1000) / 10 : null,
+      // Berapa lagi yang perlu dikejar untuk menyentuh sekian persen dari target penuh.
+      perPersenTarget: t
+        ? tangga.map((p) => {
+            const targetP = (t * p) / 100;
+            return {
+              persen: p,
+              targetPersenIni: Math.round(targetP),
+              sisa: Math.max(0, Math.round(targetP - r)),
+              sudahTercapai: r >= targetP,
+              diminta: disebut.includes(p),
+            };
+          })
+        : null,
+    };
+  };
 
   const tahunIni = nowMakassar().getFullYear();
+
+  // Harian, dari papan KPI resmi — dipakai kalau pertanyaannya jelas menyebut hari ini/harian.
+  if (/\bhari ini\b|\bharian\b|hari sekarang/.test(nMsg) && targetHarian) {
+    const ambil = (bagian) => (bagian && bagian.target ? hitung(bagian.target, bagian.realisasi) : null);
+    return {
+      lingkup: 'harian',
+      periode: 'hari ini (papan KPI MONITORING)',
+      sales: ambil(targetHarian.sales),
+      revenue: ambil(targetHarian.revenue),
+      invoiceUnik: ambil(targetHarian.invoice),
+      catatan: 'Angka target harian resmi cabang, JANGAN dihitung sendiri dari target bulanan. "perPersenTarget" berisi sisa yang perlu dikejar untuk tiap persentase dari target harian — pakai yang "diminta":true kalau user menyebut persentase tertentu.',
+    };
+  }
 
   if (/\btahun\b|setahun|tahunan|se-?tahun/.test(nMsg)) {
     // Invoice has no recorded annual target — only a single manual monthly figure — so the yearly
@@ -3709,7 +3749,7 @@ function findSisaTarget(message, yoy, dailyPerfTargets) {
       invoiceUnik: targetInvoiceBulanan
         ? { ...hitung(targetInvoiceBulanan * 12, realisasiInvoice), catatanTarget: `Target setahun ini DITURUNKAN dari target bulanan ${targetInvoiceBulanan} invoice x 12 bulan — bukan angka tahunan yang tercatat langsung, sebutkan itu apa adanya.` }
         : null,
-      catatan: 'Target Rupiah SATU angka dipakai untuk Sales DAN Revenue (memang begitu di sumbernya, bukan salah baca). Semua "sisa" SUDAH dihitung — jangan hitung ulang manual.',
+      catatan: 'Target Rupiah SATU angka dipakai untuk Sales DAN Revenue (memang begitu di sumbernya, bukan salah baca). Semua "sisa" SUDAH dihitung — jangan hitung ulang manual. Tiap ukuran juga punya "perPersenTarget": sisa yang perlu dikejar untuk menyentuh 60/70/80/90/100 persen dari target penuh. Kalau user menyebut persentase tertentu, entri yang "diminta":true adalah yang dia maksud — sajikan itu lebih dulu.',
     };
   }
 
@@ -3729,7 +3769,7 @@ function findSisaTarget(message, yoy, dailyPerfTargets) {
     revenue: hitung(row.targetSalesRevenue, row.rev2026),
     invoiceUnik: perfRow ? hitung(perfRow.targetInvoice, perfRow.invoiceUnik) : null,
     catatan:
-      'Target Rupiah SATU angka dipakai untuk Sales DAN Revenue (memang begitu di sumbernya). Semua "sisa" SUDAH dihitung — jangan hitung ulang manual. ' +
+      'Target Rupiah SATU angka dipakai untuk Sales DAN Revenue (memang begitu di sumbernya). Semua "sisa" SUDAH dihitung — jangan hitung ulang manual. Tiap ukuran juga punya "perPersenTarget": sisa yang perlu dikejar untuk menyentuh 60/70/80/90/100 persen dari target penuh. Kalau user menyebut persentase tertentu, entri yang "diminta":true adalah yang dia maksud — sajikan itu lebih dulu. ' +
       (perfRow ? '' : 'Data invoice untuk bulan ini belum ada, jadi sisa target invoice tidak bisa dihitung — katakan apa adanya, jangan dikarang.'),
   };
 }
@@ -5322,7 +5362,7 @@ async function handleChat(request, env) {
   // Parsed ONCE and reconciled once — previously yoyRaw was JSON.parse'd separately at three call
   // sites, so nothing guaranteed the three copies told the same story.
   const yoyData = selaraskanYoyBulanBerjalan(yoyRaw ? JSON.parse(yoyRaw) : null, perfData, revenueData);
-  const sisaTargetMatch = findSisaTarget(message, yoyData, dailyPerformanceRaw ? JSON.parse(dailyPerformanceRaw) : null);
+  const sisaTargetMatch = findSisaTarget(message, yoyData, dailyPerformanceRaw ? JSON.parse(dailyPerformanceRaw) : null, targetHarianRaw ? JSON.parse(targetHarianRaw) : null);
   const companyBreakdownMatch = findCompanyPeriodBreakdown(message, allTransactions, revenueData?.detail);
   const invoiceDetailMatch = findInvoiceDetail(message, allTransactions, revenueData?.detail, piutangData?.detail, allStock);
   const duplikasiMatch = findDuplikasi(message, allTransactions, revenueData?.detail, piutangData?.detail);
@@ -5555,6 +5595,7 @@ Aturan:
 - Customer lama tidak belanja rentang hari spesifik, nama spesifik, ATAU follow-up umum tanpa rentang → "customerTidakAktif" (default churn ≥60hr untuk follow-up umum, BUKAN null). Beda dari "customerInsights.totalChurned" (cuma total). "modeCustomerSpesifik":true → field "customer" satu orang. False → "daftar" banyak orang urut PALING LAMA. Null padahal jelas ditanya → kata kunci tak terdeteksi, minta rentang/nama.
 - Kaitkan customer tidak aktif/1x-belanja dengan PIUTANG: "daftarNamaCustomerPerBucket"/"customerTidakAktif" punya "piutangBelumLunas" per customer (0=tak ada tagihan). >0 (apalagi besar) → WAJIB sampaikan sebagai insight, kemungkinan itu SEBAB belum belanja lagi — sarankan PENAGIHAN dulu (atau bareng follow-up), bukan cuma "hubungi jualan lagi". =0 → murni kandidat follow-up biasa.
 - Boleh proaktif kasih SARAN operasional/penjualan kalau diminta, DASARKAN pada data (bukan taktik di luar itu): bucket "1x"/churn≥60hr = kandidat follow-up (cek piutangBelumLunas dulu); stok tidak bergerak = kandidat promo; piutang aging/tertinggi = kandidat penagihan; topProduk = acuan fokus stok/promosi. Sebutkan NAMA/DATA KONKRET, bukan saran generik.
+- SISA TARGET DALAM PERSENTASE ("untuk revenue 80% berapa lagi yang perlu kita kejar", "kalau mau kejar 70% kurang berapa", "berapa kekurangan untuk 60% target") → WAJIB dari "sisaTarget". Tiap ukuran (sales/revenue/invoiceUnik) punya "perPersenTarget" berisi 60/70/80/90/100 persen dari target penuh, lengkap dengan "targetPersenIni" dan "sisa" yang perlu dikejar. Entri dengan "diminta":true adalah persentase yang user sebut — sajikan itu LEBIH DULU dan sebutkan angkanya, baru tangga lainnya sebagai konteks kalau berguna. "sudahTercapai":true berarti ambang itu sudah lewat, katakan begitu jangan tulis sisa 0 tanpa penjelasan. Perhatikan "lingkup": harian, bulanan, atau tahunan — jangan mencampur target harian dengan target bulanan. Semua sudah dihitung, jangan hitung ulang.
 - TARGET HARI INI / TARGET HARIAN ("target hari ini", "target harian kita berapa", "hari ini targetnya apa") → WAJIB dari "targetHarianResmi", JANGAN PERNAH dihitung sendiri dari target bulanan dibagi hari kerja. Sebutkan ketiganya: sales ("sales.target"), invoice ("invoice.target"), revenue ("revenue.target"). Tiap bagian juga punya "realisasi" (pencapaian hari ini) dan "status" dari papan KPI — sebutkan supaya jelas sudah tercapai atau belum. Kalau field ini kosong barulah katakan datanya belum tersedia.
 - TARGET SALES/REVENUE (Rupiah, bulanan/tahunan) + perbandingan tahun lalu → "perbandinganTahunSebelumnya": "months" (12 bulan, tiap ada "targetSalesRevenue"=target Rupiah SATU angka dipakai sales&revenue, plus sales2025/2026 rev2025/2026). Target bulan tertentu → cari di "months" pakai "label". Target tahunan → "totalTarget" (sudah dijumlah, jangan hitung ulang). PENTING: target HANYA ada untuk 2026 — 2025 tak punya target tercatat (cuma realisasi). "Komparasi target 2025&2026" → WAJIB jujur tak ada target 2025, yang bisa dibandingkan REALISASI 2025 vs 2026 + pencapaian ke target 2026 ("achievementSalesPersen"/"achievementRevPersen") — JANGAN mengarang target 2025. Pertumbuhan dibanding tahun lalu → "growthSalesPersen"/"growthRevPersen" (SUDAH periode setara: hanya bulan yang berjalan di 2026 vs bulan sama 2025 — pakai ini). Rincian & daftar bulannya di "pertumbuhanPeriodeSetara". Field "pertumbuhanTidakSetaraJanganDipakai" membandingkan 2025 penuh dengan 2026 sebagian — JANGAN dipakai menyimpulkan naik/turun. Beda dari "targetPerformaHarianBulanan" (target OPERASIONAL invoice/OTD, bukan Rupiah) — tentukan dari konteks pertanyaan mana yang dimaksud.
 - "Zona wilayah" (merah/kuning/hijau by jumlah invoice, beda dari ekspedisi), "wilayah tanpa pembelanjaan", zona per provinsi → "zonaWilayahRelevan". Zona: hijau>50, kuning 20-50, merah<20. Baca "tipe": "ringkasan" → pertanyaan umum soal zona/wilayah: sebutkan "jumlahWilayah", sebaran "jumlahPerZona", "wilayahTeratas", dan soroti "wilayahZonaMerah" sebagai yang perlu digarap. "satuWilayah"/"perZona"/"tanpaPembelanjaan" → sesuai namanya.

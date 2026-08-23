@@ -532,6 +532,55 @@ t('pertanyaan di luar topik tidak menarik audit', () => {
   return M.findInvoiceFormatIssues('berapa sales bulan ini', [], [], []) === null ? null : 'audit menyala di pertanyaan lain';
 });
 
+grup('Sisa target dalam persentase');
+const YOY_PERSEN = {
+  months: [{ monthIdx: BULAN_INI - 1, label: NAMA_BULAN[BULAN_INI - 1], targetSalesRevenue: 1000, sales2025: 0, sales2026: 500, rev2025: 0, rev2026: 900 }],
+  totalSales2025: 0, totalSales2026: 500, totalRev2025: 0, totalRev2026: 900, totalTarget: 1000,
+};
+const TARGET_HARIAN = {
+  sales: { label: 'TOTAL SALES', realisasi: 40, target: 100, status: '' },
+  invoice: { label: 'TOTAL INVOICE', realisasi: 3, target: 10, status: '' },
+  revenue: { label: 'TOTAL REVENUE', realisasi: 50, target: 200, status: '' },
+};
+// Dilaporkan dari layar HP: "Untuk revenue 80% berapa lagi yang perlu kita kejar sekarang?"
+// tidak memuat kata "target" maupun "capai", jadi tidak pernah terpicu sama sekali.
+t('kalimat "berapa lagi yang perlu kita kejar" ikut terpicu', () => {
+  const r = M.findSisaTarget('Untuk revenue 80% berapa lagi yang perlu kita kejar sekarang?', YOY_PERSEN, [], null);
+  return r ? null : 'tidak terpicu';
+});
+t('persentase yang disebut dihitung dan ditandai', () => {
+  const r = M.findSisaTarget('untuk revenue 80% berapa lagi yang perlu dikejar bulan ini', YOY_PERSEN, [], null);
+  const p80 = r.revenue.perPersenTarget.find((x) => x.persen === 80);
+  if (!p80) return '80% tidak ada di daftar';
+  if (p80.targetPersenIni !== 800) return `target 80% = ${p80.targetPersenIni}, seharusnya 800`;
+  if (p80.sisa !== 0 || !p80.sudahTercapai) return `revenue 900 dari target 800 seharusnya sudah tercapai, dapat sisa ${p80.sisa}`;
+  return p80.diminta === true ? null : '80% tidak ditandai sebagai yang diminta';
+});
+t('sisa dihitung benar untuk ambang yang belum tercapai', () => {
+  const r = M.findSisaTarget('kalau mau kejar 80% target bulan ini kurang berapa', YOY_PERSEN, [], null);
+  const p80 = r.sales.perPersenTarget.find((x) => x.persen === 80);
+  // sales 500 dari target 1000 -> 80% = 800, kurang 300
+  return p80 && p80.sisa === 300 && p80.sudahTercapai === false ? null : `dapat sisa ${p80 && p80.sisa}, seharusnya 300`;
+});
+t('tangga baku 60/70/80/90/100 selalu ada', () => {
+  const r = M.findSisaTarget('sisa target bulan ini', YOY_PERSEN, [], null);
+  const persen = r.sales.perPersenTarget.map((x) => x.persen);
+  const kurang = [60, 70, 80, 90, 100].filter((p) => !persen.includes(p));
+  return kurang.length ? `tangga kurang: ${kurang.join(',')}` : null;
+});
+t('persentase tidak lazim tetap dihitung', () => {
+  const r = M.findSisaTarget('berapa lagi untuk mengejar 65% target bulan ini', YOY_PERSEN, [], null);
+  const p65 = r.sales.perPersenTarget.find((x) => x.persen === 65);
+  return p65 && p65.targetPersenIni === 650 && p65.sisa === 150 && p65.diminta ? null : `65% = ${JSON.stringify(p65)}`;
+});
+t('pertanyaan harian memakai papan KPI, bukan target bulanan', () => {
+  const r = M.findSisaTarget('untuk revenue 80% hari ini berapa lagi yang perlu dikejar', YOY_PERSEN, [], TARGET_HARIAN);
+  if (!r || r.lingkup !== 'harian') return `lingkup ${r && r.lingkup}`;
+  const p80 = r.revenue.perPersenTarget.find((x) => x.persen === 80);
+  // target harian revenue 200 -> 80% = 160, realisasi 50, kurang 110
+  return p80 && p80.targetPersenIni === 160 && p80.sisa === 110 ? null : `dapat ${JSON.stringify(p80)}`;
+});
+
 grup('Siapa customer yang pernah membeli produk tertentu');
 const STOK_KABEL = [
   { kode: 'KSFO028', nama: 'Kabel Fiber Optik 1Core G657A 3Seling Messenger 1mm', harga: 1000, stokTotal: 5 },
