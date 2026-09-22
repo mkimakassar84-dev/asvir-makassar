@@ -1801,6 +1801,156 @@ function detectCoreCategoriesFromText(nMsg) {
   }
   return categories;
 }
+// ==== Audit penulisan kode produk ====
+// Dua pemeriksaan yang berbeda sifatnya, dan sengaja dipisah dalam jawaban:
+//   A. Penulisan kode DI sheet Stock GD MKS sendiri.
+//   B. Kode yang dipakai di transaksi (Grand Data) tapi TIDAK ADA di Stock GD MKS. Ini yang paling
+//      berdampak: transaksinya tidak ikut terhitung di penjualan per produk, kategori kabel, dan
+//      pencarian pembeli, karena semua itu mencocokkan ke kode stok.
+// Hanya kesalahan MEKANIS yang dinyatakan pasti salah. Keluarga kode di sheet ini beragam dan sah
+// (KSFO028, CR1N001, DGT0001, TO2W01A, ADIS006-MC, ...), jadi "berbeda dari pola terbanyak"
+// BUKAN alasan menuduh salah — pelajaran yang sama dengan arti F-/FP- pada nomor invoice.
+function usulanKodeMirip(kode, kodeAda) {
+  const k = String(kode || '').trim().toUpperCase();
+  const usulan = [];
+  const tambah = (c, alasan) => { if (c !== k && kodeAda.has(c) && !usulan.some((u) => u.kode === c)) usulan.push({ kode: c, alasan }); };
+  // huruf O dan angka 0 tertukar — satu posisi atau semuanya
+  for (let i = 0; i < k.length; i++) {
+    if (k[i] === 'O') tambah(k.slice(0, i) + '0' + k.slice(i + 1), 'huruf O seharusnya angka 0');
+    if (k[i] === '0') tambah(k.slice(0, i) + 'O' + k.slice(i + 1), 'angka 0 seharusnya huruf O');
+  }
+  tambah(k.replace(/O/g, '0'), 'huruf O seharusnya angka 0');
+  tambah(k.replace(/0/g, 'O'), 'angka 0 seharusnya huruf O');
+  // kelebihan atau kekurangan satu karakter
+  for (let i = 0; i < k.length; i++) tambah(k.slice(0, i) + k.slice(i + 1), `kelebihan karakter "${k[i]}"`);
+  for (let i = 0; i <= k.length; i++) tambah(k.slice(0, i) + '0' + k.slice(i), 'kurang satu angka 0');
+  // satu huruf salah di awalan (FORB132 -> FOTB132) — hanya pada bagian huruf, supaya tidak
+  // mengusulkan nomor urut lain yang juga produk nyata (KSFO028 -> KSFO020 itu produk berbeda)
+  const awalan = (k.match(/^[A-Z]+/) || [''])[0];
+  for (let i = 0; i < awalan.length; i++) {
+    for (const h of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') {
+      if (h !== awalan[i]) tambah(k.slice(0, i) + h + k.slice(i + 1), `huruf ke-${i + 1} "${awalan[i]}" seharusnya "${h}"`);
+    }
+  }
+  return usulan.slice(0, 3);
+}
+
+function findKodeProdukIssues(message, kodeMentah, allTransactions) {
+  const nMsg = normText(message);
+  const bicaraKode = /\bsku\b|kode\s*(produk|barang|item|stok|stock)|kode\s*(yang|nya)?\s*(salah|keliru|tidak)/.test(nMsg);
+  const bicaraSalah = /salah|keliru|tidak sesuai|ga sesuai|gak sesuai|typo|salah tulis|salah ketik|tidak dikenal|tidak terdaftar|tidak ada di stok|tidak ada di stock|cek penulisan|periksa|audit|sisir/.test(nMsg);
+  if (!bicaraKode || !bicaraSalah) return null;
+  if (!Array.isArray(kodeMentah) || !kodeMentah.length) return null;
+
+  const mintaStok = /\bstok\b|\bstock\b|gudang|gd mks/.test(nMsg);
+  const mintaTransaksi = /\bsales\b|penjualan|transaksi|grand\s*data|invoice|terjual/.test(nMsg);
+  const periksaStok = !mintaTransaksi || mintaStok;
+  const periksaTransaksi = !mintaStok || mintaTransaksi;
+
+  const kodeAda = new Set(kodeMentah.map((x) => String(x.kode).trim().toUpperCase()));
+
+  // ---- A. penulisan di sheet stok ----
+  const pastiSalah = [];
+  const perluDicek = [];
+  if (periksaStok) {
+    const catat = (daftar, x, masalah, usulan) => daftar.push({ baris: x.baris, kode: x.kode, nama: x.nama || null, masalah, usulan: usulan || null });
+    const perKode = {};
+    for (const x of kodeMentah) {
+      const mentahKode = String(x.kode);
+      const k = mentahKode.trim();
+      (perKode[k.toUpperCase()] = perKode[k.toUpperCase()] || []).push(x.baris);
+      if (mentahKode !== k) catat(pastiSalah, x, 'ada spasi di awal atau akhir kode', k);
+      if (/\s/.test(k)) catat(pastiSalah, x, 'ada spasi di dalam kode', k.replace(/\s+/g, ''));
+      if (/[a-z]/.test(k)) catat(pastiSalah, x, 'memuat huruf kecil', k.toUpperCase());
+      if (/[.,;:/]$/.test(k) || /^[.,;:/-]/.test(k)) catat(pastiSalah, x, 'ada tanda baca di ujung kode', k.replace(/^[.,;:/-]+|[.,;:/]+$/g, ''));
+      if (/[^A-Za-z0-9\-\s.,;:/]/.test(k)) catat(pastiSalah, x, 'memuat karakter di luar huruf, angka, dan tanda hubung');
+      if (/OO\d|\dO\d/.test(k.toUpperCase())) catat(perluDicek, x, 'huruf O berada di posisi yang biasanya angka 0', k.toUpperCase().replace(/O(?=O*\d)/g, '0'));
+      // Dua penulisan sebuah kode (dengan dan tanpa tanda hubung) hanya dicurigai bila entrinya
+      // tampak kembar: nama sama, atau salah satunya cuma berisi kodenya sendiri. PRMS-003 dan
+      // PRMS003 adalah dua produk berbeda (Kaos FALCOM vs Kaos Oblong CCTV) — tidak boleh dituduh.
+      const tanpa = k.replace(/-/g, '').toUpperCase();
+      if (tanpa !== k.toUpperCase() && kodeAda.has(tanpa)) {
+        const kembar = kodeMentah.find((y) => String(y.kode).trim().toUpperCase() === tanpa);
+        const namaIni = (x.nama || '').trim().toUpperCase();
+        const namaKembar = ((kembar && kembar.nama) || '').trim().toUpperCase();
+        if (!namaIni || namaIni === k.toUpperCase() || namaIni === namaKembar) {
+          catat(perluDicek, x, `tampak kembar dengan ${tanpa}${kembar && kembar.nama ? ` ("${kembar.nama}")` : ''}`, tanpa);
+        }
+      }
+      const nm = (x.nama || '').trim();
+      if (!nm) catat(perluDicek, x, 'nama produk kosong');
+      else if (nm.toUpperCase() === k.toUpperCase()) catat(perluDicek, x, 'nama produk hanya berisi kodenya sendiri — entri tampak belum lengkap');
+    }
+    for (const [k, bs] of Object.entries(perKode)) {
+      if (bs.length > 1) pastiSalah.push({ baris: bs.join(', '), kode: k, nama: null, masalah: `kode yang sama tercatat di ${bs.length} baris`, usulan: null });
+    }
+    for (const x of kodeMentah) {
+      const k = String(x.kode).trim().toUpperCase();
+      for (const u of usulanKodeMirip(k, kodeAda)) {
+        if (/huruf O seharusnya angka 0|angka 0 seharusnya huruf O/.test(u.alasan)) {
+          perluDicek.push({ baris: x.baris, kode: x.kode, nama: x.nama || null, masalah: `mirip ${u.kode} — ${u.alasan}`, usulan: u.kode });
+          break;
+        }
+      }
+    }
+  }
+
+  // ---- B. kode di transaksi yang tidak ada di stok ----
+  let tidakDikenal = null;
+  if (periksaTransaksi) {
+    const per = new Map();
+    for (const t of allTransactions || []) {
+      const k = String((t && t.kode) || '').trim();
+      if (!k || kodeAda.has(k.toUpperCase())) continue;
+      if (!per.has(k)) per.set(k, { kode: k, jumlahBaris: 0, qty: 0, nilai: 0, contoh: [] });
+      const e = per.get(k);
+      e.jumlahBaris += 1;
+      e.qty += toNumber(t.qty);
+      e.nilai += toNumber(t.amount);
+      if (e.contoh.length < 2) e.contoh.push({ tanggal: t.tanggal, invoice: t.invoice, customer: t.customer });
+    }
+    tidakDikenal = [...per.values()]
+      .map((e) => ({ ...e, kemungkinanMaksudnya: usulanKodeMirip(e.kode, kodeAda) }))
+      .sort((a, b) => b.nilai - a.nilai);
+  }
+
+  // Satu baris bisa punya beberapa alasan dicurigai — digabung supaya daftarnya tidak berulang.
+  const gabung = (daftar) => {
+    const per = new Map();
+    for (const x of daftar) {
+      const kunci = `${x.baris}|${String(x.kode).trim()}`;
+      if (!per.has(kunci)) per.set(kunci, { ...x, masalah: [x.masalah] });
+      else {
+        const e = per.get(kunci);
+        if (!e.masalah.includes(x.masalah)) e.masalah.push(x.masalah);
+        if (!e.usulan && x.usulan) e.usulan = x.usulan;
+      }
+    }
+    return [...per.values()].map((x) => ({ ...x, masalah: x.masalah.join('; ') }));
+  };
+  const pastiSalahRapi = gabung(pastiSalah);
+  const perluDicekRapi = gabung(perluDicek).filter((x) => !pastiSalahRapi.some((y) => String(y.baris) === String(x.baris)));
+  pastiSalah.length = 0; pastiSalah.push(...pastiSalahRapi);
+  perluDicek.length = 0; perluDicek.push(...perluDicekRapi);
+
+  const lingkup = periksaStok && periksaTransaksi ? 'SEMUA' : periksaStok ? 'STOCK GD MKS' : 'TRANSAKSI (GRAND DATA)';
+  return {
+    lingkup,
+    jumlahKodeDiStok: kodeMentah.length,
+    penulisanDiStok: periksaStok ? {
+      pastiSalah: { jumlah: pastiSalah.length, daftar: pastiSalah },
+      perluDicek: { jumlah: perluDicek.length, daftar: perluDicek.slice(0, 60) },
+    } : null,
+    kodeTransaksiTidakAdaDiStok: tidakDikenal ? {
+      jumlahKode: tidakDikenal.length,
+      totalBaris: tidakDikenal.reduce((s, e) => s + e.jumlahBaris, 0),
+      totalNilai: tidakDikenal.reduce((s, e) => s + e.nilai, 0),
+      daftar: tidakDikenal.slice(0, 60),
+    } : null,
+    catatan: 'Sajikan per bagian dan per tingkat keyakinan. "pastiSalah" = kesalahan mekanis yang terbukti (huruf kecil, spasi, tanda baca, kode ganda) — boleh dinyatakan salah. "perluDicek" = mencurigakan tapi BELUM TENTU salah — sampaikan sebagai hal yang perlu dicek, bukan tuduhan. "kodeTransaksiTidakAdaDiStok" = kode yang dipakai di transaksi tapi tidak terdaftar di Stock GD MKS; jelaskan akibatnya: transaksi itu tidak ikut terhitung di penjualan per produk, kategori kabel, dan pencarian pembeli. "kemungkinanMaksudnya" hanya USULAN dari kemiripan penulisan — katakan "kemungkinan", jangan dipastikan. JANGAN menyatakan sebuah kode salah hanya karena bentuknya berbeda dari kebanyakan kode lain — banyak keluarga kode di sheet ini yang memang sah. Semua sudah dihitung, jangan hitung ulang.',
+  };
+}
+
 // "Siapa customer yang pernah membeli kabel 1 core di atas 20 roll?" — cari PEMBELI sebuah
 // kelompok produk, disaring menurut jumlah yang dibeli.
 // "Pernah membeli di atas 20" itu dua arti yang sama masuk akal: total sepanjang tahun, atau
@@ -2331,6 +2481,8 @@ function findInvoiceCompanyMismatch(message, allTransactions, paymentDetail, piu
   const bicaraInvoice = /invoice|faktur|no\s*inv|nomor\s*inv/.test(nMsg);
   const bicaraSalahInput = /salah\s*input|salah\s*masuk|keliru\s*input|tertukar|tidak sesuai company|beda company|salah company|company.*(salah|keliru|tidak sesuai)/.test(nMsg);
   if (!bicaraSalahInput) return null;
+  // "Kode produk salah input di sales" itu urusan audit kode produk, bukan nomor invoice.
+  if (/\bsku\b|kode\s*(produk|barang|item)/.test(nMsg) && !/invoice|faktur/.test(nMsg)) return null;
   if (!bicaraInvoice && !/\bsales\b|\brevenue\b|\bar\b|piutang|penjualan/.test(nMsg)) return null;
 
   const pakai = lingkupSumberInvoice(nMsg);
@@ -4567,11 +4719,27 @@ async function handleSync(request, env) {
 // the sheet with no cache on every page load, not because it reads from a different source).
 // Extracted from runSync so a stock question can refresh JUST this one sheet on demand, without
 // re-pulling all seven tabs. One fetch, ~1.8s, ~250KB.
-async function fetchStockProducts() {
+// opsi.kodeMentah (array, opsional): diisi SELURUH kode apa adanya, sebelum dirapikan dan sebelum
+// disaring. Hanya dipakai audit penulisan kode — dua hal yang justru ingin ditangkap audit itu
+// hilang di jalur biasa: rowsToObjects memangkas spasi di tepi kode, dan baris berstok 0 sekaligus
+// berharga 0 dibuang (24mw, FOT-423A, dan entri sejenis tidak pernah sampai ke data:stock).
+async function fetchStockProducts(opsi = {}) {
   const csv = await (await fetch(csvExportUrl(PERFORMANCE_SHEET_ID, GIDS.stock))).text();
-  const rows = rowsToObjects(parseCsv(csv), 1); // row 0 is a merged-header banner, row 1 is the real header
+  const mentah = parseCsv(csv);
+  const rows = rowsToObjects(mentah, 1); // row 0 is a merged-header banner, row 1 is the real header
   // Transient-empty-fetch guard: never let a throttled/failed fetch overwrite good stock data.
   if (!rows.length) throw new Error('stock CSV parsed to 0 rows — likely a transient fetch failure, not a real empty sheet');
+  if (Array.isArray(opsi.kodeMentah)) {
+    const header = (mentah[1] || []).map((h) => (h || '').trim());
+    const iKode = header.indexOf('KODE BARANG');
+    const iNama = header.indexOf('DESKRIPSI');
+    for (let i = 2; i < mentah.length; i++) {
+      const r = mentah[i] || [];
+      const kode = iKode >= 0 ? (r[iKode] ?? '') : '';
+      if (!String(kode).trim()) continue;
+      opsi.kodeMentah.push({ baris: i + 1, kode: String(kode), nama: iNama >= 0 ? String(r[iNama] ?? '').trim() : '' });
+    }
+  }
   return rows
     .filter((r) => r['KODE BARANG'])
     .map((r) => ({
@@ -4593,9 +4761,11 @@ async function runSync(env) {
 
   // 1) Stock / product data
   try {
-    const products = await fetchStockProducts();
+    const kodeMentah = [];
+    const products = await fetchStockProducts({ kodeMentah });
     await env.SHEET_CACHE.put('data:stock', JSON.stringify(products));
-    summary.sources.stock = { ok: true, produkTersimpan: products.length };
+    await env.SHEET_CACHE.put('data:stockKodeMentah', JSON.stringify(kodeMentah));
+    summary.sources.stock = { ok: true, produkTersimpan: products.length, kodeMentah: kodeMentah.length };
   } catch (err) {
     summary.sources.stock = { ok: false, error: String(err) };
   }
@@ -5286,7 +5456,7 @@ async function handleChat(request, env) {
     stockRaw, perfRaw, piutangRaw, kpiRaw, txRaw, wilayahRaw,
     revenueRaw, poGudangRaw, topProductsRaw, deliveryRaw, customerInsightsRaw, fo1coreRaw,
     yoyRaw, zonaWilayahRaw, dailyPerformanceRaw, stockMovementRaw, undeliveredRaw, customerBucketsRaw,
-    customerActivityRaw, targetHarianRaw, lastSync,
+    customerActivityRaw, targetHarianRaw, stockKodeMentahRaw, lastSync,
   ] = await Promise.all([
     env.SHEET_CACHE.get('data:stock'),
     env.SHEET_CACHE.get('data:performance'),
@@ -5308,6 +5478,7 @@ async function handleChat(request, env) {
     env.SHEET_CACHE.get('data:customerBuckets'),
     env.SHEET_CACHE.get('data:customerActivity'),
     env.SHEET_CACHE.get('data:targetHarian'),
+    env.SHEET_CACHE.get('data:stockKodeMentah'),
     env.SHEET_CACHE.get('lastSync'),
   ]);
 
@@ -5485,6 +5656,7 @@ async function handleChat(request, env) {
     produkSalesDetailPerKode: findProductSalesBreakdown(message, allTransactions),
     kabelKategoriCore: findKabelByCoreCategory(message, allStock, allTransactions),
     customerPembeliProduk: findCustomerPembeliProduk(message, allTransactions, allStock),
+    cekPenulisanKodeProduk: findKodeProdukIssues(message, stockKodeMentahRaw ? JSON.parse(stockKodeMentahRaw) : null, allTransactions),
     deliveryOverview: wantsDeliveryOverview && deliveryRaw ? JSON.parse(deliveryRaw) : null,
     poGudangRingkasan: poGudangData ? { byStatus: poGudangData.byStatus, monthly: poGudangData.monthly } : null,
     poGudangRelevan: poMatch.items,
@@ -5576,6 +5748,7 @@ Aturan:
 - SIAPA CUSTOMER YANG PERNAH MEMBELI PRODUK TERTENTU, dengan atau tanpa batas jumlah ("siapa customer yang pernah membeli kabel 1 core di atas 20 roll", "siapa saja yang pernah beli KSFO113 lebih dari 10", "customer mana yang pernah membeli kabel di atas 4 core") → WAJIB dari "customerPembeliProduk". Field ini SUDAH menyaring produk yang dimaksud ("produk", "jumlahKodeProdukTercakup") dan ambang jumlahnya ("ambang"). PENTING: "pernah membeli di atas N" punya DUA tafsir dan keduanya sudah dihitung — "memenuhiSecaraKumulatif" (total sepanjang periode data) dan "memenuhiDalamSekaliBeli" (pernah sebanyak itu dalam SATU invoice). Sajikan yang KUMULATIF sebagai jawaban utama beserta jumlahnya, lalu sebutkan yang sekali beli sebagai pembanding, dan jelaskan bedanya satu kalimat supaya tidak rancu. Sebut nama customer beserta "totalQty", "jumlahInvoice", dan "qtyTerbanyakSekaliBeli" seperlunya. Kalau kedua daftar kosong, katakan terus terang tidak ada yang mencapai jumlah itu — JANGAN menurunkan ambangnya diam-diam dan jangan mengarang nama. Retur tidak dihitung sebagai pembelian. Field yang sama juga menjawab pertanyaan PERINGKAT tanpa ambang ("siapa customer dengan belanja kabel terbanyak", "siapa pembeli kabel 1 core terbanyak"): pakai "juara.nilaiTertinggi" (nilai belanja Rupiah) sebagai jawaban utama, lalu sebut "juara.palingSeringBelanja" (frekuensi belanja) dan "juara.totalQtyTerbanyak" (TOTAL qty sepanjang periode, BUKAN sekali beli) — kalau ketiganya orang berbeda, katakan terus terang supaya tidak menyesatkan. Daftar lengkapnya di "peringkat.menurutNilaiBelanja" / "menurutFrekuensiBelanja" / "menurutQty".
 - QTY, KOLI, DAN EKSPEDISI PER PERIODE ("berapa qty hari ini", "berapa koli kita kirim hari ini", "ekspedisi apa saja hari ini", "koli tanggal 5 Agustus", "qty bulan ini") → WAJIB dari "qtyKoliEkspedisiPerPeriode". Sebutkan "totalQty", "totalKoli", "jumlahInvoiceUnik", dan "jumlahEkspedisiBerbeda" sesuai yang ditanya, lalu rinci "perEkspedisi" (tiap jasa kirim beserta invoice unik, qty, dan kolinya) kalau user menanyakan ekspedisi atau minta rincian. Tanpa penyebutan waktu, "periode" sudah otomatis HARI INI — pakai label periode itu apa adanya. Retur dipisah di "retur" dan TIDAK ikut di totalQty/totalKoli; sebutkan kalau ada. Semua sudah dijumlahkan, jangan hitung ulang.
 - REKOR CABANG ("rekor sales harian terbanyak", "rekor invoice harian terbanyak", "rekor revenue harian terbanyak", "rekor sales bulanan", "rekor invoice bulanan", "rekor revenue bulanan", "rekor pertumbuhan dibanding 2025", "hari/bulan terbaik kita kapan") → WAJIB dari "rekorCabang". Baca "yangDitanya" dan sajikan jenis itu LEBIH DULU: "harian" → dari "harian", "bulanan" → dari "bulanan", "pertumbuhan" → dari "pertumbuhan", "semua" → sajikan ringkas ketiganya. Tiap rekor sudah lengkap dengan tanggal/bulan dan angkanya; "lima_besar_*" boleh disebut sebagai konteks. WAJIB sampaikan batas di "cakupan" saat relevan — rekor HARIAN hanya dari tahun berjalan karena rincian harian 2025 tidak ada, dan rekor INVOICE UNIK bulanan juga hanya 2026. JANGAN menyebutnya "rekor sepanjang sejarah cabang" kalau datanya cuma setahun. Semua sudah dihitung dan diurutkan, jangan hitung ulang.
+- CEK PENULISAN KODE PRODUK ("cek kode produk yang salah", "kode barang yang tidak sesuai di Stock GD MKS", "kode produk salah tulis di sales", "ada kode barang yang tidak terdaftar?") → WAJIB dari "cekPenulisanKodeProduk". Ada DUA bagian, sajikan terpisah: (A) "penulisanDiStok" — kesalahan penulisan di sheet Stock GD MKS sendiri, dipisah "pastiSalah" (mekanis dan terbukti: huruf kecil, spasi, tanda baca di ujung, kode ganda — sebutkan baris sheet dan usulan perbaikannya) dan "perluDicek" (mencurigakan tapi BELUM TENTU salah — sampaikan sebagai perlu dicek, bukan tuduhan). (B) "kodeTransaksiTidakAdaDiStok" — kode yang dipakai di transaksi tapi tidak terdaftar di Stock GD MKS, beserta jumlah baris, nilai, contoh invoice, dan "kemungkinanMaksudnya". Untuk (B) WAJIB jelaskan akibatnya: transaksi itu tidak ikut terhitung di penjualan per produk, kategori kabel, dan pencarian pembeli. "kemungkinanMaksudnya" hanyalah USULAN dari kemiripan penulisan — pakai kata "kemungkinan", jangan pastikan. Baca "lingkup": kalau user hanya menyebut stok, jangan menyinggung transaksi seolah sudah diperiksa, dan sebaliknya. JANGAN menyatakan sebuah kode salah hanya karena bentuknya berbeda dari kebanyakan kode — banyak keluarga kode yang memang sah (KSFO028, CR1N001, DGT0001, TO2W01A, ADIS006-MC). Semua sudah dihitung, jangan hitung ulang.
 - CEK INVOICE SALAH INPUT COMPANY ("invoice salah input", "salah input Sales/Revenue/AR", "nomor invoice tidak sesuai company", "invoice tertukar company") → WAJIB dari "cekSalahInputCompany", dan ini BERBEDA dari cek penulisan. Yang diperiksa: nomor berawalan "INV-CFN/" harus tercatat di company CFN, sedangkan "INV/MKS/", "R-MKS/", "R/MKS/" harus tercatat di company MKI. Sajikan tiap temuan dengan nomor faktur, "companyMenurutNomor", "companyTercatat", customer, tanggal, dan sumbernya. Baca "lingkup" — kalau user menyebut satu sumber saja, jangan menyinggung sumber lain. Kalau "jumlahTidakSinkron":0 → katakan bersih dan sebutkan berapa baris yang disisir dari sumber mana. JANGAN mencampurnya dengan temuan salah penulisan. Catatan penting: temuan ini adalah ketidakcocokan yang harus DIBETULKAN di sheet — tapi selama belum dibetulkan, semua perhitungan MIRA tetap memakai kolom Company yang tercatat, bukan tebakan dari nomornya.
 - CEK PENULISAN INVOICE YANG SALAH ("carikan penulisan invoice yang salah", "carikan no invoice salah di Sales/Revenue/AR", "cek penomoran faktur") → WAJIB dari "cekPenulisanInvoice". Kalau "tipe":"auditPenulisan" → sajikan "temuan" DIKELOMPOKKAN per sumber memakai "ditemukanDi", sebutkan "dugaanMasalah" tiap nomor supaya langsung bisa dibetulkan, dan sebutkan "jumlahMenyimpang" beserta "jumlahNomorDiperiksa". Baca "lingkup" — kalau user menyebut satu sumber saja (mis. "di Sales"), HANYA sumber itu yang disisir; jangan menyinggung sumber lain seolah sudah diperiksa. Satu nomor bisa muncul di lebih dari satu sumber — jangan dihitung dua kali. Kalau "tipe":"penjelasanFormat" → cukup jelaskan "formatResmi" beserta "jenis" tiap bentuk. Kalau "jumlahMenyimpang":0 → katakan semuanya sudah sesuai, sebut sumber mana yang diperiksa. Semua sudah dihitung, jangan hitung ulang dan JANGAN menambah nomor yang tidak ada di "temuan".
 - NOMOR INVOICE/FAKTUR disebut (lengkap atau sepotong, mis. "INV-CFN/2026/VII/010", "CFN/2026/VII/010", "MKS/2026/VI/010", "MKS/2026/VI/F-", "MKS/2026/VI/FP-", "F-141") → WAJIB pakai "detailInvoice", JANGAN pakai field lain untuk ini. Catatan: nomor invoice company MKI ditulis "MKS" (mis. "INV/MKS/2026/VI/010"), sedangkan CFN ditulis "INV-CFN/..." — pencarian sudah menangani keduanya, jangan koreksi/ubah nomor yang diketik user. Cara baca hasilnya: "ditemukan":false → nomor itu MEMANG tidak ada, katakan terus terang, JANGAN mengarang isinya dan JANGAN menyodorkan invoice lain yang mirip. "modeDaftar":true → potongan nomor cocok ke BANYAK invoice (biasanya user memang mencari sekelompok invoice, mis. semua "F-" bulan itu): sajikan "daftar" (sudah urut terbaru dulu) beserta "jumlahCocok"/"totalNilaiSemua"/"totalSisaPiutangSemua" yang SUDAH dihitung. Selain itu = SATU invoice, sajikan LENGKAP: tanggal, customer, company, lokasi+ekspedisi, "barang" (SEBUTKAN tiap kode produk + namanya + qty + nilainya, ini yang paling sering ditanya), "totalNilaiTransaksi", lalu status pelunasannya — "statusPelunasan" LUNAS/BELUM LUNAS, "sisaPiutang", "totalDibayar", dan "riwayatPembayaran" (tanggal + jumlah tiap kali bayar, sebutkan kalau dicicil). SELALU baca "catatan" dan sampaikan isinya kalau ada peringatan di situ (mis. total pembayaran tidak sama dengan nilai transaksi) — jangan diperbaiki/dibulatkan sendiri.

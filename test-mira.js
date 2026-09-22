@@ -38,7 +38,7 @@ module.exports = {
   findProductSalesBreakdown, findPiutangByCompany, findPiutangByCustomer, findDuplikasi,
   findPiutangLampau, findReturTransactions, findTransactionMatches, findOnuCredentials,
   findTopPiutangCustomers, findStockValueSummary, findPaymentsByCustomer, findTopProdukByMonth,
-  findKabelByCoreCategory, findZonaWilayahMatches, findInvoiceFormatIssues, bentukInvoiceSah, findInvoiceCompanyMismatch, findRekor, findLogistikHarian, findCustomerPembeliProduk, selaraskanYoyBulanBerjalan,
+  findKabelByCoreCategory, findZonaWilayahMatches, findInvoiceFormatIssues, bentukInvoiceSah, findInvoiceCompanyMismatch, findRekor, findLogistikHarian, findCustomerPembeliProduk, findKodeProdukIssues, selaraskanYoyBulanBerjalan,
   resolveAccessCode, piutangCompanyOf, normText, normCode, nowMakassar,
 };`;
 const tmp = path.join(os.tmpdir(), `mira-test-${process.pid}.cjs`);
@@ -531,6 +531,90 @@ t('pertanyaan penjelasan tidak memicu audit penuh', () => {
 t('pertanyaan di luar topik tidak menarik audit', () => {
   return M.findInvoiceFormatIssues('berapa sales bulan ini', [], [], []) === null ? null : 'audit menyala di pertanyaan lain';
 });
+
+grup('Penulisan kode produk');
+// Fixture meniru kasus nyata di Stock GD MKS.
+const KODE_MENTAH = [
+  { baris: 3, kode: '24mw', nama: '24mw 1310nm optical transmitter' },
+  { baris: 10, kode: 'KSFO028', nama: 'Kabel Fiber Optik 1Core' },
+  { baris: 11, kode: 'KSFO108', nama: 'Kabel Fiber Optik 1Core 1,2mm' },
+  { baris: 12, kode: 'KC06001', nama: 'Kabel Coaxial' },
+  { baris: 13, kode: 'FOTB132', nama: 'ODP' },
+  { baris: 20, kode: 'FOT-408A.', nama: 'FOT-408A' },
+  { baris: 21, kode: 'SLFO 001', nama: 'selongsong FO' },
+  { baris: 22, kode: ' KSFO113', nama: 'Kabel 1 core' },
+  { baris: 30, kode: 'FOT423A', nama: '4WAY OUTDOOR TAP' },
+  { baris: 31, kode: 'FOT-423A', nama: 'FOT-423A' },
+  // Dua produk BERBEDA yang kebetulan kodenya beda tanda hubung — tidak boleh dituduh kembar.
+  { baris: 40, kode: 'PRMS003', nama: 'Kaos Oblong CCTV' },
+  { baris: 41, kode: 'PRMS-003', nama: 'Kaos FALCOM' },
+  { baris: 50, kode: 'PSJOO5', nama: 'Power Supply 45V-110V' },
+  // Keluarga kode yang sah walau bentuknya lain dari kebanyakan
+  { baris: 60, kode: 'CR1N001', nama: 'Konektor' },
+  { baris: 61, kode: 'TO2W01A', nama: 'Tap Off' },
+  { baris: 62, kode: 'ADIS006-MC', nama: 'Amplifier' },
+  { baris: 70, kode: 'DUPL001', nama: 'Satu' },
+  { baris: 71, kode: 'DUPL001', nama: 'Dua' },
+];
+const TX_KODE = [
+  { tanggal: tgl(19, 9), invoice: 'INV/MKS/2026/IX/F-001', customer: 'BUDI', kode: 'KSF0028', qty: 2, amount: 1970000 },
+  { tanggal: tgl(20, 9), invoice: 'INV/MKS/2026/IX/F-002', customer: 'SITI', kode: 'KCO6001', qty: 3, amount: 900000 },
+  { tanggal: tgl(21, 9), invoice: 'INV/MKS/2026/IX/F-003', customer: 'UMAR', kode: 'FORB132', qty: 1, amount: 500000 },
+  { tanggal: tgl(22, 9), invoice: 'INV/MKS/2026/IX/F-004', customer: 'JONI', kode: 'KSFO108', qty: 5, amount: 800000 },
+];
+const auditKode = (q) => M.findKodeProdukIssues(q, KODE_MENTAH, TX_KODE);
+t('kesalahan mekanis di stok tertangkap', () => {
+  const r = auditKode('cek kode produk yang salah di stock');
+  const pasti = r.penulisanDiStok.pastiSalah.daftar.map((x) => String(x.kode).trim());
+  const harus = ['24mw', 'FOT-408A.', 'SLFO 001', 'KSFO113', 'DUPL001'];
+  const kurang = harus.filter((k) => !pasti.includes(k));
+  return kurang.length ? `tidak tertangkap: ${kurang.join(', ')}` : null;
+});
+t('keluarga kode yang sah tidak dituduh salah', () => {
+  const r = auditKode('cek kode produk yang salah di stock');
+  const semua = [...r.penulisanDiStok.pastiSalah.daftar, ...r.penulisanDiStok.perluDicek.daftar].map((x) => String(x.kode).trim());
+  const tertuduh = ['CR1N001', 'TO2W01A', 'ADIS006-MC', 'KSFO028', 'KC06001'].filter((k) => semua.includes(k));
+  return tertuduh.length ? `kode sah ikut dituduh: ${tertuduh.join(', ')}` : null;
+});
+t('dua produk berbeda dengan kode beda tanda hubung tidak dituduh kembar', () => {
+  const r = auditKode('cek kode produk yang salah di stock');
+  const semua = [...r.penulisanDiStok.pastiSalah.daftar, ...r.penulisanDiStok.perluDicek.daftar];
+  return semua.some((x) => /PRMS/.test(x.kode)) ? 'PRMS-003 / PRMS003 dituduh padahal produknya berbeda' : null;
+});
+t('entri kembar yang namanya cuma kode tetap ditandai perlu dicek', () => {
+  const r = auditKode('cek kode produk yang salah di stock');
+  const x = r.penulisanDiStok.perluDicek.daftar.find((d) => d.kode === 'FOT-423A');
+  return x && /kembar dengan FOT423A/.test(x.masalah) ? null : `FOT-423A: ${JSON.stringify(x)}`;
+});
+t('huruf O di posisi angka ditandai perlu dicek, bukan pasti salah', () => {
+  const r = auditKode('cek kode produk yang salah di stock');
+  const diPasti = r.penulisanDiStok.pastiSalah.daftar.some((d) => d.kode === 'PSJOO5');
+  const diCek = r.penulisanDiStok.perluDicek.daftar.some((d) => d.kode === 'PSJOO5');
+  return !diPasti && diCek ? null : `pasti=${diPasti} perluDicek=${diCek}`;
+});
+t('kode transaksi yang tidak ada di stok tertangkap dengan usulannya', () => {
+  const r = auditKode('kode produk salah tulis di sales');
+  const b = r.kodeTransaksiTidakAdaDiStok;
+  if (!b || b.jumlahKode !== 3) return `dapat ${b && b.jumlahKode} kode, seharusnya 3`;
+  const usulan = (k) => ((b.daftar.find((e) => e.kode === k) || {}).kemungkinanMaksudnya || []).map((u) => u.kode);
+  if (!usulan('KSF0028').includes('KSFO028')) return 'KSF0028 tidak diusulkan KSFO028';
+  if (!usulan('KCO6001').includes('KC06001')) return 'KCO6001 tidak diusulkan KC06001';
+  if (!usulan('FORB132').includes('FOTB132')) return 'FORB132 tidak diusulkan FOTB132';
+  return b.daftar.some((e) => e.kode === 'KSFO108') ? 'kode yang terdaftar ikut dilaporkan' : null;
+});
+t('lingkup stok tidak menyisir transaksi, dan sebaliknya', () => {
+  const s = auditKode('cek kode produk yang salah di stock');
+  const x = auditKode('kode produk salah tulis di sales');
+  if (s.kodeTransaksiTidakAdaDiStok !== null) return 'lingkup stok ikut menyisir transaksi';
+  if (x.penulisanDiStok !== null) return 'lingkup sales ikut menyisir stok';
+  return null;
+});
+t('pertanyaan stok biasa tidak memicu audit kode', () => (
+  auditKode('stok KSFO028 berapa') === null && auditKode('berapa nilai stok gudang') === null ? null : 'audit menyala di pertanyaan stok biasa'
+));
+t('audit invoice tidak ikut menyala saat yang ditanya kode produk', () => (
+  M.findInvoiceCompanyMismatch('kode produk salah input di sales', TX_KODE, [], []) === null ? null : 'audit company invoice ikut menyala'
+));
 
 grup('Sisa target dalam persentase');
 const YOY_PERSEN = {
