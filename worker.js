@@ -23,6 +23,11 @@ const GIDS = {
   salesSum: '1234708655',  // Sales SUM — columns AS-BB hold 2025 vs 2026 YoY comparison + monthly target
   kpiMonitor: '64738765',  // KPI MONITORING — columns M-Z hold per-wilayah monthly invoice counts (zona)
 };
+// Sheet input bulanan. Kolom G di tiap sheet = "Kode Barang", tempat tim menginput transaksi.
+const GIDS_BULANAN = {
+  Jan: '0', Feb: '1831734265', Mar: '1586424938', Apr: '1196191226', Mei: '971109321', Jun: '1725396174',
+  Jul: '56931099', Agu: '691083737', Sep: '1962720543', Okt: '2035584798', Nov: '468918005', Des: '614537042',
+};
 
 // Same province mapping the live dashboard hardcodes (Kabupaten/Kota -> ISO 3166-2:ID code) —
 // copied verbatim from calc.js so "zona wilayah" answers match what the dashboard shows.
@@ -1835,17 +1840,28 @@ function usulanKodeMirip(kode, kodeAda) {
   return usulan.slice(0, 3);
 }
 
-function findKodeProdukIssues(message, kodeMentah, allTransactions) {
+function findKodeProdukIssues(message, kodeMentah, allTransactions, auditKolomG) {
   const nMsg = normText(message);
-  const bicaraKode = /\bsku\b|kode\s*(produk|barang|item|stok|stock)|kode\s*(yang|nya)?\s*(salah|keliru|tidak)/.test(nMsg);
-  const bicaraSalah = /salah|keliru|tidak sesuai|ga sesuai|gak sesuai|typo|salah tulis|salah ketik|tidak dikenal|tidak terdaftar|tidak ada di stok|tidak ada di stock|cek penulisan|periksa|audit|sisir/.test(nMsg);
+  // "Kolom G" di sheet bulanan adalah kolom Kode Barang, jadi menyebutnya sudah berarti bicara
+  // kode barang — "cek kolom G di setiap bulan" harus terpicu walau tidak menyebut "kode barang".
+  const sebutKolomG = /kolom\s*g\b/.test(nMsg);
+  const bicaraKode = sebutKolomG || /\bsku\b|kode\s*(produk|barang|item|stok|stock)|kode\s*(yang|nya)?\s*(salah|keliru|tidak)/.test(nMsg);
+  const bicaraSalah = /salah|keliru|tidak sesuai|ga sesuai|gak sesuai|typo|salah tulis|salah ketik|tidak dikenal|tidak terdaftar|tidak ada di stok|tidak ada di stock|cek penulisan|periksa|audit|sisir/.test(nMsg)
+    || (sebutKolomG && /\bcek\b|\bcekkan\b|\bmengecek\b|\bperiksa\b|\blihat\b/.test(nMsg));
   if (!bicaraKode || !bicaraSalah) return null;
   if (!Array.isArray(kodeMentah) || !kodeMentah.length) return null;
 
   const mintaStok = /\bstok\b|\bstock\b|gudang|gd mks/.test(nMsg);
-  const mintaTransaksi = /\bsales\b|penjualan|transaksi|grand\s*data|invoice|terjual/.test(nMsg);
-  const periksaStok = !mintaTransaksi || mintaStok;
-  const periksaTransaksi = !mintaStok || mintaTransaksi;
+  const mintaTransaksi = /\bsales\b|penjualan|transaksi|grand\s*data|invoice|terjual|penginputan|diinput/.test(nMsg);
+  let periksaStok = !mintaTransaksi || mintaStok;
+  let periksaTransaksi = !mintaStok || mintaTransaksi;
+  // Per bulan: hanya bermakna untuk transaksi — sheet Stock GD MKS tidak menyimpan tanggal input,
+  // jadi kesalahan di sana tidak bisa dibagi menurut bulan. Menyebut satu bulan otomatis
+  // mempersempit ke transaksi bulan itu.
+  const bulanDiminta = extractMonthMention(message);
+  const mintaPerBulan = /per\s*bulan|tiap\s*bulan|setiap\s*bulan|dibagi.*bulan|\bbulanan\b|masing[- ]masing bulan/.test(nMsg);
+  const mintaKolomG = /kolom\s*g\b|sheet bulanan|setiap sheet|tiap sheet/.test(nMsg);
+  if (bulanDiminta || mintaPerBulan || mintaKolomG) { periksaTransaksi = true; if (!mintaStok) periksaStok = false; }
 
   const kodeAda = new Set(kodeMentah.map((x) => String(x.kode).trim().toUpperCase()));
 
@@ -1897,11 +1913,32 @@ function findKodeProdukIssues(message, kodeMentah, allTransactions) {
 
   // ---- B. kode di transaksi yang tidak ada di stok ----
   let tidakDikenal = null;
+  let perBulan = null;
+  const NAMA_BLN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
   if (periksaTransaksi) {
     const per = new Map();
+    const bulanMap = new Map();
     for (const t of allTransactions || []) {
       const k = String((t && t.kode) || '').trim();
       if (!k || kodeAda.has(k.toUpperCase())) continue;
+      const d = parseFlexibleDate(t.tanggal);
+      if (bulanDiminta && !(d && d.getMonth() + 1 === bulanDiminta.month && d.getFullYear() === bulanDiminta.year)) continue;
+      if (d) {
+        const kunci = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        if (!bulanMap.has(kunci)) bulanMap.set(kunci, { bulan: `${NAMA_BLN[d.getMonth()]} ${d.getFullYear()}`, kunci, perKode: new Map(), jumlahBaris: 0, nilai: 0 });
+        const b = bulanMap.get(kunci);
+        b.jumlahBaris += 1;
+        b.nilai += toNumber(t.amount);
+        // Rincian per kode DI DALAM bulan ini. Tanpa ini MIRA meminjam angka keseluruhan periode
+        // ke bagian satu bulan — terbukti: KCO6002 ditulis "4 baris, Rp10.336.000" di bagian Juni,
+        // padahal khusus Juni hanya 3 baris, Rp9.576.000.
+        if (!b.perKode.has(k)) b.perKode.set(k, { kode: k, jumlahBaris: 0, qty: 0, nilai: 0, contoh: [] });
+        const pk = b.perKode.get(k);
+        pk.jumlahBaris += 1;
+        pk.qty += toNumber(t.qty);
+        pk.nilai += toNumber(t.amount);
+        if (pk.contoh.length < 2) pk.contoh.push({ tanggal: t.tanggal, invoice: t.invoice, customer: t.customer });
+      }
       if (!per.has(k)) per.set(k, { kode: k, jumlahBaris: 0, qty: 0, nilai: 0, contoh: [] });
       const e = per.get(k);
       e.jumlahBaris += 1;
@@ -1912,6 +1949,49 @@ function findKodeProdukIssues(message, kodeMentah, allTransactions) {
     tidakDikenal = [...per.values()]
       .map((e) => ({ ...e, kemungkinanMaksudnya: usulanKodeMirip(e.kode, kodeAda) }))
       .sort((a, b) => b.nilai - a.nilai);
+    perBulan = [...bulanMap.values()]
+      .sort((a, b) => a.kunci.localeCompare(b.kunci))
+      .map((b) => ({
+        bulan: b.bulan,
+        jumlahKode: b.perKode.size,
+        jumlahBaris: b.jumlahBaris,
+        nilai: b.nilai,
+        rincian: [...b.perKode.values()]
+          .sort((x, y) => y.nilai - x.nilai)
+          .map((x) => ({ ...x, kemungkinanMaksudnya: usulanKodeMirip(x.kode, kodeAda) })),
+      }));
+  }
+
+  // Per bulan dari KOLOM G sheet bulanan, bila hasil pemeriksaan sinkronisasi tersedia — isinya
+  // sama dengan yang terbaca lewat Grand Data (terbukti identik, 30 lawan 30), tapi membawa sheet
+  // dan nomor baris sehingga langsung bisa dibetulkan di tempat datanya diinput.
+  let perSheetKolomG = null;
+  if (periksaTransaksi && auditKolomG && Array.isArray(auditKolomG.temuan) && (bulanDiminta || mintaPerBulan || mintaKolomG)) {
+    const URUT = Object.keys(GIDS_BULANAN);
+    const tahunIni = nowMakassar().getFullYear();
+    const lengkap = { Jan: 'Januari', Feb: 'Februari', Mar: 'Maret', Apr: 'April', Mei: 'Mei', Jun: 'Juni', Jul: 'Juli', Agu: 'Agustus', Sep: 'September', Okt: 'Oktober', Nov: 'November', Des: 'Desember' };
+    perSheetKolomG = URUT
+      .filter((s, idx) => !bulanDiminta || (bulanDiminta.month === idx + 1 && bulanDiminta.year === tahunIni))
+      .map((s) => {
+        const ts = auditKolomG.temuan.filter((t) => t.sheet === s);
+        const perKode = new Map();
+        for (const t of ts) {
+          const k = String(t.kode).trim();
+          if (!perKode.has(k)) perKode.set(k, { kode: t.kode, masalah: t.masalah, jumlahBaris: 0, lokasi: [] });
+          const e = perKode.get(k);
+          e.jumlahBaris += 1;
+          e.lokasi.push({ baris: t.baris, invoice: t.invoice, tanggal: t.tanggal, customer: t.customer });
+        }
+        const diperiksa = (auditKolomG.diperiksaPerSheet || {})[s] || 0;
+        return {
+          sheet: s,
+          bulan: `${lengkap[s]} ${tahunIni}`,
+          barisDiperiksa: diperiksa,
+          status: !diperiksa ? 'belum ada input' : ts.length ? 'ada salah input' : 'bersih',
+          jumlahBarisSalah: ts.length,
+          rincian: [...perKode.values()].map((e) => ({ ...e, kemungkinanMaksudnya: usulanKodeMirip(e.kode, kodeAda) })),
+        };
+      });
   }
 
   // Satu baris bisa punya beberapa alasan dicurigai — digabung supaya daftarnya tidak berulang.
@@ -1942,11 +2022,20 @@ function findKodeProdukIssues(message, kodeMentah, allTransactions) {
       perluDicek: { jumlah: perluDicek.length, daftar: perluDicek.slice(0, 60) },
     } : null,
     kodeTransaksiTidakAdaDiStok: tidakDikenal ? {
+      periode: bulanDiminta ? `${NAMA_BLN[bulanDiminta.month - 1]} ${bulanDiminta.year}` : 'seluruh data yang tersinkron',
       jumlahKode: tidakDikenal.length,
       totalBaris: tidakDikenal.reduce((s, e) => s + e.jumlahBaris, 0),
       totalNilai: tidakDikenal.reduce((s, e) => s + e.nilai, 0),
       daftar: tidakDikenal.slice(0, 60),
+      perBulan,
     } : null,
+    kolomGSheetBulanan: perSheetKolomG,
+    catatanKolomG: perSheetKolomG
+      ? 'Hasil pemeriksaan kolom G ("Kode Barang") di tiap sheet bulanan terhadap kode baku Stock GD MKS. INI sumber utama untuk pertanyaan per bulan: tiap temuan punya "lokasi" berisi sheet dan NOMOR BARIS tempat data diinput — sebutkan itu supaya bisa langsung dibetulkan (mis. "sheet Jun baris 332"). "status" per sheet: "bersih", "ada salah input", atau "belum ada input" (sheet belum diisi, bukan bersih). Pakai angka di sini untuk bagian per bulan, bukan dari "daftar".'
+      : null,
+    catatanPerBulan: (bulanDiminta || mintaPerBulan)
+      ? 'Yang diperiksa: kode barang yang DIINPUT di transaksi tapi TIDAK ADA di daftar kode baku Stock GD MKS. Pembagian per bulan HANYA untuk transaksi — kesalahan penulisan di sheet Stock GD MKS sendiri tidak punya tanggal input, jadi tidak bisa dibagi per bulan; sampaikan ini kalau relevan. Kalau user menyebut satu bulan, sajikan "kodeTransaksiTidakAdaDiStok" untuk bulan itu saja, dan kalau "jumlahKode":0 katakan tegas bulan itu BERSIH. Kalau minta per bulan, sajikan "perBulan" urut dari bulan terlama; untuk angka di dalam tiap bulan WAJIB pakai "rincian" milik bulan itu, JANGAN memakai angka dari "daftar" (itu total seluruh periode, bukan per bulan). Bulan yang tidak muncul di "perBulan" berarti bersih.'
+      : null,
     catatan: 'Sajikan per bagian dan per tingkat keyakinan. "pastiSalah" = kesalahan mekanis yang terbukti (huruf kecil, spasi, tanda baca, kode ganda) — boleh dinyatakan salah. "perluDicek" = mencurigakan tapi BELUM TENTU salah — sampaikan sebagai hal yang perlu dicek, bukan tuduhan. "kodeTransaksiTidakAdaDiStok" = kode yang dipakai di transaksi tapi tidak terdaftar di Stock GD MKS; jelaskan akibatnya: transaksi itu tidak ikut terhitung di penjualan per produk, kategori kabel, dan pencarian pembeli. "kemungkinanMaksudnya" hanya USULAN dari kemiripan penulisan — katakan "kemungkinan", jangan dipastikan. JANGAN menyatakan sebuah kode salah hanya karena bentuknya berbeda dari kebanyakan kode lain — banyak keluarga kode di sheet ini yang memang sah. Semua sudah dihitung, jangan hitung ulang.',
   };
 }
@@ -4760,14 +4849,83 @@ async function runSync(env) {
   const summary = { syncedAt: new Date().toISOString(), sources: {} };
 
   // 1) Stock / product data
+  let kodeBakuSync = null; // dipakai langkah 1b di bawah
   try {
     const kodeMentah = [];
     const products = await fetchStockProducts({ kodeMentah });
     await env.SHEET_CACHE.put('data:stock', JSON.stringify(products));
     await env.SHEET_CACHE.put('data:stockKodeMentah', JSON.stringify(kodeMentah));
+    kodeBakuSync = new Set(kodeMentah.map((x) => String(x.kode).trim().toUpperCase()));
     summary.sources.stock = { ok: true, produkTersimpan: products.length, kodeMentah: kodeMentah.length };
   } catch (err) {
     summary.sources.stock = { ok: false, error: String(err) };
+  }
+
+  // 1b) Kolom G ("Kode Barang") di tiap sheet bulanan Jan-Des — tempat tim benar-benar
+  // menginput. Diperiksa terhadap daftar kode baku Stock GD MKS, dan yang disimpan hanya
+  // temuannya beserta SHEET dan NOMOR BARIS-nya, supaya MIRA bisa menunjuk tepat di mana harus
+  // dibetulkan. Grand Data tidak bisa memberi itu: baris di sana bukan tempat data diinput.
+  // Satu sheet yang gagal dibaca tidak menggagalkan yang lain, dan sheet yang tiba-tiba kosong
+  // padahal sebelumnya berisi dianggap gangguan — temuan lamanya dipertahankan, bukan diganti
+  // "bersih" yang palsu.
+  if (kodeBakuSync) {
+    try {
+      const lamaRaw = await env.SHEET_CACHE.get('data:auditKolomG');
+      const lama = lamaRaw ? JSON.parse(lamaRaw) : null;
+      const diperiksaPerSheet = {};
+      const temuan = [];
+      const gagalSheet = [];
+      for (const [sheet, gid] of Object.entries(GIDS_BULANAN)) {
+        try {
+          const rows = parseCsv(await (await fetch(csvExportUrl(PERFORMANCE_SHEET_ID, gid))).text());
+          const header = (rows[0] || []).map((h) => (h || '').trim());
+          // Kolom G menurut arahan Branch Manager — tetap dicocokkan dengan judulnya supaya
+          // kolom yang bergeser tidak diam-diam memeriksa isi kolom lain.
+          const iKode = header[6] === 'Kode Barang' ? 6 : header.indexOf('Kode Barang');
+          if (iKode < 0) { gagalSheet.push(`${sheet}: kolom Kode Barang tidak ditemukan`); continue; }
+          let jumlah = 0;
+          const temuanSheet = [];
+          for (let i = 1; i < rows.length; i++) {
+            const r = rows[i] || [];
+            const mentahKode = String(r[iKode] ?? '');
+            const k = mentahKode.trim();
+            if (!k) continue;
+            jumlah += 1;
+            const terdaftar = kodeBakuSync.has(k.toUpperCase());
+            const rapi = k === mentahKode && k === k.toUpperCase();
+            if (terdaftar && rapi) continue;
+            temuanSheet.push({
+              sheet,
+              baris: i + 1,
+              kode: mentahKode,
+              masalah: !terdaftar ? 'tidak terdaftar di Stock GD MKS' : k !== mentahKode ? 'ada spasi di awal atau akhir kode' : 'memuat huruf kecil',
+              invoice: String(r[3] ?? '').trim(),
+              tanggal: String(r[2] ?? '').trim(),
+              customer: String(r[5] ?? '').trim(),
+            });
+          }
+          const sebelumnya = lama && lama.diperiksaPerSheet ? lama.diperiksaPerSheet[sheet] : 0;
+          if (jumlah === 0 && sebelumnya > 0) {
+            gagalSheet.push(`${sheet}: terbaca kosong padahal sebelumnya ${sebelumnya} baris — hasil lama dipertahankan`);
+            diperiksaPerSheet[sheet] = sebelumnya;
+            temuan.push(...(lama.temuan || []).filter((t) => t.sheet === sheet));
+            continue;
+          }
+          diperiksaPerSheet[sheet] = jumlah;
+          temuan.push(...temuanSheet);
+        } catch (e) {
+          gagalSheet.push(`${sheet}: ${String(e)}`);
+          if (lama) {
+            diperiksaPerSheet[sheet] = (lama.diperiksaPerSheet || {})[sheet] || 0;
+            temuan.push(...(lama.temuan || []).filter((t) => t.sheet === sheet));
+          }
+        }
+      }
+      await env.SHEET_CACHE.put('data:auditKolomG', JSON.stringify({ diperiksaPerSheet, temuan, gagalSheet, waktu: new Date().toISOString() }));
+      summary.sources.auditKolomG = { ok: true, temuan: temuan.length, gagal: gagalSheet.length };
+    } catch (err) {
+      summary.sources.auditKolomG = { ok: false, error: String(err) };
+    }
   }
 
   // 2) Branch performance (monthly aggregate) + 5) raw transactions (for date/customer/ekspedisi
@@ -5456,7 +5614,7 @@ async function handleChat(request, env) {
     stockRaw, perfRaw, piutangRaw, kpiRaw, txRaw, wilayahRaw,
     revenueRaw, poGudangRaw, topProductsRaw, deliveryRaw, customerInsightsRaw, fo1coreRaw,
     yoyRaw, zonaWilayahRaw, dailyPerformanceRaw, stockMovementRaw, undeliveredRaw, customerBucketsRaw,
-    customerActivityRaw, targetHarianRaw, stockKodeMentahRaw, lastSync,
+    customerActivityRaw, targetHarianRaw, stockKodeMentahRaw, auditKolomGRaw, lastSync,
   ] = await Promise.all([
     env.SHEET_CACHE.get('data:stock'),
     env.SHEET_CACHE.get('data:performance'),
@@ -5479,6 +5637,7 @@ async function handleChat(request, env) {
     env.SHEET_CACHE.get('data:customerActivity'),
     env.SHEET_CACHE.get('data:targetHarian'),
     env.SHEET_CACHE.get('data:stockKodeMentah'),
+    env.SHEET_CACHE.get('data:auditKolomG'),
     env.SHEET_CACHE.get('lastSync'),
   ]);
 
@@ -5656,7 +5815,7 @@ async function handleChat(request, env) {
     produkSalesDetailPerKode: findProductSalesBreakdown(message, allTransactions),
     kabelKategoriCore: findKabelByCoreCategory(message, allStock, allTransactions),
     customerPembeliProduk: findCustomerPembeliProduk(message, allTransactions, allStock),
-    cekPenulisanKodeProduk: findKodeProdukIssues(message, stockKodeMentahRaw ? JSON.parse(stockKodeMentahRaw) : null, allTransactions),
+    cekPenulisanKodeProduk: findKodeProdukIssues(message, stockKodeMentahRaw ? JSON.parse(stockKodeMentahRaw) : null, allTransactions, auditKolomGRaw ? JSON.parse(auditKolomGRaw) : null),
     deliveryOverview: wantsDeliveryOverview && deliveryRaw ? JSON.parse(deliveryRaw) : null,
     poGudangRingkasan: poGudangData ? { byStatus: poGudangData.byStatus, monthly: poGudangData.monthly } : null,
     poGudangRelevan: poMatch.items,
@@ -5748,7 +5907,7 @@ Aturan:
 - SIAPA CUSTOMER YANG PERNAH MEMBELI PRODUK TERTENTU, dengan atau tanpa batas jumlah ("siapa customer yang pernah membeli kabel 1 core di atas 20 roll", "siapa saja yang pernah beli KSFO113 lebih dari 10", "customer mana yang pernah membeli kabel di atas 4 core") → WAJIB dari "customerPembeliProduk". Field ini SUDAH menyaring produk yang dimaksud ("produk", "jumlahKodeProdukTercakup") dan ambang jumlahnya ("ambang"). PENTING: "pernah membeli di atas N" punya DUA tafsir dan keduanya sudah dihitung — "memenuhiSecaraKumulatif" (total sepanjang periode data) dan "memenuhiDalamSekaliBeli" (pernah sebanyak itu dalam SATU invoice). Sajikan yang KUMULATIF sebagai jawaban utama beserta jumlahnya, lalu sebutkan yang sekali beli sebagai pembanding, dan jelaskan bedanya satu kalimat supaya tidak rancu. Sebut nama customer beserta "totalQty", "jumlahInvoice", dan "qtyTerbanyakSekaliBeli" seperlunya. Kalau kedua daftar kosong, katakan terus terang tidak ada yang mencapai jumlah itu — JANGAN menurunkan ambangnya diam-diam dan jangan mengarang nama. Retur tidak dihitung sebagai pembelian. Field yang sama juga menjawab pertanyaan PERINGKAT tanpa ambang ("siapa customer dengan belanja kabel terbanyak", "siapa pembeli kabel 1 core terbanyak"): pakai "juara.nilaiTertinggi" (nilai belanja Rupiah) sebagai jawaban utama, lalu sebut "juara.palingSeringBelanja" (frekuensi belanja) dan "juara.totalQtyTerbanyak" (TOTAL qty sepanjang periode, BUKAN sekali beli) — kalau ketiganya orang berbeda, katakan terus terang supaya tidak menyesatkan. Daftar lengkapnya di "peringkat.menurutNilaiBelanja" / "menurutFrekuensiBelanja" / "menurutQty".
 - QTY, KOLI, DAN EKSPEDISI PER PERIODE ("berapa qty hari ini", "berapa koli kita kirim hari ini", "ekspedisi apa saja hari ini", "koli tanggal 5 Agustus", "qty bulan ini") → WAJIB dari "qtyKoliEkspedisiPerPeriode". Sebutkan "totalQty", "totalKoli", "jumlahInvoiceUnik", dan "jumlahEkspedisiBerbeda" sesuai yang ditanya, lalu rinci "perEkspedisi" (tiap jasa kirim beserta invoice unik, qty, dan kolinya) kalau user menanyakan ekspedisi atau minta rincian. Tanpa penyebutan waktu, "periode" sudah otomatis HARI INI — pakai label periode itu apa adanya. Retur dipisah di "retur" dan TIDAK ikut di totalQty/totalKoli; sebutkan kalau ada. Semua sudah dijumlahkan, jangan hitung ulang.
 - REKOR CABANG ("rekor sales harian terbanyak", "rekor invoice harian terbanyak", "rekor revenue harian terbanyak", "rekor sales bulanan", "rekor invoice bulanan", "rekor revenue bulanan", "rekor pertumbuhan dibanding 2025", "hari/bulan terbaik kita kapan") → WAJIB dari "rekorCabang". Baca "yangDitanya" dan sajikan jenis itu LEBIH DULU: "harian" → dari "harian", "bulanan" → dari "bulanan", "pertumbuhan" → dari "pertumbuhan", "semua" → sajikan ringkas ketiganya. Tiap rekor sudah lengkap dengan tanggal/bulan dan angkanya; "lima_besar_*" boleh disebut sebagai konteks. WAJIB sampaikan batas di "cakupan" saat relevan — rekor HARIAN hanya dari tahun berjalan karena rincian harian 2025 tidak ada, dan rekor INVOICE UNIK bulanan juga hanya 2026. JANGAN menyebutnya "rekor sepanjang sejarah cabang" kalau datanya cuma setahun. Semua sudah dihitung dan diurutkan, jangan hitung ulang.
-- CEK PENULISAN KODE PRODUK ("cek kode produk yang salah", "kode barang yang tidak sesuai di Stock GD MKS", "kode produk salah tulis di sales", "ada kode barang yang tidak terdaftar?") → WAJIB dari "cekPenulisanKodeProduk". Ada DUA bagian, sajikan terpisah: (A) "penulisanDiStok" — kesalahan penulisan di sheet Stock GD MKS sendiri, dipisah "pastiSalah" (mekanis dan terbukti: huruf kecil, spasi, tanda baca di ujung, kode ganda — sebutkan baris sheet dan usulan perbaikannya) dan "perluDicek" (mencurigakan tapi BELUM TENTU salah — sampaikan sebagai perlu dicek, bukan tuduhan). (B) "kodeTransaksiTidakAdaDiStok" — kode yang dipakai di transaksi tapi tidak terdaftar di Stock GD MKS, beserta jumlah baris, nilai, contoh invoice, dan "kemungkinanMaksudnya". Untuk (B) WAJIB jelaskan akibatnya: transaksi itu tidak ikut terhitung di penjualan per produk, kategori kabel, dan pencarian pembeli. "kemungkinanMaksudnya" hanyalah USULAN dari kemiripan penulisan — pakai kata "kemungkinan", jangan pastikan. Baca "lingkup": kalau user hanya menyebut stok, jangan menyinggung transaksi seolah sudah diperiksa, dan sebaliknya. JANGAN menyatakan sebuah kode salah hanya karena bentuknya berbeda dari kebanyakan kode — banyak keluarga kode yang memang sah (KSFO028, CR1N001, DGT0001, TO2W01A, ADIS006-MC). Semua sudah dihitung, jangan hitung ulang.
+- CEK PENULISAN KODE PRODUK ("cek kode produk yang salah", "kode barang yang tidak sesuai di Stock GD MKS", "kode produk salah tulis di sales", "ada kode barang yang tidak terdaftar?", "salah penginputan kode barang", "salah penginputan kode barang bulan Juli", "salah input kode barang per bulan") → WAJIB dari "cekPenulisanKodeProduk". Untuk pertanyaan PER BULAN, per sheet, atau yang menyebut "kolom G" ("cek kolom G di setiap bulan", "salah input kode barang bulan Juli"): WAJIB utamakan "kolomGSheetBulanan" — tiap sheet bulanan membawa "status" (bersih / ada salah input / belum ada input) dan tiap temuan membawa "lokasi" berisi NOMOR BARIS di sheet itu. Sebutkan sheet dan barisnya (mis. "sheet Jun baris 332, kode KCO6002, invoice INV/MKS/2026/VI/055") supaya langsung bisa dibetulkan. "belum ada input" artinya sheet itu belum diisi — JANGAN sebut bersih. Baca juga "catatanKolomG" dan "catatanPerBulan". Ada DUA bagian, sajikan terpisah: (A) "penulisanDiStok" — kesalahan penulisan di sheet Stock GD MKS sendiri, dipisah "pastiSalah" (mekanis dan terbukti: huruf kecil, spasi, tanda baca di ujung, kode ganda — sebutkan baris sheet dan usulan perbaikannya) dan "perluDicek" (mencurigakan tapi BELUM TENTU salah — sampaikan sebagai perlu dicek, bukan tuduhan). (B) "kodeTransaksiTidakAdaDiStok" — kode yang dipakai di transaksi tapi tidak terdaftar di Stock GD MKS, beserta jumlah baris, nilai, contoh invoice, dan "kemungkinanMaksudnya". Untuk (B) WAJIB jelaskan akibatnya: transaksi itu tidak ikut terhitung di penjualan per produk, kategori kabel, dan pencarian pembeli. "kemungkinanMaksudnya" hanyalah USULAN dari kemiripan penulisan — pakai kata "kemungkinan", jangan pastikan. Baca "lingkup": kalau user hanya menyebut stok, jangan menyinggung transaksi seolah sudah diperiksa, dan sebaliknya. JANGAN menyatakan sebuah kode salah hanya karena bentuknya berbeda dari kebanyakan kode — banyak keluarga kode yang memang sah (KSFO028, CR1N001, DGT0001, TO2W01A, ADIS006-MC). Semua sudah dihitung, jangan hitung ulang.
 - CEK INVOICE SALAH INPUT COMPANY ("invoice salah input", "salah input Sales/Revenue/AR", "nomor invoice tidak sesuai company", "invoice tertukar company") → WAJIB dari "cekSalahInputCompany", dan ini BERBEDA dari cek penulisan. Yang diperiksa: nomor berawalan "INV-CFN/" harus tercatat di company CFN, sedangkan "INV/MKS/", "R-MKS/", "R/MKS/" harus tercatat di company MKI. Sajikan tiap temuan dengan nomor faktur, "companyMenurutNomor", "companyTercatat", customer, tanggal, dan sumbernya. Baca "lingkup" — kalau user menyebut satu sumber saja, jangan menyinggung sumber lain. Kalau "jumlahTidakSinkron":0 → katakan bersih dan sebutkan berapa baris yang disisir dari sumber mana. JANGAN mencampurnya dengan temuan salah penulisan. Catatan penting: temuan ini adalah ketidakcocokan yang harus DIBETULKAN di sheet — tapi selama belum dibetulkan, semua perhitungan MIRA tetap memakai kolom Company yang tercatat, bukan tebakan dari nomornya.
 - CEK PENULISAN INVOICE YANG SALAH ("carikan penulisan invoice yang salah", "carikan no invoice salah di Sales/Revenue/AR", "cek penomoran faktur") → WAJIB dari "cekPenulisanInvoice". Kalau "tipe":"auditPenulisan" → sajikan "temuan" DIKELOMPOKKAN per sumber memakai "ditemukanDi", sebutkan "dugaanMasalah" tiap nomor supaya langsung bisa dibetulkan, dan sebutkan "jumlahMenyimpang" beserta "jumlahNomorDiperiksa". Baca "lingkup" — kalau user menyebut satu sumber saja (mis. "di Sales"), HANYA sumber itu yang disisir; jangan menyinggung sumber lain seolah sudah diperiksa. Satu nomor bisa muncul di lebih dari satu sumber — jangan dihitung dua kali. Kalau "tipe":"penjelasanFormat" → cukup jelaskan "formatResmi" beserta "jenis" tiap bentuk. Kalau "jumlahMenyimpang":0 → katakan semuanya sudah sesuai, sebut sumber mana yang diperiksa. Semua sudah dihitung, jangan hitung ulang dan JANGAN menambah nomor yang tidak ada di "temuan".
 - NOMOR INVOICE/FAKTUR disebut (lengkap atau sepotong, mis. "INV-CFN/2026/VII/010", "CFN/2026/VII/010", "MKS/2026/VI/010", "MKS/2026/VI/F-", "MKS/2026/VI/FP-", "F-141") → WAJIB pakai "detailInvoice", JANGAN pakai field lain untuk ini. Catatan: nomor invoice company MKI ditulis "MKS" (mis. "INV/MKS/2026/VI/010"), sedangkan CFN ditulis "INV-CFN/..." — pencarian sudah menangani keduanya, jangan koreksi/ubah nomor yang diketik user. Cara baca hasilnya: "ditemukan":false → nomor itu MEMANG tidak ada, katakan terus terang, JANGAN mengarang isinya dan JANGAN menyodorkan invoice lain yang mirip. "modeDaftar":true → potongan nomor cocok ke BANYAK invoice (biasanya user memang mencari sekelompok invoice, mis. semua "F-" bulan itu): sajikan "daftar" (sudah urut terbaru dulu) beserta "jumlahCocok"/"totalNilaiSemua"/"totalSisaPiutangSemua" yang SUDAH dihitung. Selain itu = SATU invoice, sajikan LENGKAP: tanggal, customer, company, lokasi+ekspedisi, "barang" (SEBUTKAN tiap kode produk + namanya + qty + nilainya, ini yang paling sering ditanya), "totalNilaiTransaksi", lalu status pelunasannya — "statusPelunasan" LUNAS/BELUM LUNAS, "sisaPiutang", "totalDibayar", dan "riwayatPembayaran" (tanggal + jumlah tiap kali bayar, sebutkan kalau dicicil). SELALU baca "catatan" dan sampaikan isinya kalau ada peringatan di situ (mis. total pembayaran tidak sama dengan nilai transaksi) — jangan diperbaiki/dibulatkan sendiri.

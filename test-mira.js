@@ -609,6 +609,78 @@ t('lingkup stok tidak menyisir transaksi, dan sebaliknya', () => {
   if (x.penulisanDiStok !== null) return 'lingkup sales ikut menyisir stok';
   return null;
 });
+t('"salah penginputan kode barang" ikut terpicu', () => (
+  auditKode('salah penginputan kode barang') ? null : 'tidak terpicu'
+));
+t('per bulan: dibagi menurut bulan transaksi', () => {
+  const r = auditKode('salah penginputan kode barang per bulan');
+  const pb = r.kodeTransaksiTidakAdaDiStok && r.kodeTransaksiTidakAdaDiStok.perBulan;
+  if (!pb || !pb.length) return 'perBulan kosong';
+  const total = pb.reduce((s, b) => s + b.jumlahBaris, 0);
+  return total === r.kodeTransaksiTidakAdaDiStok.totalBaris ? null : `jumlah per bulan ${total} tidak sama dengan total ${r.kodeTransaksiTidakAdaDiStok.totalBaris}`;
+});
+t('satu bulan disebut: hanya transaksi bulan itu', () => {
+  const nama = NAMA_BULAN[8]; // September — bulan fixture TX_KODE
+  const r = auditKode(`salah penginputan kode barang bulan ${nama} ${TAHUN}`);
+  const b = r.kodeTransaksiTidakAdaDiStok;
+  if (!b || b.jumlahKode !== 3) return `dapat ${b && b.jumlahKode} kode, seharusnya 3`;
+  const kosong = auditKode(`salah penginputan kode barang bulan Maret ${TAHUN}`);
+  return kosong.kodeTransaksiTidakAdaDiStok.jumlahKode === 0 ? null : 'bulan tanpa kesalahan ikut melaporkan kode bulan lain';
+});
+t('angka di dalam satu bulan milik bulan itu, bukan total seluruh periode', () => {
+  // KSF0028 dipakai di dua bulan berbeda: total 2 baris, tapi tiap bulan cuma 1
+  const tx = [
+    { tanggal: tgl(10, 6), invoice: 'INV/MKS/2026/VI/F-001', customer: 'A', kode: 'KSF0028', qty: 1, amount: 100 },
+    { tanggal: tgl(10, 7), invoice: 'INV/MKS/2026/VII/F-001', customer: 'B', kode: 'KSF0028', qty: 1, amount: 300 },
+  ];
+  const r = M.findKodeProdukIssues('salah penginputan kode barang per bulan', KODE_MENTAH, tx);
+  const pb = r.kodeTransaksiTidakAdaDiStok.perBulan;
+  if (pb.length !== 2) return `dapat ${pb.length} bulan, seharusnya 2`;
+  for (const b of pb) {
+    const x = (b.rincian || []).find((y) => y.kode === 'KSF0028');
+    if (!x) return `${b.bulan}: rincian KSF0028 tidak ada`;
+    if (x.jumlahBaris !== 1) return `${b.bulan}: ${x.jumlahBaris} baris — terisi total seluruh periode, bukan bulan ini`;
+  }
+  const juni = pb[0].rincian[0];
+  return juni.nilai === 100 && juni.kemungkinanMaksudnya.some((u) => u.kode === 'KSFO028') ? null : `Juni: ${JSON.stringify(juni)}`;
+});
+const AUDIT_G = {
+  diperiksaPerSheet: { Jan: 100, Feb: 80, Jun: 50, Okt: 0 },
+  temuan: [
+    { sheet: 'Jun', baris: 332, kode: 'KCO6002', masalah: 'tidak terdaftar di Stock GD MKS', invoice: 'INV/MKS/2026/VI/055', tanggal: '24-Jun-2026', customer: 'TK VARCO' },
+    { sheet: 'Jun', baris: 338, kode: 'KCO6002', masalah: 'tidak terdaftar di Stock GD MKS', invoice: 'INV/MKS/2026/VI/058', tanggal: '25-Jun-2026', customer: 'ASWANDI' },
+    { sheet: 'Jan', baris: 1005, kode: 'JSC-017', masalah: 'tidak terdaftar di Stock GD MKS', invoice: 'SC/MKS/2026/I/001', tanggal: '31-Jan-2026', customer: 'MULYADI' },
+  ],
+};
+const auditG = (q) => M.findKodeProdukIssues(q, KODE_MENTAH, TX_KODE, AUDIT_G);
+t('kolom G: temuan membawa sheet dan nomor baris', () => {
+  const r = auditG('cek kolom G di setiap bulan kalau ada salah penginputan kode barang');
+  const jun = (r.kolomGSheetBulanan || []).find((s) => s.sheet === 'Jun');
+  if (!jun) return 'sheet Jun tidak ada';
+  const kco = jun.rincian.find((x) => x.kode === 'KCO6002');
+  if (!kco || kco.jumlahBaris !== 2) return `KCO6002 di Jun: ${JSON.stringify(kco)}`;
+  return kco.lokasi.map((l) => l.baris).join(',') === '332,338' ? null : `baris ${kco.lokasi.map((l) => l.baris).join(',')}`;
+});
+t('kolom G: status bersih, ada salah input, dan belum ada input dibedakan', () => {
+  const r = auditG('cek kolom G di setiap bulan');
+  const st = (s) => (r.kolomGSheetBulanan.find((x) => x.sheet === s) || {}).status;
+  if (st('Jun') !== 'ada salah input') return `Jun: ${st('Jun')}`;
+  if (st('Feb') !== 'bersih') return `Feb: ${st('Feb')}`;
+  return st('Okt') === 'belum ada input' ? null : `Okt: ${st('Okt')} — sheet kosong tidak boleh disebut bersih`;
+});
+t('kolom G: menyebut satu bulan hanya mengembalikan sheet itu', () => {
+  const r = auditG(`salah input kode barang bulan Juni ${TAHUN}`);
+  const s = r.kolomGSheetBulanan || [];
+  return s.length === 1 && s[0].sheet === 'Jun' ? null : `dapat ${s.map((x) => x.sheet).join(',')}`;
+});
+t('tanpa hasil sinkronisasi kolom G, tetap jatuh ke Grand Data', () => {
+  const r = M.findKodeProdukIssues('salah penginputan kode barang per bulan', KODE_MENTAH, TX_KODE, null);
+  return r.kolomGSheetBulanan === null && r.kodeTransaksiTidakAdaDiStok ? null : 'jalur cadangan hilang';
+});
+t('per bulan tidak menyeret audit sheet stok yang tak bertanggal', () => {
+  const r = auditKode('salah penginputan kode barang per bulan');
+  return r.penulisanDiStok === null && r.catatanPerBulan ? null : 'audit stok ikut atau catatan per bulan hilang';
+});
 t('pertanyaan stok biasa tidak memicu audit kode', () => (
   auditKode('stok KSFO028 berapa') === null && auditKode('berapa nilai stok gudang') === null ? null : 'audit menyala di pertanyaan stok biasa'
 ));
