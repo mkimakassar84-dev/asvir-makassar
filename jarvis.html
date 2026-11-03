@@ -165,7 +165,7 @@
   .percakapan h2 button:hover { color: var(--teks); }
   #log { flex: 1; overflow-y: auto; padding: 16px 22px 24px; display: flex; flex-direction: column; gap: 16px; scroll-behavior: smooth; }
   #log:empty::before {
-    content: 'Belum ada percakapan.\A Ucapkan  “Hei MIRA, berapa sales hari ini?”';
+    content: 'Belum ada percakapan.\A Ucapkan  “MIRA, berapa sales hari ini?”';
     white-space: pre-line; color: var(--redup); font-size: 14px; line-height: 1.7;
   }
   .gelembung { max-width: 100%; }
@@ -225,7 +225,7 @@
       <div id="kendaliUtama" style="display:grid;gap:12px">
         <label class="saklar"><input type="checkbox" id="tglLengkap"> Bacakan jawaban selengkapnya (bukan ringkasan)</label>
         <button class="tombol-utama" type="button" id="tombolUtama">Aktifkan mode Jarvis</button>
-        <p class="privasi"><b>Selama mode ini aktif, MIRA mendengarkan terus.</b> Suara di dekat mikrofon dikirim ke layanan pengenal suara Google untuk diubah menjadi teks, tetapi hanya ucapan yang diawali “Hei MIRA” yang diteruskan ke MIRA. Matikan mode ini saat membicarakan hal yang tidak boleh keluar.</p>
+        <p class="privasi"><b>Selama mode ini aktif, MIRA mendengarkan terus.</b> Suara di dekat mikrofon dikirim ke layanan pengenal suara Google untuk diubah menjadi teks, tetapi hanya ucapan yang menyebut kata “MIRA” yang diteruskan ke MIRA. Matikan mode ini saat membicarakan hal yang tidak boleh keluar.</p>
         <div id="galat" role="alert"></div>
       </div>
     </div>
@@ -268,20 +268,29 @@
   // ==== JARVIS-LOGIKA-MULAI ====
   // Logika murni (tanpa DOM, tanpa suara) supaya bisa diuji lewat test-jarvis.js.
 
-  // Kata panggil: "Hei MIRA". Sapaan WAJIB ada — mikrofon mendengar semua obrolan kantor, dan
-  // orang yang menyebut "MIRA" di tengah percakapan ("MIRA bisa cek stok") tidak boleh membuat
-  // MIRA tiba-tiba menjawab. Varian ejaan ditoleransi karena pengenal suara kerap menulis
-  // "Mirah", "Myra", atau "Mila"; sapaan boleh menempel ("Heimira").
+  // Kata panggil: nama "MIRA" harus ADA dalam ucapan — di awal, di tengah, atau di akhir
+  // ("MIRA, berapa sales", "berapa sales hari ini, MIRA"). Ucapan tanpa nama itu tidak pernah
+  // diteruskan, di keadaan apa pun, karena mikrofon mendengar semua obrolan kantor.
   //
-  // Dari jarak jauh suara lebih pelan dan pengenal suara lebih sering salah dengar, jadi nama
-  // ditoleransi lebih lebar ("Mia", "Miya", "Miera") dan sapaan "hay" ikut diterima. Pelonggaran
-  // ini hanya aman karena sapaan tetap WAJIB; tanpa sapaan, "Mia" saja tidak memanggil.
+  // Dua tingkat ketat, sengaja:
+  //  - Nama tegas (mira, mirah, mirra, myra): diterima di mana saja dalam ucapan, sapaan boleh ada
+  //    boleh tidak.
+  //  - Nama longgar (mila, mera, miera, mia, miya): hanya bila didahului sapaan DI AWAL ucapan
+  //    ("Hai Mia"). Dari jauh pengenal suara sering menulis nama longgar itu, tetapi "Mia" dan
+  //    "Mila" juga nama orang dan kata biasa; tanpa sapaan terlalu sering salah memanggil.
+  // Batas kata dijaga di kedua sisi, jadi "Samira", "Amira", "mirabel" tidak memanggil.
   const POLA_PANGGIL = /^[\s,.!?-]*(?:hei|hey|hay|hai|hi|halo|hallo|helo|ei|oi)[\s,.!-]*(?:mira|mirah|mirra|myra|mila|mera|miera|mia|miya)(?![a-z])[\s,.!?:;-]*/i;
+  const POLA_NAMA = /(?<![a-z])(?:(?:hei|hey|hay|hai|hi|halo|hallo|helo|ei|oi)[\s,.!-]*)?(?:mira|mirah|mirra|myra)(?![a-z])[\s,.!?:;-]*/i;
   function ambilPanggilan(teks) {
     const t = String(teks || '').trim();
     const m = t.match(POLA_PANGGIL);
-    if (!m) return { dipanggil: false, pertanyaan: t };
-    return { dipanggil: true, pertanyaan: t.slice(m[0].length).trim() };
+    if (m) return { dipanggil: true, pertanyaan: t.slice(m[0].length).trim() };
+    const n = t.match(POLA_NAMA);
+    if (!n) return { dipanggil: false, pertanyaan: t };
+    // Nama di tengah/akhir: buang nama (dan sapaan yang menempel) dan rapatkan sisanya.
+    const sebelum = t.slice(0, n.index).replace(/[\s,.!?:;-]+$/, '');
+    const sesudah = t.slice(n.index + n[0].length).trim();
+    return { dipanggil: true, pertanyaan: (sebelum + ' ' + sesudah).trim() };
   }
 
   // Pengenal suara memberi beberapa hipotesis per ucapan, urut dari yang paling yakin. Dari jauh,
@@ -329,10 +338,10 @@
   // angka dengan bentuk yang berbeda dari teks aslinya ("15.464.900", "lima belas juta ...") —
   // jadi angka tidak bisa dipakai sebagai bukti gema maupun sebagai bukti sebaliknya.
   const KATA_ANGKA = new Set(['nol', 'kosong', 'satu', 'dua', 'tiga', 'empat', 'lima', 'enam', 'tujuh', 'delapan', 'sembilan', 'sepuluh', 'sebelas', 'belas', 'puluh', 'ratus', 'ribu', 'juta', 'miliar', 'milyar', 'triliun', 'koma', 'seratus', 'seribu', 'sejuta']);
-  function apakahGemaSuaraSendiri(transkrip, dibacakan) {
+  function apakahGemaSuaraSendiri(transkrip, dibacakan, minimalKata) {
     const kata = (s) => normalisasiUcapan(s).replace(/[^a-z0-9 ]/g, ' ').split(' ').filter((w) => w.length > 2 && !/\d/.test(w) && !KATA_ANGKA.has(w));
     const t = kata(transkrip);
-    if (t.length < 4) return false;
+    if (t.length < (minimalKata || 4)) return false;
     const himpunan = new Set(kata(dibacakan));
     let cocok = 0;
     for (const w of t) if (himpunan.has(w)) cocok++;
@@ -721,7 +730,7 @@
 
   const TEKS_STATE = {
     mati: 'Nonaktif',
-    siaga: 'Siaga — ucapkan “Hei MIRA”',
+    siaga: 'Siaga — sebut “MIRA” + pertanyaanmu',
     sesi: 'Silakan, saya mendengarkan',
     berpikir: 'Memproses…',
     berbicara: 'Berbicara…',
@@ -750,6 +759,10 @@
   // sejenak sebelum bicara lagi, dan sesi yang tertutup terlalu cepat memaksanya mengulang "Hei MIRA".
   const WAKTU_SESI = 15;
   const BATAS_KONTEKS_MS = 5 * 60 * 1000;
+  // Satu-satunya saat ucapan TANPA "MIRA" diterima: tepat sesudah MIRA dipanggil sendirian ("MIRA."
+  // -> "Ya, saya dengar."). Berlaku untuk SATU ucapan saja lalu padam, jadi obrolan yang menyusul
+  // tidak ikut terkirim.
+  let tanpaPanggilSekali = false;
   let pertanyaanTerakhir = '';
   let waktuPertanyaanTerakhir = 0;
   const riak = [];
@@ -770,6 +783,7 @@
     document.body.dataset.state = s;
   }
   function keSiaga(rinci) {
+    tanpaPanggilSekali = false;
     clearTimeout(timerSesi);
     clearTimeout(penjagaBicara);
     if (!aktif) return;
@@ -884,7 +898,7 @@
     if (state === 'berpikir') return;
     const teks = alt[0];
     const p = ambilPanggilanDariAlternatif(alt);
-    if (state === 'berbicara' && p.dipanggil) {
+    if (state === 'berbicara' && p.dipanggil && !apakahGemaPanggilan(p.pertanyaan, true)) {
       hentikanBicara();
       clearTimeout(penjagaBicara);
       riak.push({ t0: performance.now(), besar: true });
@@ -903,9 +917,10 @@
     if (yakin > 0 && p.dipanggil) tampilTerdengar(`${teks} (keyakinan ${Math.round(yakin * 100)}%)`, false);
 
     if (state === 'berbicara') {
-      // Selama MIRA bicara, hanya "Hei MIRA" yang dianggap: yang lain hampir pasti suaranya
-      // sendiri dari speaker atau obrolan lain di ruangan.
-      if (!p.dipanggil) return;
+      // Selama MIRA bicara, hanya ucapan yang menyebut "MIRA" yang dianggap: yang lain hampir pasti
+      // suaranya sendiri dari speaker atau obrolan lain di ruangan. Jawaban MIRA kadang memuat
+      // namanya sendiri ("Saya MIRA, …"); gemanya tidak boleh menyela dirinya.
+      if (!p.dipanggil || apakahGemaPanggilan(p.pertanyaan, true)) return;
       hentikanBicara();
       clearTimeout(penjagaBicara);
       setState('sesi', 'Menyela');
@@ -920,6 +935,8 @@
     if (!p.dipanggil) {
       if (Date.now() < abaikanSampai) return;
       if (Date.now() - selesaiBicaraPada < 3500 && apakahGemaSuaraSendiri(teks, terakhirDibacakan)) return;
+    } else if (apakahGemaPanggilan(p.pertanyaan, false)) {
+      return; // gema jawaban MIRA yang kebetulan menyebut namanya
     }
 
     if (state === 'siaga') {
@@ -933,15 +950,33 @@
       return sesiMenerima(p.pertanyaan);
     }
 
-    // state === 'sesi'
-    sesiMenerima(p.dipanggil ? p.pertanyaan : teks);
+    // state === 'sesi' (MIRA baru dipanggil sendirian, atau sedang menyela): nama tetap WAJIB,
+    // kecuali satu ucapan tepat setelah panggilan sendirian itu.
+    if (!p.dipanggil) {
+      if (!tanpaPanggilSekali) return tampilTerdengar(teks, true);
+      tanpaPanggilSekali = false;
+      return sesiMenerima(teks);
+    }
+    tanpaPanggilSekali = false;
+    sesiMenerima(p.pertanyaan);
+  }
+
+  // Jawaban MIRA kadang menyebut namanya, dan speaker PC masuk lagi ke mikrofon: tanpa penyaring
+  // ini gema "…saya MIRA, asisten…" dianggap panggilan dan MIRA menjawab dirinya sendiri.
+  // Sedang bicara dipakai ambang paling longgar (satu kata asli yang tidak ada di jawaban sudah
+  // cukup membuktikan itu manusia); sesudahnya memakai ambang gema biasa supaya pertanyaan
+  // lanjutan yang kebetulan memakai kata yang sama dengan jawabannya tidak terbuang.
+  function apakahGemaPanggilan(pertanyaan, selagiBicara) {
+    if (!terakhirDibacakan || !pertanyaan) return false;
+    if (selagiBicara) return apakahGemaSuaraSendiri(pertanyaan, terakhirDibacakan, 1);
+    return Date.now() - selesaiBicaraPada < 3500 && apakahGemaSuaraSendiri(pertanyaan, terakhirDibacakan);
   }
 
   function sesiMenerima(kalimat) {
     // Istilah kantor yang salah ditulis pengenal suara dirapikan lebih dulu, SEBELUM pemeriksaan
     // apa pun: "k s f o nol dua delapan" harus sudah menjadi KSFO028 saat sampai ke backend.
     const k = rapikanUcapanDomain(String(kalimat || '').trim(), KNOWN_ACRONYMS);
-    if (!k) { mulaiTimerSesi(WAKTU_SESI); return; } // hanya memanggil — tetap menunggu pertanyaannya
+    if (!k) { tanpaPanggilSekali = true; mulaiTimerSesi(WAKTU_SESI); return; } // hanya memanggil — satu ucapan berikutnya boleh tanpa nama
     if (apakahPerintahDiam(k)) return keSiaga('Dihentikan.');
     if (apakahAkhiriSesi(k)) {
       setState('berbicara', 'Menutup sesi');
@@ -976,7 +1011,8 @@
   }
   function lanjutSesi() {
     if (!aktif || state !== 'berbicara') return;
-    setState('sesi', 'Lanjutkan pertanyaanmu');
+    tanpaPanggilSekali = true;
+    setState('sesi', 'Silakan, sebutkan pertanyaanmu');
     mulaiTimerSesi(WAKTU_SESI);
   }
 
@@ -1107,8 +1143,10 @@
     if (state !== 'berpikir') return;
     const ucap = ringkasUntukDibacakan(penuh, { lengkap: el.lengkap.checked });
     if (!ucap) return keSiaga('Jawaban kosong.');
-    setState('berbicara', el.lengkap.checked ? 'Membacakan lengkap — ucapkan “Hei MIRA” untuk menyela' : 'Membacakan ringkasan — ucapkan “Hei MIRA” untuk menyela');
-    bicaraLalu(ucap, lanjutSesi, ucap.length);
+    setState('berbicara', el.lengkap.checked ? 'Membacakan lengkap — sebut “MIRA” untuk menyela' : 'Membacakan ringkasan — sebut “MIRA” untuk menyela');
+    // Sesudah menjawab MIRA kembali siaga, bukan menunggu: pertanyaan berikutnya wajib menyebut
+    // "MIRA" lagi, sehingga obrolan yang menyusul jawabannya tidak ikut terkirim.
+    bicaraLalu(ucap, () => keSiaga('Siaga — sebut “MIRA” untuk bertanya lagi'), ucap.length);
   }
 
   // ---------- nyalakan / matikan ----------
@@ -1129,7 +1167,7 @@
     el.labelMik.textContent = 'Mikrofon aktif — mendengarkan terus';
     el.tombol.textContent = 'Matikan mode Jarvis';
     ambilWakeLock();
-    keSiaga('Ucapkan “Hei MIRA, …”');
+    keSiaga('Sebut “MIRA, …” lalu pertanyaanmu');
     mulaiRec();
     mulaiMeter();
   }
@@ -1157,6 +1195,7 @@
     // Esc menyela ucapan MIRA dari keyboard, sama seperti memanggilnya dengan suara.
     if (e.key === 'Escape' && aktif && state === 'berbicara') {
       hentikanBicara(); clearTimeout(penjagaBicara);
+      tanpaPanggilSekali = true; // menekan Esc sendiri sudah tanda sengaja; satu ucapan berikut boleh tanpa nama
       setState('sesi', 'Menyela'); mulaiTimerSesi(WAKTU_SESI);
     }
   });

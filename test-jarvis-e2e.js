@@ -11,7 +11,7 @@
  * YANG TIDAK DIUKUR: seberapa baik Google mengenali suara pada logat dan ruangan kantor. Tes ini
  * membuktikan bahwa GIVEN transkrip tertentu, MIRA bereaksi dengan benar — tidak lebih.
  *
- * Tiga belas skenario, termasuk yang menjaga keamanan: obrolan kantor tanpa "Hei MIRA" tidak pernah
+ * Lima belas skenario, termasuk yang menjaga keamanan: obrolan kantor tanpa "Hei MIRA" tidak pernah
  * sampai ke MIRA, suara MIRA sendiri tidak dianggap pertanyaan, dan setelah dimatikan pendengar
  * tidak menyala lagi.
  *
@@ -87,7 +87,10 @@ const STUB = `
       const b = JSON.parse(opts.body);
       window.__log.push('chat:' + b.message + '|kode=' + b.accessCode);
       const enc = new TextEncoder();
-      const isi = 'Halo Pak Rifqi, selamat siang! Sales hari ini sudah Rp15.464.900 dari target Rp83.539.062. Semoga hari Bapak lancar ya.';
+      // Jawaban yang menyebut nama MIRA sendiri: bahan uji gema suara yang memuat kata panggil.
+      const isi = /siapa kamu/.test(b.message)
+        ? 'Saya MIRA, asisten cabang Makassar yang membantu memantau sales dan piutang setiap hari.'
+        : 'Halo Pak Rifqi, selamat siang! Sales hari ini sudah Rp15.464.900 dari target Rp83.539.062. Semoga hari Bapak lancar ya.';
       const data = 'data: ' + JSON.stringify({ candidates: [{ content: { parts: [{ text: isi }] } }] }) + '\\n\\n';
       return Promise.resolve(new Response(new ReadableStream({ start(c) { c.enqueue(enc.encode(data)); c.close(); } }), { status: 200 }));
     }
@@ -106,15 +109,16 @@ const SKENARIO = {
     await s.aktifkan();
     await s.ucapkan('hei mira', false);                       // sementara: terdengar dipanggil
     await s.ucapkan('Hei MIRA, berapa sales hari ini');       // final: sertakan pertanyaan
-    await s.tungguState('sesi', 4000);
+    await s.tungguSelesai(1);
     const dibacakan = (await s.log()).filter((l) => l.startsWith('bicara:')).join(' ');
     await s.jedaManusia();
-    await s.ucapkan('terima kasih');
+    await s.ucapkan('terima kasih mira');                     // penutup pun harus menyebut nama
     await s.tungguState('siaga', 4000);
+    await tunggu(150);
     const log = await s.log(); const urutan = await s.urutan();
     return {
-      'urutan siaga>berpikir>berbicara>sesi>berbicara>siaga': berurutan(urutan, ['siaga', 'berpikir', 'berbicara', 'sesi', 'berbicara', 'siaga']),
-      'pertanyaan terkirim TANPA kata "Hei MIRA"': log.some((l) => l.startsWith('chat:berapa sales hari ini|kode=TES')),
+      'urutan siaga>berpikir>berbicara>siaga (tanpa sesi menunggu)': berurutan(urutan, ['siaga', 'berpikir', 'berbicara', 'siaga']) && !urutan.includes('sesi'),
+      'pertanyaan terkirim TANPA kata "MIRA" di dalamnya': log.some((l) => l.startsWith('chat:berapa sales hari ini|kode=TES')),
       'angka ikut dibacakan': /15464900/.test(dibacakan),
       'sapaan pembuka TIDAK dibacakan': !/halo|selamat siang/i.test(dibacakan),
       'doa penutup TIDAK dibacakan': !/semoga/i.test(dibacakan),
@@ -123,9 +127,78 @@ const SKENARIO = {
     };
   },
 
+  async 'nama-di-mana-saja'(s) {
+    await s.aktifkan();
+    const kalimat = ['Mira berapa sales hari ini', 'stok KSFO028 berapa mira', 'tolong mirah cek target hari ini'];
+    for (const k of kalimat) {
+      await s.ucapkan(k);
+      await s.tungguSelesai(kalimat.indexOf(k) + 1);
+      await s.jedaManusia();
+    }
+    const log = await s.log();
+    return {
+      '"Mira ..." tanpa sapaan dijawab': log.some((l) => l.startsWith('chat:berapa sales hari ini|')),
+      '"... mira" di akhir dijawab, nama tidak ikut terkirim': log.some((l) => l.startsWith('chat:stok KSFO028 berapa|')),
+      '"... mirah ..." di tengah dijawab, nama tidak ikut terkirim': log.some((l) => l.startsWith('chat:tolong cek target hari ini|')),
+    };
+  },
+
+  async 'obrolan-setelah-jawaban'(s) {
+    // Inti permintaan: sesudah MIRA menjawab, orang di sekitar terus ngobrol. Tak satu pun boleh terkirim.
+    await s.aktifkan();
+    await s.ucapkan('Hei MIRA, berapa sales hari ini');
+    await s.tungguSelesai(1);
+    await s.jedaManusia();
+    const chatAwal = jumlah(await s.log(), 'chat:');
+    for (const k of ['kalau kemarin', 'nanti sore jadi rapat ya', 'tolong siapkan laporan piutang', 'terima kasih', 'stok KSFO028 berapa']) {
+      await s.ucapkan(k);
+      await tunggu(100);
+    }
+    const log = await s.log();
+    await s.ucapkan('stok KSFO028 berapa mira');
+    await s.tungguSelesai(2);
+    return {
+      'obrolan sesudah jawaban TIDAK terkirim (walau berbau pertanyaan)': jumlah(log, 'chat:') === chatAwal,
+      'MIRA tidak menyahut "terima kasih" yang tanpa nama': !log.some((l) => /^bicara:Sama sama/.test(l)),
+      'tetap siaga': (await s.urutan()).slice(-1)[0] === 'siaga',
+      'pertanyaan yang menyebut MIRA tetap terjawab': (await s.log()).some((l) => l.startsWith('chat:stok KSFO028 berapa|')),
+    };
+  },
+
+  async 'gema-menyebut-nama'(s) {
+    // Jawaban MIRA memuat namanya sendiri, dan speaker masuk lagi ke mikrofon. Gema itu bukan panggilan.
+    await s.aktifkan();
+    await s.set('window.__lamaBicara = 600');
+    await s.ucapkan('MIRA siapa kamu');
+    await s.tungguState('berbicara', 4000);
+    const chatAwal = jumlah(await s.log(), 'chat:');
+    const batalAwal = jumlah(await s.log(), 'cancel');
+    const gema = 'saya mira asisten cabang makassar yang membantu memantau sales dan piutang setiap hari';
+    await s.ucapkan('saya mira', false);                      // gema sementara selagi MIRA bicara
+    await s.ucapkan(gema);                                    // gema final selagi MIRA bicara
+    await tunggu(100);
+    const selamaBicara = await s.log();
+    const masihBicara = (await s.state()) === 'berbicara';
+    await s.tungguState('siaga', 4000);
+    await tunggu(900);                                        // lewat jendela abai keras (700 ms)
+    await s.ucapkan(gema);                                    // gema yang datang terlambat
+    await tunggu(100);
+    const sesudah = await s.log();
+    await s.ucapkan('mira berapa sales hari ini');            // pertanyaan sungguhan di jendela yang sama
+    await s.tungguSelesai(2);
+    const akhir = await s.log();
+    return {
+      'gema yang menyebut nama TIDAK memotong ucapan MIRA': jumlah(selamaBicara, 'cancel') === batalAwal && masihBicara,
+      'gema selagi bicara TIDAK terkirim': jumlah(selamaBicara, 'chat:') === chatAwal,
+      'gema terlambat yang menyebut nama TIDAK terkirim': jumlah(sesudah, 'chat:') === chatAwal,
+      'pertanyaan sungguhan sesudahnya tetap terkirim': akhir.some((l) => l.startsWith('chat:berapa sales hari ini|')),
+    };
+  },
+
   async 'abaikan-obrolan-kantor'(s) {
     await s.aktifkan();
-    for (const kalimat of ['berapa sales hari ini', 'Mira berapa sales hari ini', 'tolong siapkan laporan piutang', 'katanya hei mira bisa cek stok', 'hai semuanya selamat pagi']) {
+    // Termasuk nama-nama yang mirip tapi BUKAN MIRA: Mia, Mila, Samira, Miranda.
+    for (const kalimat of ['berapa sales hari ini', 'Mia berapa sales hari ini', 'tolong siapkan laporan piutang', 'Mila sudah datang belum', 'Samira minta data piutang', 'hai semuanya selamat pagi', 'hai Miranda minta stok']) {
       await s.ucapkan(kalimat);
       await tunggu(80);
     }
@@ -143,14 +216,24 @@ const SKENARIO = {
     await s.ucapkan('Hei MIRA');
     await s.tungguState('sesi', 3000);
     const log1 = await s.log();
+    // Ekor suara "Ya, saya dengar." sendiri tertangkap mikrofon: jangan dianggap pertanyaan.
+    await s.ucapkan('ya saya dengar');
+    await tunggu(80);
+    const sesudahGema = jumlah(await s.log(), 'chat:');
     await s.jedaManusia();
-    await s.ucapkan('target hari ini');
-    await s.tungguState('sesi', 4000);
+    await s.ucapkan('target hari ini');                       // satu ucapan tepat sesudah dipanggil boleh tanpa nama
+    await s.tungguSelesai(1);
+    await s.jedaManusia();
+    const chat1 = jumlah(await s.log(), 'chat:');
+    await s.ucapkan('dan stok KSFO028 juga');                 // ucapan KEDUA tanpa nama: harus diabaikan
+    await tunggu(150);
     const log2 = await s.log(); const urutan = await s.urutan();
     return {
       'dijawab "Ya, saya dengar." tanpa memanggil MIRA': log1.some((l) => /^bicara:Ya saya dengar/.test(l)) && jumlah(log1, 'chat:') === 0,
       'lalu menunggu pertanyaan (sesi)': berurutan(urutan, ['siaga', 'berbicara', 'sesi']),
-      'pertanyaan di sesi terkirim tanpa perlu "Hei MIRA" lagi': log2.some((l) => l.startsWith('chat:target hari ini|')),
+      'gema suara sendiri tepat sesudahnya tidak dianggap pertanyaan': sesudahGema === 0,
+      'satu ucapan sesudah dipanggil sendirian diterima tanpa nama': log2.some((l) => l.startsWith('chat:target hari ini|')),
+      'ucapan kedua tanpa nama TIDAK diterima': jumlah(log2, 'chat:') === chat1 && !log2.some((l) => l.includes('KSFO028')),
     };
   },
 
@@ -163,6 +246,12 @@ const SKENARIO = {
     await s.ucapkan('hei mira', false);                       // hasil SEMENTARA saja: harus langsung diam
     await tunggu(200);
     const sesudah = await s.log(); const urutanSementara = await s.urutan();
+    // Keadaan menyela terbuka, tetapi yang menyusul adalah obrolan tanpa nama: tidak boleh terkirim.
+    const chatSebelumObrolan = jumlah(sesudah, 'chat:');
+    await tunggu(900); // lewat jendela abai keras, supaya yang diuji penjaga nama, bukan jendela itu
+    await s.ucapkan('nanti sore jadi rapat ya');
+    await tunggu(100);
+    const tanpaObrolan = jumlah(await s.log(), 'chat:') === chatSebelumObrolan;
     await s.ucapkan('Hei MIRA, stok KSFO028');
     await tunggu(300);
     const akhir = await s.log();
@@ -170,6 +259,7 @@ const SKENARIO = {
       'sempat berbicara': urutanSementara.includes('berbicara'),
       'ucapan dipotong begitu "Hei MIRA" terdengar (belum menunggu final)': sesudah.lastIndexOf('cancel') > sebelum.lastIndexOf('cancel'),
       'langsung masuk sesi (menyela), bukan menunggu ucapan selesai': (() => { const i = urutanSementara.lastIndexOf('berbicara'); return i >= 0 && urutanSementara[i + 1] === 'sesi'; })(),
+      'obrolan tanpa nama sesudah menyela TIDAK terkirim': tanpaObrolan,
       'pertanyaan sesudah menyela terkirim': akhir.some((l) => l.startsWith('chat:stok KSFO028|')),
     };
   },
@@ -188,35 +278,6 @@ const SKENARIO = {
       'kembali siaga, bukan sesi': (await s.state()) === 'siaga',
       '"berhenti" TIDAK dikirim ke MIRA sebagai pertanyaan': jumlah(log, 'chat:') === chatSebelum,
       'MIRA diam (tidak menjawab "Sama-sama")': !log.some((l) => /^bicara:Sama sama/.test(l)),
-    };
-  },
-
-  async 'gema-suara-sendiri'(s) {
-    await s.aktifkan();
-    await s.ucapkan('Hei MIRA, berapa sales hari ini');
-    await s.tungguState('sesi', 4000);
-    const chatAwal = jumlah(await s.log(), 'chat:');
-    const gema = 'sales hari ini sudah 15464900 rupiah dari target 83539062 rupiah';
-    // Gema 1: langsung setelah MIRA selesai — ditolak oleh jendela abai keras (700 ms).
-    await s.ucapkan(gema);
-    await tunggu(80);
-    const setelahGema1 = jumlah(await s.log(), 'chat:');
-    // Gema 2: SESUDAH jendela keras habis tetapi masih di jendela gema (3,5 detik). Di sini hanya
-    // penyaring kemiripan yang bisa menolaknya — skenario ini ada karena gema 1 saja tidak
-    // membuktikan penyaring itu bekerja (jendela keras sudah membuangnya lebih dulu).
-    await tunggu(800);
-    await s.ucapkan(gema);
-    await tunggu(80);
-    const setelahGema2 = jumlah(await s.log(), 'chat:');
-    // Pertanyaan sungguhan di jendela yang sama, memakai beberapa kata yang sama dengan jawaban
-    // ("hari ini", "target"), tidak boleh ikut terbuang.
-    await s.ucapkan('berapa target revenue hari ini');
-    await tunggu(300);
-    const akhir = await s.log();
-    return {
-      'gema segera setelah MIRA selesai TIDAK dikirim (jendela abai keras)': setelahGema1 === chatAwal,
-      'gema yang datang belakangan TIDAK dikirim (penyaring kemiripan)': setelahGema2 === chatAwal,
-      'pertanyaan sungguhan sesudahnya tetap terkirim': akhir.some((l) => l.startsWith('chat:berapa target revenue hari ini|')),
     };
   },
 
@@ -246,7 +307,7 @@ const SKENARIO = {
   async 'dimatikan-benar-benar-berhenti'(s) {
     await s.aktifkan();
     await s.ucapkan('Hei MIRA, berapa sales hari ini');
-    await s.tungguState('sesi', 4000);
+    await s.tungguSelesai(1);
     await s.eval("document.getElementById('tombolUtama').click()");
     await tunggu(150);
     const jumlahSaatMati = await s.eval('window.__jumlahRec');
@@ -269,13 +330,13 @@ const SKENARIO = {
   async 'konteks-lanjutan'(s) {
     await s.aktifkan();
     await s.ucapkan('Hei MIRA, berapa sales hari ini');
-    await s.tungguState('sesi', 4000);
+    await s.tungguSelesai(1);
     await s.jedaManusia();
-    await s.ucapkan('kalau kemarin');                         // tanpa topik: harus dilengkapi dari pertanyaan tadi
-    await s.tungguState('sesi', 4000);
+    await s.ucapkan('mira kalau kemarin');                    // tanpa topik: harus dilengkapi dari pertanyaan tadi
+    await s.tungguSelesai(2);
     await s.jedaManusia();
-    await s.ucapkan('piutang CFN');                           // punya topik sendiri: JANGAN dicampur
-    await s.tungguState('sesi', 4000);
+    await s.ucapkan('mira piutang CFN');                      // punya topik sendiri: JANGAN dicampur
+    await s.tungguSelesai(3);
     const log = await s.log();
     return {
       '"kalau kemarin" dikirim sebagai pertanyaan lengkap': log.some((l) => l.startsWith('chat:berapa sales kemarin|')),
@@ -289,7 +350,7 @@ const SKENARIO = {
     await s.aktifkan();
     // Dari jauh hipotesis teratas salah dengar kata panggil; hipotesis berikutnya benar.
     await s.ucapkan('hai nira stok ksfo 028', true, ['hai mira stok ksfo 028']);
-    await s.tungguState('sesi', 4000);
+    await s.tungguSelesai(1);
     const log1 = await s.log();
     await s.jedaManusia();
     await s.eval("document.getElementById('tombolUtama').click()");
@@ -308,7 +369,7 @@ const SKENARIO = {
   async 'koreksi-kode-ucapan'(s) {
     await s.aktifkan();
     await s.ucapkan('Hei MIRA, stok k s f o nol dua delapan');
-    await s.tungguState('sesi', 4000);
+    await s.tungguSelesai(1);
     const log = await s.log();
     return {
       'kode yang dieja sampai ke backend sebagai KSFO028': log.some((l) => l.startsWith('chat:stok KSFO028|')),
@@ -392,6 +453,17 @@ async function jalankanSemua(daftar) {
       // "Hei MIRA" selama 700 ms sesudah selesai bicara (ekor suaranya sendiri), jadi skenario yang
       // meniru pengguna harus menunggu lebih lama dari itu.
       jedaManusia: () => tunggu(900),
+      // Menunggu sampai `n` pertanyaan sudah terkirim, dijawab dengan suara, dan MIRA kembali siaga.
+      tungguSelesai: async (n, batas = 5000) => {
+        const t0 = Date.now();
+        while (Date.now() - t0 < batas) {
+          const log = (await ev('window.__log')) || [];
+          const idx = []; log.forEach((l, i) => { if (l.startsWith('chat:')) idx.push(i); });
+          if (idx.length >= n && log.slice(idx[n - 1]).some((l) => l.startsWith('bicara:')) && (await ev('document.body.dataset.state')) === 'siaga') return true;
+          await tunggu(40);
+        }
+        return false;
+      },
       tungguState: async (nama, batas) => { const t0 = Date.now(); while (Date.now() - t0 < batas) { if ((await ev('document.body.dataset.state')) === nama) return true; await tunggu(40); } return false; },
     };
 

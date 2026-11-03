@@ -87,11 +87,23 @@ Diskusi strategi berbasis data, analisis akar masalah, "dewan penasihat" multi-s
 grafik, dan obrolan biasa.
 
 ### Mode Jarvis (khusus PC kantor)
-Halaman terpisah `jarvis.html`, dibuka di Chrome PC kantor, bukan di HP. Alur: ucapkan
-**"Hei MIRA, …"** (tanpa tombol, tanpa tepukan) → MIRA menjawab dengan suara (ringkas; lengkap di
-layar) → bisa lanjut bertanya tanpa menyebut "Hei MIRA" lagi selama ~15 detik → kembali siaga.
-Ucapkan "Hei MIRA" lagi saat MIRA bicara untuk menyelanya (atau tekan Esc). Perintah diam:
-"Hei MIRA, berhenti". Ucapan penutup: "terima kasih", "cukup", "selesai".
+Halaman terpisah `jarvis.html`, dibuka di Chrome PC kantor, bukan di HP. Alur: sebut nama
+**"MIRA"** bersama pertanyaannya, tanpa tombol dan tanpa tepukan → MIRA menjawab dengan suara
+(ringkas; lengkap di layar) → kembali siaga.
+
+**Aturan nama (inti perlindungan dari obrolan sekitar):** ucapan HANYA diteruskan bila memuat kata
+MIRA — di awal, tengah, atau akhir ("MIRA, berapa sales hari ini", "stok KSFO028 berapa, MIRA").
+Nama dibuang dari pertanyaan sebelum dikirim. Berlaku di SEMUA keadaan, termasuk sesudah MIRA
+menjawab: pertanyaan berikutnya wajib menyebut MIRA lagi, jadi obrolan yang menyusul jawaban tidak
+ikut terkirim. Satu-satunya pengecualian: tepat sesudah MIRA dipanggil sendirian ("MIRA." →
+"Ya, saya dengar."), SATU ucapan berikutnya boleh tanpa nama, lalu padam. Menyela dengan menyebut
+MIRA saat MIRA bicara, atau tekan Esc. Perintah diam: "MIRA, berhenti". Penutup: "MIRA, terima kasih".
+- Nama tegas (mira, mirah, mirra, myra): diterima di mana saja, sapaan "Hei" tidak wajib.
+- Nama longgar (mia, mila, mera, miera, miya): hanya bila didahului sapaan di awal ("Hai Mia"),
+  karena itu juga nama orang dan kata biasa. "Samira", "Amira", "Mirabel" tidak memanggil.
+- Konsekuensi yang diterima: percakapan yang kebetulan menyebut nama "Mira" ikut terpicu.
+- Gema suara MIRA sendiri yang memuat namanya ("Saya MIRA, …") disaring supaya tidak memotong
+  atau memanggil dirinya sendiri.
 
 Memahami ucapan dan konteks:
 - **Hipotesis ganda** — pengenal suara memberi beberapa kemungkinan teks; panggilan "Hei MIRA"
@@ -108,7 +120,7 @@ Memahami ucapan dan konteks:
   konferensi USB); halaman web tidak bisa menaikkan penguatan pengenal suara Chrome.
 
 Privasi: **tanpa gerbang tepukan, pengenal suara Google menyala terus selama mode ini aktif** dan
-suara di dekat mikrofon dikirim ke Google untuk jadi teks. Hanya ucapan berawalan "Hei MIRA" yang
+suara di dekat mikrofon dikirim ke Google untuk jadi teks. Hanya ucapan yang menyebut "MIRA" yang
 diteruskan ke MIRA; sisanya dibuang dan ditandai "diabaikan" di layar. Mikrofon aktif ditandai jelas
 dan ada pemberitahuan privasi di halaman. Matikan mode ini saat membicarakan hal yang tidak boleh keluar.
 
@@ -185,6 +197,6 @@ Mode Jarvis punya penjaga sendiri:
 
 ```bash
 node test-jarvis.js        # logika: "Hei MIRA" + hipotesis ganda, perapian istilah, konteks lanjutan, gema, ringkasan, keamanan HTML
-node test-jarvis-e2e.js    # Chrome sungguhan + pengenal suara tiruan, 13 skenario (butuh Chrome)
+node test-jarvis-e2e.js    # Chrome sungguhan + pengenal suara tiruan, 15 skenario (butuh Chrome)
 node sinkron-tts-jarvis.js # bila aturan pengucapan di index.html berubah, salin ke jarvis.html
 ```

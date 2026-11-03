@@ -61,10 +61,36 @@ t('hanya dipanggil tanpa pertanyaan: dipanggil=true, pertanyaan kosong', () => {
   }
   return null;
 });
-t('SAPAAN WAJIB: menyebut "MIRA" saja tanpa "Hei" tidak memanggil', () => {
-  // Tanpa gerbang apa pun, mikrofon mendengar semua obrolan kantor. "Mira" di awal kalimat tanpa
-  // sapaan terlalu sering muncul di percakapan biasa untuk dijadikan pemicu.
-  for (const s of ['Mira berapa sales hari ini', 'MIRA, target hari ini', 'mira tolong cek stok']) {
+t('NAMA SAJA CUKUP: "MIRA" di awal ucapan memanggil tanpa perlu "Hei"', () => {
+  for (const s of ['Mira berapa sales hari ini', 'MIRA, berapa sales hari ini', 'mirah berapa sales hari ini']) {
+    const r = uji(s);
+    if (!r.dipanggil || r.pertanyaan !== 'berapa sales hari ini') return `"${s}" -> ${JSON.stringify(r)}`;
+  }
+  return null;
+});
+t('NAMA DI MANA SAJA: di akhir atau di tengah ucapan juga memanggil, dan nama dibuang dari pertanyaan', () => {
+  const cek = { 'berapa sales hari ini, MIRA': 'berapa sales hari ini', 'tolong mira cek stok KSFO028': 'tolong cek stok KSFO028', 'berapa piutang CFN mira?': 'berapa piutang CFN', 'kalau kemarin hei mira': 'kalau kemarin' };
+  for (const [s, harus] of Object.entries(cek)) {
+    const r = uji(s);
+    if (!r.dipanggil || r.pertanyaan !== harus) return `"${s}" -> ${JSON.stringify(r)}`;
+  }
+  return null;
+});
+t('nama longgar (mia, mila, mera) TANPA sapaan tidak memanggil — itu nama orang biasa', () => {
+  for (const s of ['Mia tolong kirim laporan', 'Mila sudah datang belum', 'kemarin bareng mera ke gudang', 'berapa sales hari ini mia']) {
+    if (uji(s).dipanggil) return `"${s}" dianggap panggilan`;
+  }
+  return null;
+});
+t('nama longgar DENGAN sapaan di awal tetap memanggil (suara jauh)', () => {
+  for (const s of ['hai mia target hari ini', 'hei mila target hari ini']) {
+    const r = uji(s);
+    if (!r.dipanggil || r.pertanyaan !== 'target hari ini') return `"${s}" -> ${JSON.stringify(r)}`;
+  }
+  return null;
+});
+t('nama yang menempel pada kata lain tidak memanggil: Samira, Amira, Mirabel', () => {
+  for (const s of ['Samira minta data piutang', 'tolong kasih ke Amira', 'Mirabel belum bayar', 'berapa target Almira']) {
     if (uji(s).dipanggil) return `"${s}" dianggap panggilan`;
   }
   return null;
@@ -81,11 +107,11 @@ t('kata yang hanya mirip nama tidak dianggap panggilan', () => {
   }
   return null;
 });
-t('menyebut MIRA di tengah kalimat bukan panggilan', () => {
-  for (const s of ['katanya hei MIRA bisa cek stok', 'kemarin dia bilang hai mira ke saya']) {
-    if (uji(s).dipanggil) return `"${s}" terbaca sebagai panggilan`;
-  }
-  return null;
+t('batas ambang gema dapat diatur: satu kata saja cukup membuktikan gema selagi MIRA bicara', () => {
+  const bicara = 'Saya MIRA asisten cabang Makassar';
+  if (L.apakahGemaSuaraSendiri('saya mira', bicara)) return 'ambang bawaan (4 kata) seharusnya belum menganggap gema';
+  if (!L.apakahGemaSuaraSendiri('saya mira', bicara, 1)) return 'ambang 1 kata seharusnya gema';
+  return L.apakahGemaSuaraSendiri('mira berhenti', bicara, 1) ? '"berhenti" tidak ada di jawaban, bukan gema' : null;
 });
 
 grup('Perintah diam dan penutup sesi');
