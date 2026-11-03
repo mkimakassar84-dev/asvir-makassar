@@ -105,6 +105,16 @@ MIRA saat MIRA bicara, atau tekan Esc. Perintah diam: "MIRA, berhenti". Penutup:
 - Gema suara MIRA sendiri yang memuat namanya ("Saya MIRA, …") disaring supaya tidak memotong
   atau memanggil dirinya sendiri.
 
+Kecepatan: backend butuh 4-12 detik sampai jawabannya utuh (terukur 3 Nov 2026), jadi MIRA **mulai bicara
+sambil jawaban masih mengalir**: kalimat berisi dibacakan begitu tiba; sapaan pembuka dan ajakan penutup
+tetap dibuang, dan angka tak pernah dibacakan separuh. Yang sudah terlanjur diucapkan tidak pernah salah
+(dijaga tes: hasil sebagian selalu awalan dari hasil akhir). Nada konfirmasi berbunyi begitu pertanyaan
+diterima. Disela di tengah aliran: sisa jawaban hanya tampil di layar. Mode "bacakan selengkapnya" tetap
+menunggu jawaban utuh.
+
+Riwayat pendengaran (panel kanan bawah): semua yang tertangkap mikrofon beserta hipotesis lain, tingkat
+yakin, dan alasan diteruskan/diabaikan, dengan tombol Salin. Dipakai untuk menelusuri salah dengar nyata.
+
 Memahami ucapan dan konteks:
 - **Hipotesis ganda** — pengenal suara memberi beberapa kemungkinan teks; panggilan "Hei MIRA"
   dicari di semuanya, jadi salah dengar di hipotesis teratas (mis. "Hai Nira") tidak menghilangkan panggilan.
@@ -197,6 +207,6 @@ Mode Jarvis punya penjaga sendiri:
 
 ```bash
 node test-jarvis.js        # logika: "Hei MIRA" + hipotesis ganda, perapian istilah, konteks lanjutan, gema, ringkasan, keamanan HTML
-node test-jarvis-e2e.js    # Chrome sungguhan + pengenal suara tiruan, 15 skenario (butuh Chrome)
+node test-jarvis-e2e.js    # Chrome sungguhan + pengenal suara tiruan, 18 skenario (butuh Chrome)
 node sinkron-tts-jarvis.js # bila aturan pengucapan di index.html berubah, salin ke jarvis.html
 ```

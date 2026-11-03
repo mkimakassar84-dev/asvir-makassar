@@ -21,7 +21,7 @@ const mulai = html.indexOf('// ==== JARVIS-LOGIKA-MULAI ====');
 const selesai = html.indexOf('// ==== JARVIS-LOGIKA-SELESAI ====');
 if (mulai < 0 || selesai < 0) { console.error('Penanda logika tidak ditemukan di jarvis.html.'); process.exit(1); }
 const L = new Function(`${html.slice(mulai, selesai)}
-  return { ambilPanggilan, ambilPanggilanDariAlternatif, rapikanUcapanDomain, lengkapiPertanyaanLanjutan, nilaiLevelMikrofon, apakahAkhiriSesi, apakahPerintahDiam, apakahGemaSuaraSendiri, ringkasUntukDibacakan, markdownKeHtml, escapeHtml };`)();
+  return { ambilPanggilan, ambilPanggilanDariAlternatif, rapikanUcapanDomain, lengkapiPertanyaanLanjutan, nilaiLevelMikrofon, apakahAkhiriSesi, apakahPerintahDiam, apakahGemaSuaraSendiri, ringkasUntukDibacakan, rencanaBicara, markdownKeHtml, escapeHtml };`)();
 
 let lulus = 0;
 let gagal = 0;
@@ -214,6 +214,61 @@ t('mode lengkap membacakan semuanya tanpa dipotong', () => {
 t('jawaban yang seluruhnya sapaan tidak berubah jadi kosong', () => {
   const s = L.ringkasUntukDibacakan('Halo Pak Rifqi, selamat siang!');
   return s.length ? null : 'hasil kosong';
+});
+
+grup('Bicara bertahap — mulai bicara sebelum jawaban selesai mengalir');
+const SAMPEL = [
+  JAWAB_ZONA, JAWAB_TARGET,
+  'Halo Pak Rifqi! Senang sekali rasanya bisa ngobrol lagi dengan Bapak sore ini. Untuk sales hari ini (Selasa, 3 November 2026), total pencapaian kita adalah **Rp17.813.500** dari total **8 invoice unik**. Semoga penjualan sore ini makin ramai ya, Pak. Kabari kalau butuh rinciannya.',
+  'Stok **KSFO028** — Kabel Fiber Optik 1Core: - Stok MKI: 0 - Stok CFN: 138 - Total: **138** - Harga satuan: Rp985.000',
+  ['Halo Pak Rifqi, selamat sore.', '', '1. Piutang total Rp1.464.257.455.', '2. Rasio AR 9,51%.', '3. Umur 0-30 hari Rp300.000.000.', '4. Umur 31-60 hari Rp200.000.000.',
+    '5. Umur 61-90 hari Rp100.000.000.', '6. Lebih dari 90 hari Rp50.000.000.', '', 'Semoga membantu ya, Pak. Ada yang mau didalami?'].join(String.fromCharCode(10)),
+];
+t('hasil akhir bertahap SAMA PERSIS dengan ringkasan biasa (tak ada perilaku yang berubah)', () => {
+  for (const [i, j] of SAMPEL.entries()) {
+    const r = L.rencanaBicara(j, true);
+    const gabung = r.kalimat.join(' ') + (r.terpotong ? ' Selengkapnya ada di layar.' : '');
+    const biasa = L.ringkasUntukDibacakan(j);
+    if (gabung !== biasa) return `sampel ${i}: bertahap="${gabung}" biasa="${biasa}"`;
+  }
+  return null;
+});
+t('AWALAN: pada setiap titik aliran, yang sudah boleh dibacakan adalah awalan dari hasil akhir', () => {
+  // Inilah jaminan bahwa kalimat yang sudah terlanjur diucapkan tidak pernah salah. Aliran dipotong
+  // di SETIAP posisi karakter, termasuk di tengah angka dan di tengah kata.
+  for (const [i, j] of SAMPEL.entries()) {
+    const akhir = L.rencanaBicara(j, true).kalimat;
+    for (let n = 0; n <= j.length; n++) {
+      const sebagian = L.rencanaBicara(j.slice(0, n), false).kalimat;
+      if (sebagian.length > akhir.length || sebagian.some((k, x) => k !== akhir[x])) return `sampel ${i}, terpotong di ${n}: "${sebagian.join(' | ')}" bukan awalan dari "${akhir.join(' | ')}"`;
+    }
+  }
+  return null;
+});
+t('angka yang baru separuh tiba tidak pernah dibacakan terpotong ("Rp17." dari "Rp17.813.500")', () => {
+  const j = SAMPEL[2];
+  const n = j.indexOf('Rp17.') + 5;
+  const sebagian = L.rencanaBicara(j.slice(0, n), false).kalimat.join(' ');
+  return /Rp17\.(?!813)/.test(sebagian) || /Rp17$/.test(sebagian) ? `kalimat separuh ikut: "${sebagian}"` : null;
+});
+t('mulai bicara lebih awal: kalimat berisi sudah keluar sebelum jawaban selesai', () => {
+  const j = SAMPEL[2];
+  const awal = L.rencanaBicara(j.slice(0, j.indexOf('Semoga')), false).kalimat;
+  return awal.length >= 1 && /Rp17\.813\.500/.test(awal.join(' ')) ? null : JSON.stringify(awal);
+});
+t('sapaan di depan tidak pernah dibacakan, bahkan saat hanya sapaan yang sudah tiba', () => {
+  const j = 'Halo Pak Rifqi! Senang sekali rasanya bisa ngobrol lagi dengan Bapak sore ini. ';
+  return L.rencanaBicara(j, false).kalimat.length === 0 ? null : JSON.stringify(L.rencanaBicara(j, false));
+});
+t('kalimat penutup ditahan, tidak diucapkan sebelum jelas ia penutup', () => {
+  const j = SAMPEL[2];
+  const sampaiPenutup = j.slice(0, j.indexOf('Kabari') + 20); // "Semoga ..." sudah lengkap, "Kabari ..." belum
+  const k = L.rencanaBicara(sampaiPenutup, false).kalimat.join(' ');
+  return /Semoga|Kabari/.test(k) ? `penutup ikut diucapkan: "${k}"` : null;
+});
+t('blok kode/grafik yang belum utuh tidak dibacakan', () => {
+  const j = 'Berikut grafiknya. ' + '`'.repeat(3) + 'chart' + String.fromCharCode(10) + '{"type":"bar","data":[1,2';
+  return /chart|type|bar/.test(L.rencanaBicara(j, false).kalimat.join(' ')) ? 'isi blok ikut dibacakan' : null;
 });
 
 grup('Penyaji markdown — harus aman');

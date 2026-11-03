@@ -169,6 +169,14 @@
     white-space: pre-line; color: var(--redup); font-size: 14px; line-height: 1.7;
   }
   .gelembung { max-width: 100%; }
+  .riwayat { border-top: 1px solid var(--garis); padding: 8px 22px 12px; font-size: 12px; color: var(--redup); }
+  .riwayat summary { cursor: pointer; font-family: var(--mono); letter-spacing: .06em; }
+  .riwayat-info { margin: 8px 0; line-height: 1.5; }
+  #daftarDengar { max-height: 190px; overflow-y: auto; display: grid; gap: 6px; }
+  .dengar-baris { padding: 6px 8px; background: var(--panel-2); border-left: 2px solid var(--garis); border-radius: 3px; line-height: 1.45; color: var(--teks); }
+  .dengar-baris.ya { border-left-color: var(--emas); }
+  .dengar-baris small { display: block; color: var(--redup); }
+  #salinDengar { margin-top: 8px; padding: 5px 10px; font-size: 12px; border: 1px solid var(--garis); border-radius: 3px; background: transparent; color: var(--teks); cursor: pointer; }
   .gelembung .catatan { margin-top: 4px; font-size: 11.5px; color: var(--redup); font-style: italic; }
   .gelembung .siapa { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; margin-bottom: 4px; }
   .gelembung.anda .siapa { color: var(--redup); }
@@ -234,6 +242,12 @@
   <aside class="percakapan">
     <h2><span>Percakapan</span><button type="button" id="bersihkan">Bersihkan</button></h2>
     <div id="log" aria-live="polite"></div>
+    <details class="riwayat" id="riwayat">
+      <summary>Riwayat pendengaran <span id="jumlahDengar"></span></summary>
+      <p class="riwayat-info">Semua yang tertangkap mikrofon, termasuk yang diabaikan, beserta alasannya. Bila MIRA salah dengar, salin dan kirim ke pengembang.</p>
+      <div id="daftarDengar"></div>
+      <button type="button" id="salinDengar">Salin riwayat</button>
+    </details>
   </aside>
 </div>
 
@@ -470,10 +484,8 @@
       .trim();
   }
 
-  function ringkasUntukDibacakan(teks, opsi) {
-    opsi = opsi || {};
-    const bersih = bersihkanUntukSuara(teks);
-    if (opsi.lengkap) return bersih;
+  // Memecah teks bersih menjadi kalimat; penanda daftar ("1.", "-", "*") dibuang.
+  function pecahUnit(bersih) {
     const unit = [];
     for (const baris of bersih.split(/\n+/)) {
       const b = baris.trim().replace(/^(?:\d+[.)]|[-*•])\s+/, '');
@@ -483,12 +495,22 @@
         if (kt) unit.push(kt);
       }
     }
-    if (!unit.length) return bersih;
+    return unit;
+  }
+
+  // Memilih kalimat yang dibacakan: buang sapaan pembuka (di depan) dan penutup (di belakang) yang
+  // tak berangka, lalu batasi 5 kalimat / 340 karakter. selesai=false dipakai saat jawaban MASIH
+  // MENGALIR: kalimat paling belakang yang tampak seperti penutup ditahan dulu (bisa jadi memang
+  // penutup, bisa jadi bukan — baru ketahuan setelah kalimat berikutnya tiba), dan sapaan di depan
+  // boleh habis dibuang. Hanya sesudah selesai=true aturan "sisakan minimal satu kalimat" berlaku.
+  function pilihUnit(unit, selesai) {
     const tanpaAngka = (u) => !/\d/.test(u) && u.length <= 240;
     let awal = 0;
-    while (awal < unit.length - 1 && tanpaAngka(unit[awal]) && SAPAAN_PEMBUKA.test(unit[awal])) awal++;
+    const batasAwal = selesai ? unit.length - 1 : unit.length;
+    while (awal < batasAwal && tanpaAngka(unit[awal]) && SAPAAN_PEMBUKA.test(unit[awal])) awal++;
     let akhir = unit.length;
-    while (akhir - 1 > awal && tanpaAngka(unit[akhir - 1]) && PENUTUP.test(unit[akhir - 1])) akhir--;
+    const batasAkhir = selesai ? awal + 1 : awal;
+    while (akhir > batasAkhir && tanpaAngka(unit[akhir - 1]) && PENUTUP.test(unit[akhir - 1])) akhir--;
     const isi = unit.slice(awal, akhir);
     const terpilih = [];
     let panjang = 0;
@@ -497,8 +519,51 @@
       terpilih.push(u);
       panjang += u.length;
     }
-    const terpotong = terpilih.length < isi.length;
+    return { terpilih, terpotong: terpilih.length < isi.length };
+  }
+
+  function ringkasUntukDibacakan(teks, opsi) {
+    opsi = opsi || {};
+    const bersih = bersihkanUntukSuara(teks);
+    if (opsi.lengkap) return bersih;
+    const unit = pecahUnit(bersih);
+    if (!unit.length) return bersih;
+    const { terpilih, terpotong } = pilihUnit(unit, true);
     return terpilih.join(' ') + (terpotong ? ' Selengkapnya ada di layar.' : '');
+  }
+
+  // Posisi akhir bagian teks yang kalimatnya sudah LENGKAP: sampai baris terakhir yang sudah
+  // berakhir (\n) atau tanda akhir kalimat yang sudah disusul spasi. "Rp17." yang baru separuh
+  // angka ("Rp17.813.500") tidak dihitung, karena titiknya belum disusul spasi.
+  function batasKalimatLengkap(t) {
+    let batas = t.lastIndexOf('\n') + 1;
+    const re = /[.!?](?=\s)/g;
+    let m;
+    while ((m = re.exec(t))) {
+      // "1." di awal baris adalah nomor daftar, bukan akhir kalimat: isi barisnya belum tiba.
+      const awalBaris = t.lastIndexOf('\n', m.index) + 1;
+      if (/^\s*\d+[.)]$/.test(t.slice(awalBaris, m.index + 1))) continue;
+      batas = Math.max(batas, m.index + 1);
+    }
+    return batas;
+  }
+
+  // Rencana bicara bertahap: jawaban MIRA mengalir dari backend 4-12 detik, dan menunggunya selesai
+  // sebelum bicara adalah penyebab utama terasa lambat. Fungsi ini dipanggil berulang dengan teks
+  // yang SEMAKIN PANJANG dan mengembalikan kalimat yang sudah boleh dibacakan. Syarat yang dijaga
+  // tes: hasil untuk teks sebagian selalu berupa AWALAN dari hasil untuk teks lengkap, sehingga
+  // yang sudah diucapkan tidak pernah perlu ditarik kembali, dan hasil akhirnya sama persis dengan
+  // ringkasUntukDibacakan.
+  function rencanaBicara(teks, selesai) {
+    let t = String(teks || '');
+    if (!selesai) {
+      const f = t.indexOf('```'); // blok kode/grafik yang belum tentu utuh
+      if (f >= 0) t = t.slice(0, f);
+      t = t.slice(0, batasKalimatLengkap(t));
+    }
+    const unit = pecahUnit(bersihkanUntukSuara(t));
+    const { terpilih, terpotong } = pilihUnit(unit, !!selesai);
+    return { kalimat: terpilih, terpotong };
   }
 
   function escapeHtml(s) {
@@ -686,12 +751,14 @@
   // tahu kapan MIRA selesai supaya bisa kembali mendengarkan.
   // =========================================================================================
   let tokenBicara = 0;
-  function speak(text, onSelesai) {
-    const token = ++tokenBicara;
+  // tambah=true: menyambung ke antrean ucapan yang sedang berjalan (tanpa memotongnya) — dipakai
+  // saat jawaban dibacakan bertahap sambil masih mengalir dari backend.
+  function speak(text, onSelesai, tambah) {
+    const token = tambah ? tokenBicara : ++tokenBicara;
     let sudah = false;
     const selesai = () => { if (sudah || token !== tokenBicara) return; sudah = true; if (onSelesai) onSelesai(); };
     if (!('speechSynthesis' in window)) { setTimeout(selesai, 0); return; }
-    window.speechSynthesis.cancel();
+    if (!tambah) window.speechSynthesis.cancel();
     const segments = buildSpeechSegments(text);
     if (!segments.length) { setTimeout(selesai, 0); return; }
     const BASE_PITCH = 1.05;
@@ -723,6 +790,7 @@
     orb: $('orb'), status: $('statusUtama'), rinci: $('statusRinci'), dengar: $('sedangDengar'),
     log: $('log'), tombol: $('tombolUtama'), galat: $('galat'), labelMik: $('labelMik'),
     lengkap: $('tglLengkap'), bersihkan: $('bersihkan'),
+    daftarDengar: $('daftarDengar'), jumlahDengar: $('jumlahDengar'), salinDengar: $('salinDengar'),
     meter: $('meter'), meterIsi: $('meterIsi'), meterTeks: $('meterTeks'), saran: $('saranMik'),
     loginBox: $('loginBox'), kode: $('kodeInput'), loginBtn: $('loginBtn'),
   };
@@ -770,6 +838,34 @@
 
   el.lengkap.checked = baca('miraJarvisLengkap') === '1';
   el.lengkap.addEventListener('change', () => simpan('miraJarvisLengkap', el.lengkap.checked ? '1' : '0'));
+
+  // ---------- riwayat pendengaran ----------
+  // Bukti nyata untuk menyetel: apa yang SEBENARNYA ditulis pengenal suara (semua hipotesisnya),
+  // berapa yakinnya, dan apa yang MIRA lakukan dengannya. "Tidak mengenal kalimat sederhana" tak
+  // bisa dipastikan dari tebakan; dengan riwayat ini terlihat apakah masalahnya salah dengar nama,
+  // salah dengar kalimat, atau MIRA yang salah menanggapi.
+  const riwayatDengar = [];
+  function catatDengar(alt, yakin, hasil, dikirim) {
+    riwayatDengar.unshift({ waktu: new Date().toLocaleTimeString('id-ID'), alt: alt.slice(), yakin: yakin || 0, hasil, dikirim: !!dikirim });
+    if (riwayatDengar.length > 30) riwayatDengar.pop();
+    el.jumlahDengar.textContent = '(' + riwayatDengar.length + ')';
+    el.daftarDengar.textContent = '';
+    for (const r of riwayatDengar) {
+      const d = document.createElement('div');
+      d.className = 'dengar-baris' + (r.dikirim ? ' ya' : '');
+      const utama = document.createElement('div');
+      utama.textContent = r.waktu + ' — “' + r.alt[0] + '”' + (r.yakin ? ' (' + Math.round(r.yakin * 100) + '%)' : '');
+      const info = document.createElement('small');
+      info.textContent = r.hasil + (r.alt.length > 1 ? ' · hipotesis lain: ' + r.alt.slice(1).map((x) => '“' + x + '”').join(', ') : '');
+      d.append(utama, info);
+      el.daftarDengar.appendChild(d);
+    }
+  }
+  el.salinDengar.addEventListener('click', () => {
+    const teks = riwayatDengar.map((r) => r.waktu + ' | ' + r.alt.map((x) => '"' + x + '"').join(' / ') + ' | yakin ' + Math.round(r.yakin * 100) + '% | ' + r.hasil).join(String.fromCharCode(10));
+    try { navigator.clipboard.writeText(teks); el.salinDengar.textContent = 'Tersalin'; } catch { el.salinDengar.textContent = 'Gagal menyalin'; }
+    setTimeout(() => { el.salinDengar.textContent = 'Salin riwayat'; }, 2000);
+  });
 
   function tampilGalat(pesan) { el.galat.textContent = pesan || ''; }
 
@@ -920,7 +1016,9 @@
       // Selama MIRA bicara, hanya ucapan yang menyebut "MIRA" yang dianggap: yang lain hampir pasti
       // suaranya sendiri dari speaker atau obrolan lain di ruangan. Jawaban MIRA kadang memuat
       // namanya sendiri ("Saya MIRA, …"); gemanya tidak boleh menyela dirinya.
-      if (!p.dipanggil || apakahGemaPanggilan(p.pertanyaan, true)) return;
+      if (!p.dipanggil) return catatDengar(alt, yakin, 'diabaikan: MIRA sedang bicara dan tidak ada nama MIRA');
+      if (apakahGemaPanggilan(p.pertanyaan, true)) return catatDengar(alt, yakin, 'diabaikan: gema suara MIRA sendiri');
+      catatDengar(alt, yakin, 'diteruskan: menyela', true);
       hentikanBicara();
       clearTimeout(penjagaBicara);
       setState('sesi', 'Menyela');
@@ -933,17 +1031,18 @@
     // orang. Tanpa pengecualian ini, menyela MIRA dengan "Hei MIRA, stok KSFO028" membuang
     // pertanyaannya sendiri: membatalkan ucapan MIRA ikut memulai jendela abai.
     if (!p.dipanggil) {
-      if (Date.now() < abaikanSampai) return;
-      if (Date.now() - selesaiBicaraPada < 3500 && apakahGemaSuaraSendiri(teks, terakhirDibacakan)) return;
+      if (Date.now() < abaikanSampai) return catatDengar(alt, yakin, 'diabaikan: ekor suara MIRA sendiri');
+      if (Date.now() - selesaiBicaraPada < 3500 && apakahGemaSuaraSendiri(teks, terakhirDibacakan)) return catatDengar(alt, yakin, 'diabaikan: gema suara MIRA sendiri');
     } else if (apakahGemaPanggilan(p.pertanyaan, false)) {
-      return; // gema jawaban MIRA yang kebetulan menyebut namanya
+      return catatDengar(alt, yakin, 'diabaikan: gema jawaban MIRA yang menyebut namanya');
     }
 
     if (state === 'siaga') {
-      if (!p.dipanggil) return tampilTerdengar(teks, true);
+      if (!p.dipanggil) { catatDengar(alt, yakin, 'diabaikan: tidak ada kata MIRA'); return tampilTerdengar(teks, true); }
+      catatDengar(alt, yakin, p.pertanyaan ? 'diteruskan: "' + p.pertanyaan + '"' : 'dipanggil tanpa pertanyaan', true);
       riak.push({ t0: performance.now(), besar: true });
-      bunyi();
       if (!p.pertanyaan) {
+        bunyi();
         setState('berbicara', 'Memanggil');
         return bicaraLalu('Ya, saya dengar.', lanjutSesi, 20);
       }
@@ -953,11 +1052,13 @@
     // state === 'sesi' (MIRA baru dipanggil sendirian, atau sedang menyela): nama tetap WAJIB,
     // kecuali satu ucapan tepat setelah panggilan sendirian itu.
     if (!p.dipanggil) {
-      if (!tanpaPanggilSekali) return tampilTerdengar(teks, true);
+      if (!tanpaPanggilSekali) { catatDengar(alt, yakin, 'diabaikan: tidak ada kata MIRA'); return tampilTerdengar(teks, true); }
       tanpaPanggilSekali = false;
+      catatDengar(alt, yakin, 'diteruskan: satu ucapan tanpa nama sesudah dipanggil', true);
       return sesiMenerima(teks);
     }
     tanpaPanggilSekali = false;
+    catatDengar(alt, yakin, 'diteruskan: "' + p.pertanyaan + '"', true);
     sesiMenerima(p.pertanyaan);
   }
 
@@ -1078,11 +1179,60 @@
     el.meterIsi.style.width = '0'; el.meterTeks.textContent = '—'; el.meter.dataset.nilai = ''; el.saran.textContent = '';
   }
 
+  // ---------- bicara bertahap ----------
+  // Backend butuh 4-12 detik sampai jawabannya utuh. Daripada menunggu, kalimat berisi dibacakan
+  // begitu tiba (lihat rencanaBicara: yang sudah diucapkan tak pernah perlu ditarik). Satu aliran
+  // dimiliki satu pertanyaan; bila disela, aliran itu dilepas dan sisa jawabannya hanya tampil di layar.
+  let nomorKirim = 0;
+  let alir = null;
+  function mulaiAlir() {
+    alir = { sudah: 0, mulaiBicara: false, antre: 0, selesai: false, perkiraan: 0 };
+    return alir;
+  }
+  function akhiriAlir(a) {
+    if (alir !== a) return;
+    clearTimeout(penjagaBicara);
+    alir = null;
+    selesaiBicaraPada = Date.now();
+    abaikanSampai = selesaiBicaraPada + 700;
+    if (state === 'berbicara') keSiaga('Siaga — sebut “MIRA” untuk bertanya lagi');
+  }
+  function bicaraAntre(a, ucap) {
+    const pertama = !a.mulaiBicara;
+    if (pertama) {
+      a.mulaiBicara = true;
+      terakhirDibacakan = '';
+      setState('berbicara', 'Membacakan ringkasan — sebut “MIRA” untuk menyela');
+    }
+    // Penyaring gema membandingkan dengan yang benar-benar DIUCAPKAN, jadi dikumpulkan per potongan.
+    terakhirDibacakan = (terakhirDibacakan + ' ' + buildSpeechSegments(ucap).map((x) => x.text).join(' ')).trim();
+    a.antre++;
+    a.perkiraan += ucap.length;
+    // Penjaga: onend kadang tak datang (bug lama Chrome); mode ini tak boleh macet.
+    clearTimeout(penjagaBicara);
+    penjagaBicara = setTimeout(() => { a.selesai = true; a.antre = 0; akhiriAlir(a); }, Math.min(180000, 8000 + a.perkiraan * 110));
+    speak(ucap, () => { if (alir !== a) return; a.antre--; if (a.antre <= 0 && a.selesai) akhiriAlir(a); }, !pertama);
+  }
+  function alirMaju(a, penuh, selesai) {
+    if (alir !== a) return;
+    if (state !== 'berpikir' && !(state === 'berbicara' && a.mulaiBicara)) { alir = null; return; } // disela / dihentikan
+    const r = rencanaBicara(penuh, selesai);
+    const baru = r.kalimat.slice(a.sudah);
+    a.sudah = r.kalimat.length;
+    let ucap = baru.join(' ');
+    if (selesai && r.terpotong) ucap += (ucap ? ' ' : '') + 'Selengkapnya ada di layar.';
+    if (selesai) a.selesai = true;
+    if (ucap) bicaraAntre(a, ucap);
+    else if (selesai && a.mulaiBicara && a.antre <= 0) akhiriAlir(a);
+  }
+
   // ---------- kirim ke MIRA ----------
   // asli: ucapan sebelum dilengkapi dari konteks (kosong bila tidak dilengkapi). Yang ditampilkan
   // adalah apa yang BENAR-BENAR dikirim, plus apa yang diucapkan, supaya salah paham terlihat.
   async function kirim(kalimat, asli) {
     clearTimeout(timerSesi);
+    const saya = ++nomorKirim;   // pertanyaan baru (mis. menyela) membuat aliran lama tak lagi berhak bicara
+    bunyi();                     // tanda segera: pertanyaanmu sudah diterima, jangan diulang
     setState('berpikir', 'Menanyakan ke MIRA');
     tampilTerdengar(kalimat, false);
     pertanyaanTerakhir = kalimat;
@@ -1090,6 +1240,14 @@
     tambahLog('anda', escapeHtml(kalimat) + (asli ? `<div class="catatan">dipahami dari: “${escapeHtml(asli)}”</div>` : ''));
     let penuh = '';
     let galatPesan = '';
+    let gelembung = null;
+    const tampilJawaban = () => {
+      if (!gelembung) gelembung = tambahLog('mira', '');
+      gelembung.querySelector('.isi').innerHTML = markdownKeHtml(penuh);
+      el.log.scrollTop = el.log.scrollHeight;
+    };
+    // Mode "bacakan lengkap" tetap menunggu jawaban utuh; mode ringkas bicara sambil jawaban mengalir.
+    const a = el.lengkap.checked ? null : mulaiAlir();
     try {
       const koreksi = kalimat.replace(/\bstop\b/gi, 'stok'); // pengenal suara kerap menulis "stop" untuk "stok"
       const res = await fetch(`${API_BASE}/chat`, {
@@ -1126,20 +1284,32 @@
             for (const p of parts) if (p.text) penuh += p.text;
           } catch { /* potongan bukan JSON */ }
         }
+        if (saya === nomorKirim && penuh) {
+          tampilJawaban();
+          if (a) alirMaju(a, penuh, false);
+        }
       }
     } catch (err) {
       galatPesan = err.message || 'Gagal mengambil jawaban.';
     }
+    if (saya !== nomorKirim) return;   // sudah digantikan pertanyaan baru
     if (!aktif && !galatPesan) return;
 
     if (galatPesan) {
+      alir = null;
       tambahLog('mira', escapeHtml('⚠ ' + galatPesan), 'galat');
       if (!aktif) return;
       setState('berbicara', 'Gangguan');
       return bicaraLalu('Maaf, ada gangguan. Coba lagi ya.', () => keSiaga('Siaga setelah gangguan.'), 30);
     }
     chatHistory.push({ role: 'user', text: kalimat }, { role: 'model', text: penuh });
-    tambahLog('mira', markdownKeHtml(penuh));
+    tampilJawaban();
+    if (a) {
+      alirMaju(a, penuh, true);
+      if (a.mulaiBicara) return;                 // sudah dibacakan bertahap (alirMaju yang menutupnya)
+      if (state !== 'berpikir') return;          // disela selagi menunggu
+    }
+    alir = null;
     if (state !== 'berpikir') return;
     const ucap = ringkasUntukDibacakan(penuh, { lengkap: el.lengkap.checked });
     if (!ucap) return keSiaga('Jawaban kosong.');

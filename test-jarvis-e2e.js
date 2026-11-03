@@ -11,7 +11,7 @@
  * YANG TIDAK DIUKUR: seberapa baik Google mengenali suara pada logat dan ruangan kantor. Tes ini
  * membuktikan bahwa GIVEN transkrip tertentu, MIRA bereaksi dengan benar — tidak lebih.
  *
- * Lima belas skenario, termasuk yang menjaga keamanan: obrolan kantor tanpa "Hei MIRA" tidak pernah
+ * Delapan belas skenario, termasuk yang menjaga keamanan: obrolan kantor tanpa "Hei MIRA" tidak pernah
  * sampai ke MIRA, suara MIRA sendiri tidak dianggap pertanyaan, dan setelah dimatikan pendengar
  * tidak menyala lagi.
  *
@@ -74,7 +74,8 @@ const STUB = `
     getVoices() { return []; }, onvoiceschanged: null,
     cancel() { window.__log.push('cancel'); const u = window.__sedang; window.__sedang = null; if (u && u.onerror) setTimeout(() => u.onerror(), 0); },
     speak(u) {
-      window.__log.push('bicara:' + String(u.text)); // teks SESUDAH aturan pengucapan: tanda baca sudah dibuang ("Sama sama", bukan "Sama-sama")
+      if (!window.__bicaraPertama) window.__bicaraPertama = performance.now();
+      window.__log.push('bicara:' + String(u.text));// teks SESUDAH aturan pengucapan: tanda baca sudah dibuang ("Sama sama", bukan "Sama-sama")
       window.__sedang = u;
       setTimeout(() => { if (window.__sedang === u) { window.__sedang = null; if (u.onend) u.onend(); } }, window.__lamaBicara);
     },
@@ -87,6 +88,22 @@ const STUB = `
       const b = JSON.parse(opts.body);
       window.__log.push('chat:' + b.message + '|kode=' + b.accessCode);
       const enc = new TextEncoder();
+      // Jawaban yang MENGALIR sepotong-sepotong dengan jeda (potongannya sengaja memotong angka di
+      // tengah), seperti backend sungguhan. "lambat" memperpanjang jeda supaya sempat disela.
+      if (/bertahap/.test(b.message)) {
+        const jeda = /lambat/.test(b.message) ? 900 : 350;
+        const potongan = ['Halo Pak Rifqi! Senang sekali bisa ngobrol lagi sore ini. ', 'Sales hari ini sudah **Rp17.8', '13.500** dari 8 invoice unik. ', 'Stok kabel masih aman, ',
+          'ada 138 unit. Target bulan ini Rp83.539.062 ', 'dan baru tercapai 20%. Semoga penjualan makin ramai ya, Pak. ', 'Kabari kalau butuh rinciannya.'];
+        window.__bicaraPertama = 0; window.__alirTutup = 0;
+        return Promise.resolve(new Response(new ReadableStream({ async start(c) {
+          for (const p of potongan) {
+            c.enqueue(enc.encode('data: ' + JSON.stringify({ candidates: [{ content: { parts: [{ text: p }] } }] }) + '\\n\\n'));
+            await new Promise((r) => setTimeout(r, jeda));
+          }
+          window.__alirTutup = performance.now();
+          c.close();
+        } }), { status: 200 }));
+      }
       // Jawaban yang menyebut nama MIRA sendiri: bahan uji gema suara yang memuat kata panggil.
       const isi = /siapa kamu/.test(b.message)
         ? 'Saya MIRA, asisten cabang Makassar yang membantu memantau sales dan piutang setiap hari.'
@@ -124,6 +141,72 @@ const SKENARIO = {
       'doa penutup TIDAK dibacakan': !/semoga/i.test(dibacakan),
       'penutup dijawab "Sama-sama" dan kembali siaga': log.some((l) => /^bicara:Sama sama/.test(l)),
       'jawaban tampil di layar': /15\.464\.900/.test(await s.layar()),
+      'riwayat mencatat ucapan yang diteruskan': /diteruskan/.test(await s.eval("document.getElementById('daftarDengar').textContent")),
+    };
+  },
+
+  async 'jawaban-mengalir'(s) {
+    // Inti keluhan "kurang responsif": MIRA harus mulai bicara SEBELUM jawaban selesai mengalir.
+    await s.aktifkan();
+    await s.ucapkan('MIRA, berapa sales hari ini bertahap');
+    await s.tungguSelesai(1, 9000);
+    const log = await s.log();
+    const bicara = log.filter((l) => l.startsWith('bicara:')).map((l) => l.slice(7)).join(' ');
+    const mulai = await s.eval('window.__bicaraPertama');
+    const tutup = await s.eval('window.__alirTutup');
+    const urutan = await s.urutan();
+    return {
+      'mulai bicara SEBELUM jawaban selesai mengalir': mulai > 0 && tutup > 0 && mulai < tutup - 400,
+      'angka utuh dibacakan sekali (tidak terpotong di tengah)': (bicara.match(/17813500/g) || []).length === 1 && !/ Rp17 | 17 Rupiah/.test(bicara),
+      'kalimat berisi dibacakan semua': /138/.test(bicara) && /83539062/.test(bicara) && /invoice unik/.test(bicara),
+      'sapaan pembuka TIDAK dibacakan': !/Halo|Senang sekali/i.test(bicara),
+      'doa dan ajakan penutup TIDAK dibacakan': !/Semoga|Kabari/i.test(bicara),
+      'urutan siaga>berpikir>berbicara>siaga': berurutan(urutan, ['siaga', 'berpikir', 'berbicara', 'siaga']) && !urutan.includes('sesi'),
+      'jawaban lengkap tampil di layar': /17\.813\.500/.test(await s.layar()) && /Kabari/.test(await s.layar()),
+    };
+  },
+
+  async 'menyela-saat-mengalir'(s) {
+    // MIRA sedang membacakan bagian awal, sisanya masih mengalir. "MIRA, berhenti" harus menghentikan
+    // semuanya — bagian yang tiba sesudahnya tidak boleh diucapkan lagi.
+    await s.aktifkan();
+    await s.set('window.__lamaBicara = 300');
+    await s.ucapkan('MIRA, berapa sales hari ini bertahap lambat');
+    await s.tungguState('berbicara', 6000);
+    await tunggu(100);
+    await s.ucapkan('MIRA, berhenti');
+    await s.tungguState('siaga', 3000);
+    const sebelum = (await s.log()).filter((l) => l.startsWith('bicara:')).length;
+    await tunggu(7000);                                       // sisa aliran tiba sesudah dihentikan
+    const log = await s.log();
+    return {
+      'ucapan dipotong': log.includes('cancel'),
+      'kembali siaga': (await s.state()) === 'siaga',
+      'sisa jawaban yang tiba sesudahnya TIDAK diucapkan': log.filter((l) => l.startsWith('bicara:')).length === sebelum,
+      'sisa jawaban tetap tampil di layar': /Kabari/.test(await s.layar()),
+      '"berhenti" tidak dikirim sebagai pertanyaan': jumlah(log, 'chat:') === 1,
+    };
+  },
+
+  async 'pertanyaan-baru-saat-mengalir'(s) {
+    // Disela dengan PERTANYAAN BARU selagi jawaban lama masih mengalir: jawaban lama dilepas, yang
+    // dibacakan hanyalah jawaban pertanyaan baru.
+    await s.aktifkan();
+    await s.set('window.__lamaBicara = 300');
+    await s.ucapkan('MIRA, berapa sales hari ini bertahap lambat');
+    await s.tungguState('berbicara', 6000);
+    await tunggu(100);
+    await s.ucapkan('MIRA, target hari ini');
+    await s.tungguSelesai(2, 9000);
+    await tunggu(6000);                                       // sisa aliran lama tiba
+    const log = await s.log();
+    const bicara = log.filter((l) => l.startsWith('bicara:')).map((l) => l.slice(7));
+    const sesudahBatal = bicara.join(' ');
+    return {
+      'pertanyaan baru terkirim': log.some((l) => l.startsWith('chat:target hari ini|')),
+      'jawaban pertanyaan baru dibacakan': /15464900/.test(sesudahBatal),
+      'sisa jawaban LAMA tidak pernah diucapkan': !/138|Stok kabel/.test(sesudahBatal),
+      'berakhir siaga': (await s.state()) === 'siaga',
     };
   },
 
@@ -208,6 +291,7 @@ const SKENARIO = {
       'MIRA tidak berbicara': jumlah(log, 'bicara:') === 0,
       'tetap siaga sepanjang waktu': urutan.every((x) => x === 'siaga'),
       'ucapan yang diabaikan ditandai di layar': /diabaikan/.test(await s.dengar()),
+      'riwayat pendengaran mencatat SEMUA ucapan beserta alasannya': (await s.eval("document.querySelectorAll('#daftarDengar .dengar-baris').length")) === 7 && /tidak ada kata MIRA/.test(await s.eval("document.getElementById('daftarDengar').textContent")),
     };
   },
 
