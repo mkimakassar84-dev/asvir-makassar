@@ -86,6 +86,19 @@ PO Gudang, KPI personel & absensi, jabatan, alamat kantor, jam & tanggal sekaran
 Diskusi strategi berbasis data, analisis akar masalah, "dewan penasihat" multi-sudut-pandang,
 grafik, dan obrolan biasa.
 
+### Mode Jarvis (khusus PC kantor)
+Halaman terpisah `jarvis.html`, dibuka di Chrome PC kantor, bukan di HP. Alur: **tepuk tangan 2×**
+→ ucapkan **"Hai MIRA, …"** → MIRA menjawab dengan suara (ringkas; lengkap di layar) → bisa lanjut
+bertanya tanpa menyebut "Hai MIRA" lagi selama ~12 detik → kembali siaga. Tepuk 2× lagi saat MIRA
+bicara untuk menyelanya (atau tekan Esc). Ucapan penutup: "terima kasih", "cukup", "selesai".
+
+Privasi: tepukan dideteksi di dalam browser (analisis gelombang suara, tidak dikirim ke mana pun).
+Pengenal suara Google baru menyala SETELAH tepuk ganda, dan ucapan tanpa "Hai MIRA" tidak pernah
+dikirim ke MIRA. Mikrofon aktif ditandai jelas di layar.
+
+Batas: halaman harus terbuka dan layar PC menyala (layar dijaga tetap menyala hanya selama mode ini
+aktif); butuh internet untuk pengenal suara; kepekaan tepuk harus disetel di PC yang sebenarnya.
+
 ---
 
 ## 3. Keputusan yang TIDAK BOLEH diubah tanpa alasan kuat
@@ -106,6 +119,7 @@ Masing-masing lahir dari kesalahan nyata yang dilaporkan. Semuanya dijaga oleh `
 | **Duplikasi dipisah menurut jenis risikonya** | Nomor sama + tanggal beda ≠ tagih ganda | Angka risiko digelembungkan |
 | **Retur tidak menambah hitungan invoice** | Retur itu pembalikan, bukan transaksi baru | Jumlah transaksi menggelembung |
 | **Sinkronisasi kosong tidak menimpa data lama** | Google Sheets pernah membalas kosong | Seluruh data hilang, MIRA mengarang |
+| **Mode Jarvis tidak boleh mengubah MIRA di HP personel** | Permintaan Branch Manager: satu mode baru khusus PC kantor, HP tetap seperti semula | `index.html`, `sw.js`, dan backend tidak disentuh oleh pekerjaan Jarvis; aturan pengucapan hanya DISALIN satu arah (`sinkron-tts-jarvis.js`) |
 | **Satu hal = satu angka.** Bulan berjalan ikut buku transaksi, bukan kolom rekap sheet | Sheet Rp606.839.800 vs buku Rp597.119.800 | Pertanyaan sama dijawab beda tiap kali ditanya |
 | **Invoice per wilayah dihitung dari buku transaksi**, sheet hanya penyedia daftar nama wilayah | Papan KPI dulu ikut menghitung retur (Makassar 499 vs 482) | Dua angka untuk wilayah yang sama |
 | **Yang "terlemah" punya field sendiri**, bukan ekor daftar teratas | Ekor top-20 pernah disebut sebagai wilayah terlemah | Barru (46) disebut terlemah, padahal ada yang 1 |
@@ -149,3 +163,11 @@ npx wrangler deploy      # baru deploy
 
 Kalau mengubah tampilan (`index.html`), naikkan `CACHE_NAME` di `sw.js` supaya HP memuat versi
 baru, lalu `git push` (GitHub Pages).
+
+Mode Jarvis punya penjaga sendiri:
+
+```bash
+node test-jarvis.js        # logika: pendeteksi tepuk, "Hai MIRA", ringkasan, keamanan HTML
+node test-jarvis-e2e.js    # Chrome sungguhan + mikrofon tiruan, 6 skenario (butuh Chrome)
+node sinkron-tts-jarvis.js # bila aturan pengucapan di index.html berubah, salin ke jarvis.html
+```
