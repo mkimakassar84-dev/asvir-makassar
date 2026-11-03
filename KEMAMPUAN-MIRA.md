@@ -87,17 +87,34 @@ Diskusi strategi berbasis data, analisis akar masalah, "dewan penasihat" multi-s
 grafik, dan obrolan biasa.
 
 ### Mode Jarvis (khusus PC kantor)
-Halaman terpisah `jarvis.html`, dibuka di Chrome PC kantor, bukan di HP. Alur: **tepuk tangan 2×**
-→ ucapkan **"Hai MIRA, …"** → MIRA menjawab dengan suara (ringkas; lengkap di layar) → bisa lanjut
-bertanya tanpa menyebut "Hai MIRA" lagi selama ~12 detik → kembali siaga. Tepuk 2× lagi saat MIRA
-bicara untuk menyelanya (atau tekan Esc). Ucapan penutup: "terima kasih", "cukup", "selesai".
+Halaman terpisah `jarvis.html`, dibuka di Chrome PC kantor, bukan di HP. Alur: ucapkan
+**"Hei MIRA, …"** (tanpa tombol, tanpa tepukan) → MIRA menjawab dengan suara (ringkas; lengkap di
+layar) → bisa lanjut bertanya tanpa menyebut "Hei MIRA" lagi selama ~15 detik → kembali siaga.
+Ucapkan "Hei MIRA" lagi saat MIRA bicara untuk menyelanya (atau tekan Esc). Perintah diam:
+"Hei MIRA, berhenti". Ucapan penutup: "terima kasih", "cukup", "selesai".
 
-Privasi: tepukan dideteksi di dalam browser (analisis gelombang suara, tidak dikirim ke mana pun).
-Pengenal suara Google baru menyala SETELAH tepuk ganda, dan ucapan tanpa "Hai MIRA" tidak pernah
-dikirim ke MIRA. Mikrofon aktif ditandai jelas di layar.
+Memahami ucapan dan konteks:
+- **Hipotesis ganda** — pengenal suara memberi beberapa kemungkinan teks; panggilan "Hei MIRA"
+  dicari di semuanya, jadi salah dengar di hipotesis teratas (mis. "Hai Nira") tidak menghilangkan panggilan.
+- **Perapian istilah kantor** — "k s f o nol dua delapan" / "ksfo 028" → `KSFO028`, "c f n" → `CFN`,
+  "invois" → invoice. Backend mencocokkan kode PERSIS, jadi ini menentukan apakah produk ditemukan.
+  Angka biasa ("stok 028") tidak diubah.
+- **Pertanyaan lanjutan** — "kalau kemarin" setelah "berapa sales hari ini" dikirim sebagai
+  "berapa sales kemarin". Hanya bila lanjutan pendek, tanpa topik sendiri, dan pertanyaan sebelumnya
+  < 5 menit. Layar menampilkan "dipahami dari: …" agar salah paham terlihat. Topik yang tak
+  bermakna menurut waktu (stok, piutang) tidak ditempeli waktu.
+- **Alat ukur suara masuk** — batang dB di layar + saran bila suara pelan terus. Dari jarak jauh
+  yang bisa disetel adalah mikrofon di tingkat sistem (Mic Boost, perangkat masukan, mikrofon
+  konferensi USB); halaman web tidak bisa menaikkan penguatan pengenal suara Chrome.
+
+Privasi: **tanpa gerbang tepukan, pengenal suara Google menyala terus selama mode ini aktif** dan
+suara di dekat mikrofon dikirim ke Google untuk jadi teks. Hanya ucapan berawalan "Hei MIRA" yang
+diteruskan ke MIRA; sisanya dibuang dan ditandai "diabaikan" di layar. Mikrofon aktif ditandai jelas
+dan ada pemberitahuan privasi di halaman. Matikan mode ini saat membicarakan hal yang tidak boleh keluar.
 
 Batas: halaman harus terbuka dan layar PC menyala (layar dijaga tetap menyala hanya selama mode ini
-aktif); butuh internet untuk pengenal suara; kepekaan tepuk harus disetel di PC yang sebenarnya.
+aktif); butuh internet; akurasi pengenalan pada logat, jarak, dan ruangan kantor BELUM terukur —
+tes otomatis memakai pengenal suara tiruan dan hanya membuktikan reaksi MIRA atas transkrip tertentu.
 
 ---
 
@@ -167,7 +184,7 @@ baru, lalu `git push` (GitHub Pages).
 Mode Jarvis punya penjaga sendiri:
 
 ```bash
-node test-jarvis.js        # logika: pendeteksi tepuk, "Hai MIRA", ringkasan, keamanan HTML
-node test-jarvis-e2e.js    # Chrome sungguhan + mikrofon tiruan, 6 skenario (butuh Chrome)
+node test-jarvis.js        # logika: "Hei MIRA" + hipotesis ganda, perapian istilah, konteks lanjutan, gema, ringkasan, keamanan HTML
+node test-jarvis-e2e.js    # Chrome sungguhan + pengenal suara tiruan, 13 skenario (butuh Chrome)
 node sinkron-tts-jarvis.js # bila aturan pengucapan di index.html berubah, salin ke jarvis.html
 ```

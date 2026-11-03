@@ -2,14 +2,13 @@
 /**
  * Penjaga untuk mode Jarvis (jarvis.html).
  *
- * Yang diuji: logika murni di dalam jarvis.html — pendeteksi tepuk ganda, pembaca kalimat
- * "Hai MIRA", penutup sesi, peringkas jawaban untuk dibacakan, penyaji markdown yang aman — dan
- * bahwa aturan pengucapan salinan masih sama dengan index.html.
+ * Yang diuji: logika murni di dalam jarvis.html — pembaca kata panggil "Hei MIRA", perintah diam
+ * dan penutup sesi, penyaring gema suara MIRA sendiri, peringkas jawaban untuk dibacakan, penyaji
+ * markdown yang aman — dan bahwa aturan pengucapan salinan masih sama dengan index.html.
  *
- * YANG TIDAK BISA DIUJI DI SINI: mikrofon dan ruangan yang sebenarnya. Pendeteksi tepuk diuji
- * dengan sinyal SINTETIS (derau berpeluruhan untuk tepukan, nada berharmonik untuk ucapan, dst.).
- * Itu membuktikan logikanya benar dan membedakan jenis suara, tapi ambang yang cocok untuk satu
- * mikrofon di satu ruangan tetap harus disetel di tempat lewat meter dan pilihan kepekaan.
+ * YANG TIDAK BISA DIUJI DI SINI: pengenal suara sungguhan dan akurasinya pada logat dan ruangan
+ * kantor. Itu diuji terpisah oleh test-jarvis-e2e.js dengan pengenal suara tiruan, yang memastikan
+ * rangkaian keadaannya benar tetapi tidak mengukur seberapa baik Google mengenali suara.
  *
  * RUN:  node test-jarvis.js
  */
@@ -22,7 +21,7 @@ const mulai = html.indexOf('// ==== JARVIS-LOGIKA-MULAI ====');
 const selesai = html.indexOf('// ==== JARVIS-LOGIKA-SELESAI ====');
 if (mulai < 0 || selesai < 0) { console.error('Penanda logika tidak ditemukan di jarvis.html.'); process.exit(1); }
 const L = new Function(`${html.slice(mulai, selesai)}
-  return { hitungStatFrame, SENSITIVITAS_TEPUK, buatPendeteksiTepuk, ambilPertanyaan, apakahAkhiriSesi, ringkasUntukDibacakan, markdownKeHtml, escapeHtml };`)();
+  return { ambilPanggilan, ambilPanggilanDariAlternatif, rapikanUcapanDomain, lengkapiPertanyaanLanjutan, nilaiLevelMikrofon, apakahAkhiriSesi, apakahPerintahDiam, apakahGemaSuaraSendiri, ringkasUntukDibacakan, markdownKeHtml, escapeHtml };`)();
 
 let lulus = 0;
 let gagal = 0;
@@ -35,183 +34,73 @@ const t = (nama, fn) => {
 const grup = (n) => console.log(`\n${n}`);
 
 // ---------------------------------------------------------------------------------------------
-// Pembangkit sinyal sintetis
-// ---------------------------------------------------------------------------------------------
-const SR = 48000;
-let benih = 12345;
-const acak = () => { benih = (benih * 1664525 + 1013904223) >>> 0; return benih / 4294967296 * 2 - 1; };
-const detik = (s) => Math.round(s * SR);
-
-function senyap(dur, amp = 0.01) { const a = new Float32Array(detik(dur)); for (let i = 0; i < a.length; i++) a[i] = acak() * amp; return a; }
-// Tepukan: derau berpeluruhan eksponensial. `tumpul` menurunkan ZCR seperti mikrofon/ruangan yang meredam nada tinggi.
-function tepukan(amp = 0.6, tau = 0.015, tumpul = 0) {
-  const n = detik(0.12); const a = new Float32Array(n); let y = 0;
-  for (let i = 0; i < n; i++) {
-    const x = amp * Math.exp(-i / (SR * tau)) * acak();
-    y = tumpul ? y + tumpul * (x - y) : x;
-    a[i] = y;
-  }
-  return a;
-}
-// Ucapan bersuara: nada dasar ~140 Hz dengan harmonik, naik-turun pada irama suku kata.
-function ucapan(dur, amp = 0.25) {
-  const n = detik(dur); const a = new Float32Array(n);
-  for (let i = 0; i < n; i++) {
-    const t = i / SR; let v = 0;
-    for (let k = 1; k <= 8; k++) v += Math.sin(2 * Math.PI * 140 * k * t) / k;
-    a[i] = amp * 0.45 * v * (0.35 + 0.65 * Math.abs(Math.sin(2 * Math.PI * 2 * t)));
-  }
-  return a;
-}
-// Desis "s" / napas keras: derau lebar yang BERTAHAN.
-function desis(dur, amp = 0.3) { const a = new Float32Array(detik(dur)); for (let i = 0; i < a.length; i++) a[i] = acak() * amp; return a; }
-function ketikan(amp = 0.05) { return tepukan(amp, 0.003); }
-
-function susun(potongan, total) {
-  // potongan: [[waktuMulaiDetik, Float32Array], ...] ditumpuk di atas derau ruangan
-  const out = senyap(total, 0.01);
-  for (const [t0, p] of potongan) { const o = detik(t0); for (let i = 0; i < p.length && o + i < out.length; i++) out[o + i] += p[i]; }
-  return out;
-}
-function jalankan(sinyal, sens = 'sedang', pengganda = 1) {
-  const d = L.buatPendeteksiTepuk({ sensitivitas: sens });
-  d.setPengganda(pengganda);
-  const hop = detik(0.01); const hasil = [];
-  for (let i = 0; i + hop <= sinyal.length; i += hop) {
-    const s = L.hitungStatFrame(sinyal.subarray(i, i + hop));
-    const r = d.proses(s, (i + hop) / SR);
-    if (r) hasil.push(r);
-  }
-  return hasil;
-}
-const ganda = (h) => h.filter((x) => x === 2).length;
-
-// ---------------------------------------------------------------------------------------------
-grup('Pendeteksi tepuk — yang HARUS terdeteksi');
-t('tepuk dua kali (selang 0,3 detik) terdeteksi sebagai tepuk ganda', () => {
-  const h = jalankan(susun([[0.5, tepukan()], [0.8, tepukan()]], 2));
-  return ganda(h) === 1 ? null : `hasil ${JSON.stringify(h)}`;
-});
-t('tepukan lebih tumpul (ZCR lebih rendah, mikrofon meredam nada tinggi) tetap terdeteksi', () => {
-  const x = tepukan(0.6, 0.015, 0.35);
-  const st = L.hitungStatFrame(x.subarray(0, detik(0.01)));
-  const h = jalankan(susun([[0.5, tepukan(0.6, 0.015, 0.35)], [0.82, tepukan(0.6, 0.015, 0.35)]], 2));
-  return ganda(h) === 1 ? null : `ZCR tepukan tumpul ${st.zcr.toFixed(2)}; hasil ${JSON.stringify(h)}`;
-});
-t('selang 0,17 dan 0,65 detik (batas bawah dan atas wajar) terdeteksi', () => {
-  for (const s of [0.17, 0.65]) {
-    const h = jalankan(susun([[0.5, tepukan()], [0.5 + s, tepukan()]], 2.5));
-    if (ganda(h) !== 1) return `selang ${s}: hasil ${JSON.stringify(h)}`;
-  }
-  return null;
-});
-t('tepukan yang lebih pelan terdeteksi pada kepekaan tinggi', () => {
-  const h = jalankan(susun([[0.5, tepukan(0.14)], [0.8, tepukan(0.14)]], 2), 'tinggi');
-  return ganda(h) === 1 ? null : `hasil ${JSON.stringify(h)}`;
-});
-t('tepuk ganda terdeteksi di tengah percakapan pelan di latar', () => {
-  const latar = ucapan(3, 0.04);
-  const h = jalankan(susun([[0, latar], [1.0, tepukan(0.7)], [1.3, tepukan(0.7)]], 3));
-  return ganda(h) === 1 ? null : `hasil ${JSON.stringify(h)}`;
-});
-t('dua pasang tepukan berjauhan masing-masing terdeteksi', () => {
-  const h = jalankan(susun([[0.5, tepukan()], [0.8, tepukan()], [4.0, tepukan()], [4.3, tepukan()]], 6));
-  return ganda(h) === 2 ? null : `terdeteksi ${ganda(h)} pasang, seharusnya 2`;
-});
-
-grup('Pendeteksi tepuk — yang TIDAK BOLEH terdeteksi');
-t('satu tepukan saja tidak memicu', () => {
-  const h = jalankan(susun([[0.5, tepukan()]], 2));
-  return ganda(h) === 0 && h.includes(1) ? null : `hasil ${JSON.stringify(h)}`;
-});
-t('dua tepukan berjauhan (1,2 detik) tidak dihitung ganda', () => {
-  const h = jalankan(susun([[0.5, tepukan()], [1.7, tepukan()]], 3));
-  return ganda(h) === 0 ? null : `hasil ${JSON.stringify(h)}`;
-});
-t('selang terlalu pendek (0,06 detik, tumpang tindih) tidak dihitung ganda', () => {
-  const h = jalankan(susun([[0.5, tepukan()], [0.56, tepukan(0.4)]], 2));
-  return ganda(h) === 0 ? null : `hasil ${JSON.stringify(h)}`;
-});
-t('selang 0,12 detik (gema/pantulan tepukan yang sama) tidak dihitung ganda', () => {
-  // Zona 0,10-0,15 detik: cukup jauh untuk dikenali sebagai tepukan terpisah, terlalu dekat untuk
-  // tepukan manusia yang disengaja. Hanya zona ini yang menguji cabang penolak gema.
-  const h = jalankan(susun([[0.5, tepukan()], [0.62, tepukan()]], 2));
-  return ganda(h) === 0 ? null : `hasil ${JSON.stringify(h)}`;
-});
-t('dentuman bernada rendah (ketukan meja, pintu) tidak memicu walau mendadak dan cepat reda', () => {
-  // Impulsif dan peluruhannya cepat, jadi lolos syarat puncak, onset, dan peredaman. Yang
-  // membedakannya dari tepukan hanya ZCR: dentuman itu nada rendah, tepukan itu derau lebar.
-  const dentum = (amp) => { const n = detik(0.12); const a = new Float32Array(n); for (let i = 0; i < n; i++) a[i] = amp * Math.exp(-i / (SR * 0.02)) * Math.sin(2 * Math.PI * 110 * i / SR); return a; };
-  const st = L.hitungStatFrame(dentum(0.7).subarray(0, detik(0.01)));
-  const h = jalankan(susun([[0.5, dentum(0.7)], [0.8, dentum(0.7)]], 2));
-  return h.length === 0 ? null : `dentuman dianggap tepukan (ZCR ${st.zcr.toFixed(3)}): ${JSON.stringify(h)}`;
-});
-t('ucapan manusia (nada berharmonik) tidak memicu', () => {
-  const h = jalankan(susun([[0.3, ucapan(2.5, 0.3)]], 3.5));
-  return h.length === 0 ? null : `ucapan dianggap tepukan: ${JSON.stringify(h)}`;
-});
-t('ucapan keras sekalipun tidak memicu, di semua tingkat kepekaan', () => {
-  for (const s of ['rendah', 'sedang', 'tinggi']) {
-    const h = jalankan(susun([[0.3, ucapan(2.5, 0.8)]], 3.5), s);
-    if (h.length) return `kepekaan ${s}: ${JSON.stringify(h)}`;
-  }
-  return null;
-});
-t('desis atau napas keras yang bertahan (150 ms) tidak memicu, walau ZCR-nya setinggi tepukan', () => {
-  const h = jalankan(susun([[0.5, desis(0.15)], [0.85, desis(0.15)]], 2));
-  return h.length === 0 ? null : `desis dianggap tepukan: ${JSON.stringify(h)}`;
-});
-t('ketikan keyboard pelan tidak memicu pada kepekaan sedang', () => {
-  const h = jalankan(susun([[0.5, ketikan()], [0.68, ketikan()], [0.86, ketikan()]], 2));
-  return h.length === 0 ? null : `ketikan dianggap tepukan: ${JSON.stringify(h)}`;
-});
-t('ruangan sunyi sepanjang 10 detik tidak memicu apa pun', () => {
-  const h = jalankan(senyap(10, 0.015));
-  return h.length === 0 ? null : `derau ruangan dianggap tepukan: ${JSON.stringify(h)}`;
-});
-
-grup('Pendeteksi tepuk — saat MIRA sedang berbicara');
-t('suara MIRA sendiri (ucapan lewat speaker) tidak memicu penyelaan', () => {
-  const h = jalankan(susun([[0.2, ucapan(3, 0.35)]], 4), 'sedang', 1.8);
-  return h.length === 0 ? null : `suara sendiri dianggap tepukan: ${JSON.stringify(h)}`;
-});
-t('tepuk ganda yang tegas tetap bisa menyela walau ambang dinaikkan', () => {
-  const h = jalankan(susun([[0.2, ucapan(3, 0.2)], [1.0, tepukan(0.9)], [1.3, tepukan(0.9)]], 4), 'sedang', 1.8);
-  return ganda(h) === 1 ? null : `hasil ${JSON.stringify(h)}`;
-});
-
-grup('Kalimat pemanggil — "Hai MIRA"');
-const uji = (s) => L.ambilPertanyaan(s);
-t('"Hai MIRA, berapa sales hari ini" dikenali dan pertanyaannya dipisah', () => {
-  const r = uji('Hai MIRA, berapa sales hari ini');
+grup('Kata panggil — "Hei MIRA"');
+const uji = (s) => L.ambilPanggilan(s);
+t('"Hei MIRA, berapa sales hari ini" dikenali dan pertanyaannya dipisah', () => {
+  const r = uji('Hei MIRA, berapa sales hari ini');
   return r.dipanggil && r.pertanyaan === 'berapa sales hari ini' ? null : JSON.stringify(r);
 });
-t('varian ejaan dari pengenal suara dikenali: Mirah, Myra, Mila, hei, halo', () => {
-  for (const s of ['hai mirah target hari ini', 'Hei Myra target hari ini', 'halo mila target hari ini', 'Mira target hari ini', 'hey mira, target hari ini']) {
+t('sapaan lain yang wajar juga dikenali: hai, hey, halo, hi', () => {
+  for (const s of ['Hai MIRA target hari ini', 'hey mira, target hari ini', 'Halo Mira target hari ini', 'hi mira target hari ini']) {
+    const r = uji(s);
+    if (!r.dipanggil || r.pertanyaan !== 'target hari ini') return `"${s}" -> ${JSON.stringify(r)}`;
+  }
+  return null;
+});
+t('varian ejaan dari pengenal suara dikenali: Mirah, Myra, Mila, dan sapaan yang menempel', () => {
+  for (const s of ['hei mirah target hari ini', 'Hei Myra target hari ini', 'hai mila target hari ini', 'Heimira target hari ini', 'hei, mira. target hari ini']) {
     const r = uji(s);
     if (!r.dipanggil || r.pertanyaan !== 'target hari ini') return `"${s}" -> ${JSON.stringify(r)}`;
   }
   return null;
 });
 t('hanya dipanggil tanpa pertanyaan: dipanggil=true, pertanyaan kosong', () => {
-  const r = uji('Hai MIRA');
-  return r.dipanggil && r.pertanyaan === '' ? null : JSON.stringify(r);
+  for (const s of ['Hei MIRA', 'hei mira.', 'Hai, Mira!']) {
+    const r = uji(s);
+    if (!r.dipanggil || r.pertanyaan !== '') return `"${s}" -> ${JSON.stringify(r)}`;
+  }
+  return null;
 });
-t('ucapan tanpa memanggil MIRA tidak dianggap panggilan', () => {
-  for (const s of ['berapa sales hari ini', 'tolong siapkan laporan', 'Pak Rifqi minta data piutang', 'hai semuanya']) {
+t('SAPAAN WAJIB: menyebut "MIRA" saja tanpa "Hei" tidak memanggil', () => {
+  // Tanpa gerbang apa pun, mikrofon mendengar semua obrolan kantor. "Mira" di awal kalimat tanpa
+  // sapaan terlalu sering muncul di percakapan biasa untuk dijadikan pemicu.
+  for (const s of ['Mira berapa sales hari ini', 'MIRA, target hari ini', 'mira tolong cek stok']) {
+    if (uji(s).dipanggil) return `"${s}" dianggap panggilan`;
+  }
+  return null;
+});
+t('obrolan kantor biasa tidak dianggap panggilan', () => {
+  for (const s of ['berapa sales hari ini', 'tolong siapkan laporan', 'Pak Rifqi minta data piutang', 'hai semuanya', 'halo selamat pagi', 'hei Mirza tolong stok']) {
     if (uji(s).dipanggil) return `"${s}" dianggap panggilan`;
   }
   return null;
 });
 t('kata yang hanya mirip nama tidak dianggap panggilan', () => {
-  for (const s of ['Mirae asset berapa', 'Miranda minta stok', 'mirasantika berapa']) {
+  for (const s of ['hei Mirae asset berapa', 'hai Miranda minta stok', 'halo mirasantika berapa']) {
     if (uji(s).dipanggil) return `"${s}" dianggap panggilan`;
   }
   return null;
 });
-t('menyebut MIRA di tengah kalimat bukan panggilan', () => (uji('katanya MIRA bisa cek stok').dipanggil ? 'terbaca sebagai panggilan' : null));
+t('menyebut MIRA di tengah kalimat bukan panggilan', () => {
+  for (const s of ['katanya hei MIRA bisa cek stok', 'kemarin dia bilang hai mira ke saya']) {
+    if (uji(s).dipanggil) return `"${s}" terbaca sebagai panggilan`;
+  }
+  return null;
+});
 
-grup('Penutup sesi');
+grup('Perintah diam dan penutup sesi');
+t('"Hei MIRA, berhenti" dan sejenisnya dikenali sebagai perintah diam', () => {
+  for (const s of ['berhenti', 'diam', 'stop', 'sudah', 'oke berhenti', 'tahan dulu', 'berhenti dulu ya']) {
+    if (!L.apakahPerintahDiam(s)) return `"${s}" bukan perintah diam`;
+  }
+  return null;
+});
+t('pertanyaan yang memuat kata diam/berhenti BUKAN perintah diam', () => {
+  for (const s of ['customer yang berhenti belanja siapa', 'berapa invoice yang sudah dikirim', 'stop kontak stok berapa', 'siapa yang diam diam menunggak']) {
+    if (L.apakahPerintahDiam(s)) return `"${s}" salah dianggap perintah diam`;
+  }
+  return null;
+});
 t('ucapan penutup mengakhiri sesi', () => {
   for (const s of ['terima kasih', 'Terima kasih MIRA', 'makasih ya', 'sudah cukup', 'cukup', 'oke terima kasih banyak', 'selesai', 'Hai MIRA terima kasih']) {
     if (!L.apakahAkhiriSesi(s)) return `"${s}" tidak mengakhiri sesi`;
@@ -223,6 +112,39 @@ t('pertanyaan yang kebetulan memuat kata penutup TIDAK mengakhiri sesi', () => {
     if (L.apakahAkhiriSesi(s)) return `"${s}" salah mengakhiri sesi`;
   }
   return null;
+});
+
+grup('Penyaring gema suara MIRA sendiri');
+const DIBACAKAN = 'Sales hari ini sudah 15464900 Rupiah dari target 83539062 Rupiah. Revenue hari ini 15464900 Rupiah dari target 88176108 Rupiah.';
+t('hasil pengenalan dari suara MIRA sendiri dikenali sebagai gema', () => {
+  const gema = ['sales hari ini sudah dari target rupiah revenue hari ini dari target rupiah', 'Sales hari ini sudah 15464900 Rupiah dari target'];
+  for (const g of gema) if (!L.apakahGemaSuaraSendiri(g, DIBACAKAN)) return `"${g}" tidak dikenali sebagai gema`;
+  return null;
+});
+t('gema jawaban yang PENUH ANGKA tetap dikenali (angka ditulis beda oleh pengenal suara)', () => {
+  // Kasus paling umum: jawaban MIRA berisi nominal. Pengenal suara menulis "15.464.900" atau
+  // mengeja angkanya, tidak pernah persis seperti teks aslinya — angka tidak boleh menentukan.
+  const spoken = 'Sales hari ini sudah 15464900 Rupiah dari target 83539062 Rupiah';
+  for (const g of ['sales hari ini sudah 15.464.900 rupiah dari target 83.539.062 rupiah', 'sales hari ini sudah lima belas juta rupiah dari target delapan puluh tiga juta']) {
+    if (!L.apakahGemaSuaraSendiri(g, spoken)) return `"${g}" tidak dikenali sebagai gema`;
+  }
+  return null;
+});
+t('ucapan yang isinya hampir hanya angka tidak dinilai sebagai gema', () => {
+  return L.apakahGemaSuaraSendiri('15 464 900 dan 83 539 062 serta 88 176 108', 'Sales hari ini sudah 15464900 Rupiah') ? 'ucapan berisi angka dianggap gema' : null;
+});
+t('pertanyaan lanjutan yang memakai beberapa kata yang sama TIDAK dianggap gema', () => {
+  // Pertanyaan lanjutan sungguhan sering memakai kata dari jawaban sebelumnya.
+  for (const g of ['berapa revenue hari ini', 'bagaimana dengan invoice unik hari ini', 'kalau target bulanan berapa', 'siapa customer yang piutangnya terbesar']) {
+    if (L.apakahGemaSuaraSendiri(g, DIBACAKAN)) return `"${g}" salah dianggap gema`;
+  }
+  return null;
+});
+t('ucapan yang terlalu pendek tidak dinilai sebagai gema', () => {
+  return L.apakahGemaSuaraSendiri('hari ini', DIBACAKAN) ? 'ucapan pendek dianggap gema' : null;
+});
+t('tanpa teks yang dibacakan, tidak ada yang dianggap gema', () => {
+  return L.apakahGemaSuaraSendiri('berapa sales hari ini kemarin', '') ? 'dianggap gema padahal tidak ada pembanding' : null;
 });
 
 grup('Ringkasan untuk dibacakan');
@@ -282,6 +204,71 @@ t('tautan dibuat aman (rel noopener) dan tidak bisa menyisipkan atribut', () => 
 t('tabel markdown disederhanakan menjadi baris biasa', () => {
   const h = L.markdownKeHtml('| Bulan | Nilai |\n|---|---|\n| Jan | 100 |');
   return !/\|---/.test(h) && /Jan · 100/.test(h) ? null : h;
+});
+
+grup('Suara dari jauh — hipotesis ganda');
+t('kata panggil yang salah dengar di hipotesis teratas ditemukan di hipotesis lain', () => {
+  const r = L.ambilPanggilanDariAlternatif(['hai nira stok ksfo 028', 'hai mira stok ksfo 028']);
+  return r.dipanggil && r.indeks === 1 && /ksfo/.test(r.pertanyaan) ? null : JSON.stringify(r);
+});
+t('hipotesis teratas yang sudah benar dipakai lebih dulu', () => {
+  const r = L.ambilPanggilanDariAlternatif(['hei mira target hari ini', 'hei mila target hari ini']);
+  return r.dipanggil && r.indeks === 0 && r.pertanyaan === 'target hari ini' ? null : JSON.stringify(r);
+});
+t('obrolan tanpa panggilan di hipotesis mana pun tetap TIDAK memanggil', () => {
+  const r = L.ambilPanggilanDariAlternatif(['kita rapat jam tiga', 'kita rapat jam 3', 'kita rapat jam tiga ya']);
+  return !r.dipanggil && r.indeks === 0 ? null : JSON.stringify(r);
+});
+t('daftar kosong tidak membuat galat', () => (L.ambilPanggilanDariAlternatif([]).dipanggil === false ? null : 'harus false'));
+
+grup('Memahami istilah kantor yang salah tulis');
+const AWALAN = new Set(['KSFO', 'OLT']);
+const rapi = (s) => L.rapikanUcapanDomain(s, AWALAN);
+t('kode barang yang dieja disatukan: "k s f o nol dua delapan" -> KSFO028', () => {
+  for (const s of ['stok k s f o nol dua delapan', 'stok k s f o 0 2 8', 'stok k s f o 028']) {
+    if (rapi(s) !== 'stok KSFO028') return `"${s}" -> "${rapi(s)}"`;
+  }
+  return null;
+});
+t('awalan dikenal + angka terpisah spasi disatukan: "ksfo 028" -> KSFO028', () => (rapi('stok ksfo 028') === 'stok KSFO028' ? null : rapi('stok ksfo 028')));
+t('angka biasa TIDAK dirusak: "stok 028" dan "kode 100" tetap', () => {
+  for (const s of ['stok 028', 'kode 100 ada berapa', 'sales 15 Agustus']) if (rapi(s) !== s) return `"${s}" -> "${rapi(s)}"`;
+  return null;
+});
+t('istilah umum diperbaiki: "c f n", "invois", "revenu"', () => {
+  const r = rapi('piutang c f n invois dan revenu');
+  return r === 'piutang CFN invoice dan revenue' ? null : r;
+});
+t('huruf terpisah yang BUKAN istilah dikenal dibiarkan', () => (rapi('a b c ada berapa') === 'a b c ada berapa' ? null : rapi('a b c ada berapa')));
+
+grup('Memahami pertanyaan lanjutan');
+const lanj = (a, b) => L.lengkapiPertanyaanLanjutan(a, b);
+t('"kalau kemarin" mengganti waktu pada pertanyaan sebelumnya', () => {
+  const r = lanj('kalau kemarin', 'berapa sales hari ini');
+  return r.dilengkapi && r.teks === 'berapa sales kemarin' ? null : JSON.stringify(r);
+});
+t('"kalau CFN" menambah company pada pertanyaan sebelumnya', () => {
+  const r = lanj('kalau CFN', 'berapa sales hari ini');
+  return r.dilengkapi && /sales hari ini untuk CFN/.test(r.teks) ? null : JSON.stringify(r);
+});
+t('tanpa pertanyaan sebelumnya, lanjutan dikirim apa adanya', () => {
+  const r = lanj('kalau kemarin', '');
+  return !r.dilengkapi && r.teks === 'kalau kemarin' ? null : JSON.stringify(r);
+});
+t('pertanyaan yang sudah punya topik sendiri TIDAK dilengkapi', () => {
+  const r = lanj('piutang CFN', 'berapa sales hari ini');
+  return !r.dilengkapi && r.teks === 'piutang CFN' ? null : JSON.stringify(r);
+});
+t('waktu tidak ditempelkan ke topik yang tak bermakna menurut waktu (stok)', () => {
+  const r = lanj('kalau kemarin', 'stok KSFO028');
+  return !r.dilengkapi && r.teks === 'kalau kemarin' ? null : JSON.stringify(r);
+});
+
+grup('Alat ukur suara masuk');
+t('ambang: keras / baik / pelan / hampir tidak terdengar', () => {
+  const s = (p) => L.nilaiLevelMikrofon(p).status;
+  const hasil = [s(0.9), s(0.1), s(0.01), s(0.001), s(0)].join('|');
+  return hasil === 'terlalu keras|baik|pelan|hampir tidak terdengar|hampir tidak terdengar' ? null : hasil;
 });
 
 grup('Salinan aturan pengucapan');

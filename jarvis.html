@@ -20,7 +20,6 @@
     --emas-terang: #ffc45c;
     --marun: #9c2b2e;
     --marun-terang: #d4585b;
-    --hijau: #7c9470;
     --mono: 'Cascadia Mono', 'Consolas', 'SF Mono', ui-monospace, monospace;
     --sans: 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
   }
@@ -57,7 +56,6 @@
     grid-template-rows: auto 1fr;
     grid-template-columns: minmax(0, 1.15fr) minmax(320px, .85fr);
     grid-template-areas: "kepala kepala" "panggung percakapan";
-    gap: 0;
   }
   .kepala {
     grid-area: kepala;
@@ -88,35 +86,35 @@
     min-height: 0;
     gap: 14px;
   }
-  .orb-kotak { width: min(52vh, 100%, 480px); aspect-ratio: 1; position: relative; }
+  .orb-kotak { width: min(50vh, 100%, 460px); aspect-ratio: 1; position: relative; }
   #orb { width: 100%; height: 100%; display: block; }
-  .status { text-align: center; min-height: 86px; }
+  .status { text-align: center; min-height: 92px; }
   #statusUtama { font-size: clamp(20px, 2.6vh, 26px); font-weight: 600; letter-spacing: .02em; }
-  body[data-state="berbicara"] #statusUtama, body[data-state="mendengar"] #statusUtama, body[data-state="sesi"] #statusUtama { color: var(--emas-terang); }
+  body[data-state="berbicara"] #statusUtama, body[data-state="sesi"] #statusUtama { color: var(--emas-terang); }
   body[data-state="berpikir"] #statusUtama { color: var(--marun-terang); }
   #statusRinci { margin-top: 4px; color: var(--redup); font-size: 13px; font-family: var(--mono); min-height: 20px; }
-  #sedangDengar { margin-top: 6px; font-size: 14px; color: var(--teks); opacity: .85; min-height: 22px; font-style: italic; }
+  #sedangDengar { margin-top: 6px; font-size: 14px; color: var(--teks); opacity: .8; min-height: 22px; font-style: italic; }
+  /* Alat ukur jarak: hanya tampil saat mode aktif. Warna mengikuti arti (baik/pelan/terlalu keras),
+     dan teks di sampingnya selalu menyebut arti itu — warna saja tidak boleh jadi satu-satunya tanda. */
+  .meter { display: none; align-items: center; gap: 10px; margin: 10px auto 0; width: min(420px, 100%); font-size: 12px; color: var(--redup); font-family: var(--mono); }
+  body[data-aktif="1"] .meter { display: flex; }
+  .meter-jalur { flex: 1; height: 6px; background: var(--panel-2); border: 1px solid var(--garis); border-radius: 3px; overflow: hidden; }
+  #meterIsi { height: 100%; width: 0; background: var(--emas); transition: width .08s linear, background .2s; }
+  .meter[data-nilai="pelan"] #meterIsi, .meter[data-nilai="hampir tidak terdengar"] #meterIsi { background: var(--marun-terang); }
+  .meter[data-nilai="terlalu keras"] #meterIsi { background: #ff9b9b; }
+  #meterTeks { min-width: 150px; text-align: right; }
+  #saranMik { margin-top: 4px; font-size: 12px; color: var(--redup); min-height: 18px; text-align: center; }
 
   .kendali {
-    width: min(520px, 100%);
+    width: min(540px, 100%);
     display: grid; gap: 12px;
     padding: 14px 16px;
     background: var(--panel);
     border: 1px solid var(--garis);
     border-radius: 6px;
   }
-  .meter { position: relative; height: 8px; background: #231c22; border-radius: 2px; overflow: hidden; }
-  #meterIsi { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--hijau); transition: width 60ms linear, background .1s; }
-  .meter b { position: absolute; top: -2px; bottom: -2px; left: 50%; width: 2px; background: var(--emas-terang); }
-  .baris { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .baris small { color: var(--redup); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }
-  .segmen { display: inline-flex; border: 1px solid var(--garis); border-radius: 4px; overflow: hidden; }
-  .segmen button { background: transparent; border: 0; padding: 5px 12px; font-size: 13px; color: var(--redup); }
-  .segmen button + button { border-left: 1px solid var(--garis); }
-  .segmen button[aria-pressed="true"] { background: rgba(207,155,63,.16); color: var(--emas-terang); }
   .saklar { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--teks); cursor: pointer; }
   .saklar input { accent-color: var(--emas); width: 16px; height: 16px; }
-
   .tombol-utama {
     justify-self: stretch;
     padding: 13px 18px;
@@ -130,7 +128,14 @@
   .tombol-utama:active { transform: translateY(1px); }
   body[data-aktif="1"] .tombol-utama { background: transparent; color: var(--marun-terang); }
   body[data-aktif="1"] .tombol-utama:hover { background: rgba(156,43,46,.18); }
-
+  /* Pemberitahuan privasi sengaja dibuat terbaca, bukan disamarkan: selama mode ini menyala,
+     suara dikirim ke layanan pengenal suara Google. */
+  .privasi {
+    margin: 0; padding: 10px 12px;
+    font-size: 12.5px; line-height: 1.55; color: var(--redup);
+    border: 1px solid var(--garis); border-left: 2px solid var(--marun-terang); border-radius: 3px; background: var(--panel-2);
+  }
+  .privasi b { color: var(--teks); font-weight: 600; }
   #galat { color: #ff9b9b; font-size: 13px; min-height: 18px; }
 
   /* ---------- login (hanya bila PC ini belum pernah login) ---------- */
@@ -160,10 +165,11 @@
   .percakapan h2 button:hover { color: var(--teks); }
   #log { flex: 1; overflow-y: auto; padding: 16px 22px 24px; display: flex; flex-direction: column; gap: 16px; scroll-behavior: smooth; }
   #log:empty::before {
-    content: 'Belum ada percakapan.\A Tepuk tangan 2× lalu ucapkan  “Hai MIRA, berapa sales hari ini?”';
+    content: 'Belum ada percakapan.\A Ucapkan  “Hei MIRA, berapa sales hari ini?”';
     white-space: pre-line; color: var(--redup); font-size: 14px; line-height: 1.7;
   }
   .gelembung { max-width: 100%; }
+  .gelembung .catatan { margin-top: 4px; font-size: 11.5px; color: var(--redup); font-style: italic; }
   .gelembung .siapa { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; margin-bottom: 4px; }
   .gelembung.anda .siapa { color: var(--redup); }
   .gelembung.mira .siapa { color: var(--emas); }
@@ -201,6 +207,12 @@
       <div id="statusUtama">Nonaktif</div>
       <div id="statusRinci"></div>
       <div id="sedangDengar"></div>
+      <div class="meter" id="meter" data-nilai="" aria-hidden="true">
+        <span>Suara masuk</span>
+        <div class="meter-jalur"><div id="meterIsi"></div></div>
+        <span id="meterTeks">—</span>
+      </div>
+      <div id="saranMik"></div>
     </div>
 
     <div class="kendali">
@@ -211,20 +223,9 @@
       </form>
 
       <div id="kendaliUtama" style="display:grid;gap:12px">
-        <div>
-          <div class="meter" aria-hidden="true"><div id="meterIsi"></div><b></b></div>
-          <div style="margin-top:6px;font-size:12px;color:var(--redup)">Level suara. Tepukan harus melewati garis emas.</div>
-        </div>
-        <div class="baris">
-          <small>Kepekaan tepuk</small>
-          <div class="segmen" id="segSens" role="group" aria-label="Kepekaan tepuk">
-            <button type="button" data-sens="rendah" aria-pressed="false">Rendah</button>
-            <button type="button" data-sens="sedang" aria-pressed="true">Sedang</button>
-            <button type="button" data-sens="tinggi" aria-pressed="false">Tinggi</button>
-          </div>
-        </div>
         <label class="saklar"><input type="checkbox" id="tglLengkap"> Bacakan jawaban selengkapnya (bukan ringkasan)</label>
         <button class="tombol-utama" type="button" id="tombolUtama">Aktifkan mode Jarvis</button>
+        <p class="privasi"><b>Selama mode ini aktif, MIRA mendengarkan terus.</b> Suara di dekat mikrofon dikirim ke layanan pengenal suara Google untuk diubah menjadi teks, tetapi hanya ucapan yang diawali “Hei MIRA” yang diteruskan ke MIRA. Matikan mode ini saat membicarakan hal yang tidak boleh keluar.</p>
         <div id="galat" role="alert"></div>
       </div>
     </div>
@@ -265,138 +266,181 @@
   })();
 
   // ==== JARVIS-LOGIKA-MULAI ====
-  // Logika murni (tanpa DOM, tanpa audio) supaya bisa diuji lewat test-jarvis.js.
+  // Logika murni (tanpa DOM, tanpa suara) supaya bisa diuji lewat test-jarvis.js.
 
-  // Statistik satu bingkai suara pendek (~10 ms). Dipakai di dalam AudioWorklet LEWAT
-  // Function.prototype.toString — jadi yang diuji di Node adalah kode yang sama persis dengan
-  // yang berjalan di browser, bukan salinan.
-  function hitungStatFrame(frame) {
-    let puncak = 0;
-    let jumlahKuadrat = 0;
-    let lintasNol = 0;
-    let sebelum = frame.length ? frame[0] : 0;
-    for (let i = 0; i < frame.length; i++) {
-      const v = frame[i];
-      const a = v < 0 ? -v : v;
-      if (a > puncak) puncak = a;
-      jumlahKuadrat += v * v;
-      if (i > 0 && (v >= 0) !== (sebelum >= 0)) lintasNol++;
-      sebelum = v;
-    }
-    const n = frame.length || 1;
-    return { puncak, rms: Math.sqrt(jumlahKuadrat / n), zcr: lintasNol / n };
-  }
-
-  // Kepekaan tepuk. Tidak ada angka yang benar untuk semua mikrofon dan ruangan, jadi tiga tingkat
-  // ini hanya titik awal — meter di layar dipakai untuk menyetelnya pada PC yang sebenarnya.
-  const SENSITIVITAS_TEPUK = {
-    tinggi: { puncakMin: 0.06, puncakRasio: 8 },
-    sedang: { puncakMin: 0.12, puncakRasio: 10 },
-    rendah: { puncakMin: 0.25, puncakRasio: 14 },
-  };
-
-  // Pendeteksi tepuk ganda dari aliran statistik bingkai. Tepukan dibedakan dari suara lain oleh
-  // empat ciri sekaligus:
-  //   1. PUNCAK keras — melewati ambang absolut DAN beberapa kali lipat suara latar.
-  //   2. ONSET tiba-tiba — energi melonjak beberapa kali lipat dari rata-rata ~80 ms sebelumnya.
-  //   3. ZCR tinggi — tepukan itu derau lebar (banyak lintasan nol); suara vokal didominasi nada
-  //      rendah dan ZCR-nya kecil.
-  //   4. PEREDAMAN cepat — ~70 ms kemudian energinya sudah turun jauh. Desis "s", batuk, dan
-  //      ketukan panjang bertahan lebih lama dan gugur di sini.
-  // Dua tepukan sah dengan selang 0,15-0,70 detik dihitung sebagai tepuk ganda. Selang yang lebih
-  // pendek dianggap gema tepukan yang sama, bukan tepukan kedua.
-  function buatPendeteksiTepuk(opsi) {
-    opsi = opsi || {};
-    let sens = SENSITIVITAS_TEPUK[opsi.sensitivitas] || SENSITIVITAS_TEPUK.sedang;
-    const CELAH_MIN = 0.15;
-    const CELAH_MAKS = 0.7;
-    const WAKTU_REDAM = 0.07;
-    const ZCR_MIN = 0.12;
-    const RASIO_ONSET = 3;
-    const RASIO_REDAM = 0.4;
-    let latar = 0.004;
-    let kandidat = null;
-    let tepukPertama = null;
-    let kunciSampai = 0;
-    let pengganda = 1;
-    const riwayat = [];
-
-    function ambang() { return Math.max(sens.puncakMin, latar * sens.puncakRasio) * pengganda; }
-
-    return {
-      setPengganda(v) { pengganda = v; },
-      setSensitivitas(nama) { if (SENSITIVITAS_TEPUK[nama]) sens = SENSITIVITAS_TEPUK[nama]; },
-      ambang,
-      latar() { return latar; },
-      // Mengembalikan 0 (tidak ada), 1 (satu tepukan sah), atau 2 (tepuk ganda).
-      proses(stat, t) {
-        const puncak = stat.puncak;
-        const rms = stat.rms;
-        const zcr = stat.zcr;
-        let hasil = 0;
-
-        if (tepukPertama !== null && t - tepukPertama > CELAH_MAKS + WAKTU_REDAM + 0.05) tepukPertama = null;
-
-        let dasar = latar;
-        if (riwayat.length) {
-          let s = 0;
-          for (const r of riwayat) s += r;
-          dasar = Math.max(latar, s / riwayat.length);
-        }
-
-        if (!kandidat) {
-          if (t >= kunciSampai && puncak >= ambang() && zcr >= ZCR_MIN && rms >= dasar * RASIO_ONSET) {
-            kandidat = { t, rmsMaks: rms };
-          }
-        } else if (t - kandidat.t < WAKTU_REDAM) {
-          if (rms > kandidat.rmsMaks) kandidat.rmsMaks = rms;
-        } else {
-          const k = kandidat;
-          kandidat = null;
-          kunciSampai = t + 0.03;
-          if (rms <= k.rmsMaks * RASIO_REDAM) {
-            if (tepukPertama !== null) {
-              const celah = k.t - tepukPertama;
-              if (celah >= CELAH_MIN && celah <= CELAH_MAKS) {
-                tepukPertama = null;
-                kunciSampai = t + 0.8;
-                hasil = 2;
-              } else if (celah > CELAH_MAKS) {
-                tepukPertama = k.t;
-                hasil = 1;
-              }
-            } else {
-              tepukPertama = k.t;
-              hasil = 1;
-            }
-          }
-        }
-
-        if (!kandidat && rms < Math.max(latar * 3, 0.01)) latar = Math.max(0.001, latar + (rms - latar) * 0.01);
-        riwayat.push(rms);
-        if (riwayat.length > 8) riwayat.shift();
-        return hasil;
-      },
-    };
-  }
-
-  // Kalimat pemanggil. Tepuk membuka telinga, "Hai MIRA" menyatakan siapa yang diajak bicara —
-  // dua langkah supaya tepukan tak sengaja di kantor tidak langsung mengirim ucapan orang ke MIRA.
-  // Varian ejaan ditoleransi karena pengenal suara kerap menulis "Mirah", "Myra", atau "Mila".
-  const POLA_PANGGIL = /^[\s,.!?-]*(?:(?:hai|hei|hey|hi|halo|hallo|helo|ei|oi)[\s,.!-]+)?(?:mira|mirah|mirra|myra|mila|mera)(?![a-z])[\s,.!?:;-]*/i;
-  function ambilPertanyaan(teks) {
+  // Kata panggil: "Hei MIRA". Sapaan WAJIB ada — mikrofon mendengar semua obrolan kantor, dan
+  // orang yang menyebut "MIRA" di tengah percakapan ("MIRA bisa cek stok") tidak boleh membuat
+  // MIRA tiba-tiba menjawab. Varian ejaan ditoleransi karena pengenal suara kerap menulis
+  // "Mirah", "Myra", atau "Mila"; sapaan boleh menempel ("Heimira").
+  //
+  // Dari jarak jauh suara lebih pelan dan pengenal suara lebih sering salah dengar, jadi nama
+  // ditoleransi lebih lebar ("Mia", "Miya", "Miera") dan sapaan "hay" ikut diterima. Pelonggaran
+  // ini hanya aman karena sapaan tetap WAJIB; tanpa sapaan, "Mia" saja tidak memanggil.
+  const POLA_PANGGIL = /^[\s,.!?-]*(?:hei|hey|hay|hai|hi|halo|hallo|helo|ei|oi)[\s,.!-]*(?:mira|mirah|mirra|myra|mila|mera|miera|mia|miya)(?![a-z])[\s,.!?:;-]*/i;
+  function ambilPanggilan(teks) {
     const t = String(teks || '').trim();
     const m = t.match(POLA_PANGGIL);
     if (!m) return { dipanggil: false, pertanyaan: t };
     return { dipanggil: true, pertanyaan: t.slice(m[0].length).trim() };
   }
 
+  // Pengenal suara memberi beberapa hipotesis per ucapan, urut dari yang paling yakin. Dari jauh,
+  // hipotesis teratas sering salah di bagian yang justru menentukan — "Hai Nira" — sementara
+  // hipotesis kedua atau ketiga benar. Kata panggil dicari di SEMUA hipotesis, dan pertanyaannya
+  // diambil dari hipotesis yang memuat panggilan itu, karena itu satu kalimat utuh yang konsisten.
+  function ambilPanggilanDariAlternatif(daftar) {
+    const semua = (Array.isArray(daftar) ? daftar : [daftar]).map((x) => String(x || '').trim()).filter(Boolean);
+    for (let i = 0; i < semua.length; i++) {
+      const p = ambilPanggilan(semua[i]);
+      if (p.dipanggil) return { dipanggil: true, pertanyaan: p.pertanyaan, indeks: i };
+    }
+    return { dipanggil: false, pertanyaan: semua[0] || '', indeks: 0 };
+  }
+
+  function normalisasiUcapan(teks) {
+    return String(teks || '').toLowerCase().replace(/[.,!?]/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
   // Ucapan penutup sesi. Hanya berlaku bila SELURUH ucapan pendek dan berisi penutup — "customer
   // berhenti belanja" atau "sudah berapa piutangnya" tidak boleh menutup sesi.
   function apakahAkhiriSesi(teks) {
-    const t = String(teks || '').toLowerCase().replace(/[.,!?]/g, ' ').replace(/\s+/g, ' ').trim();
+    const t = normalisasiUcapan(teks);
     if (!t || t.split(' ').length > 6) return false;
     return /^(?:(?:hai|hei|hey|halo) )?(?:mira )?(?:ya )?(?:oke |ok |baik )?(?:terima kasih|makasih|sudah cukup|udah cukup|cukup|selesai)(?: ya| mira| banyak| dulu| sekali)*$/.test(t);
+  }
+
+  // Perintah diam: "Hei MIRA, berhenti". Dipisah dari penutup sesi karena jawabannya berbeda —
+  // penutup dibalas "Sama-sama", perintah diam dijawab dengan DIAM.
+  function apakahPerintahDiam(teks) {
+    const t = normalisasiUcapan(teks);
+    if (!t) return false;
+    return /^(?:ya |oke |ok )?(?:berhenti|diam|stop|sudah|tahan)(?: dulu| ya| mira| sekarang)*$/.test(t);
+  }
+
+  // Penyaring gema. MIRA berbicara lewat speaker PC yang sama dengan mikrofon yang mendengarkan,
+  // jadi suaranya sendiri bisa terbaca sebagai ucapan pengguna. Sebuah ucapan dianggap gema bila
+  // hampir semua katanya ada di teks yang BARU SAJA dibacakan. Pemanggil membatasi pemakaiannya
+  // pada jendela singkat sesudah MIRA selesai bicara — pertanyaan lanjutan sungguhan sering
+  // memakai kata yang sama dengan jawabannya ("revenue hari ini berapa") dan tidak boleh ikut
+  // terbuang.
+  //
+  // Kata yang mengandung angka dikeluarkan dari perbandingan, bukan dihitung cocok atau tidak.
+  // Jawaban MIRA justru paling sering berisi angka ("Rp15.464.900"), dan pengenal suara menuliskan
+  // angka dengan bentuk yang berbeda dari teks aslinya ("15.464.900", "lima belas juta ...") —
+  // jadi angka tidak bisa dipakai sebagai bukti gema maupun sebagai bukti sebaliknya.
+  const KATA_ANGKA = new Set(['nol', 'kosong', 'satu', 'dua', 'tiga', 'empat', 'lima', 'enam', 'tujuh', 'delapan', 'sembilan', 'sepuluh', 'sebelas', 'belas', 'puluh', 'ratus', 'ribu', 'juta', 'miliar', 'milyar', 'triliun', 'koma', 'seratus', 'seribu', 'sejuta']);
+  function apakahGemaSuaraSendiri(transkrip, dibacakan) {
+    const kata = (s) => normalisasiUcapan(s).replace(/[^a-z0-9 ]/g, ' ').split(' ').filter((w) => w.length > 2 && !/\d/.test(w) && !KATA_ANGKA.has(w));
+    const t = kata(transkrip);
+    if (t.length < 4) return false;
+    const himpunan = new Set(kata(dibacakan));
+    let cocok = 0;
+    for (const w of t) if (himpunan.has(w)) cocok++;
+    return cocok / t.length >= 0.8;
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Memahami ucapan: istilah kantor yang sering salah ditulis pengenal suara.
+  // Pengenal suara dilatih untuk bahasa sehari-hari, bukan kode barang. "KSFO028" yang diucapkan
+  // "K S F O nol dua delapan" ditulisnya terpisah-pisah, dan "CFN" menjadi "c f n" atau "sefen".
+  // Backend mencocokkan kode barang PERSIS (tanpa toleransi typo, keputusan yang disengaja), jadi
+  // kode yang salah tulis berarti produk tidak ditemukan. Perapian ini hanya menyatukan kembali
+  // apa yang JELAS dimaksud; yang meragukan dibiarkan apa adanya.
+  // ---------------------------------------------------------------------------------------------
+  const ANGKA_LISAN = { nol: '0', kosong: '0', satu: '1', dua: '2', tiga: '3', empat: '4', lima: '5', enam: '6', tujuh: '7', delapan: '8', sembilan: '9' };
+  const KATA_PERBAIKAN = [
+    [/\binvois(?:e)?\b/gi, 'invoice'],
+    [/\breven(?:u|eu|yu)\b/gi, 'revenue'],
+    [/\b(?:seles|sels)\b/gi, 'sales'],
+    [/\bpiutan\b/gi, 'piutang'],
+    [/\b(?:se|ce)\s*ef\s*en\b/gi, 'CFN'],
+    [/\bem\s*ka\s*i\b/gi, 'MKI'],
+  ];
+  // awalanKode: himpunan awalan kode barang yang dikenal (di halaman: KNOWN_ACRONYMS). Tanpanya,
+  // hanya CFN dan MKI yang dirapikan dari huruf-huruf terpisah.
+  function rapikanUcapanDomain(teks, awalanKode) {
+    const awalan = awalanKode || new Set();
+    let t = String(teks || '');
+    // 1) Huruf dieja lalu angka: "k s f o nol dua delapan" / "k s f o 0 2 8" / "k s f o 028" -> KSFO028.
+    t = t.replace(/\b((?:[a-z]\b[\s,.-]*){2,6})((?:(?:nol|kosong|satu|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|\d+)\b[\s,.-]*){1,8})/gi, (m, huruf, angka) => {
+      const h = huruf.replace(/[^a-z]/gi, '').toUpperCase();
+      const a = angka.toLowerCase().split(/[\s,.-]+/).filter(Boolean).map((w) => (ANGKA_LISAN[w] !== undefined ? ANGKA_LISAN[w] : w)).join('');
+      return /^\d{2,}$/.test(a) ? ` ${h}${a} ` : m;
+    });
+    // 2) Awalan kode dan angkanya terpisah spasi: "ksfo 028" -> KSFO028 — hanya untuk awalan yang
+    //    memang dikenal, supaya "stok 028" atau "kode 100" tidak dirusak.
+    t = t.replace(/\b([a-z]{2,6})[\s-]+(\d{2,4})\b/gi, (m, huruf, angka) => (awalan.has(huruf.toUpperCase()) ? `${huruf.toUpperCase()}${angka}` : m));
+    // 3) Huruf dieja tanpa angka: "c f n" -> CFN, "o l t" -> OLT — hanya bila hasilnya sebuah
+    //    istilah yang dikenal.
+    t = t.replace(/\b((?:[a-z]\b[\s,.-]*){3,4})/gi, (m, huruf) => {
+      const h = huruf.replace(/[^a-z]/gi, '').toUpperCase();
+      return h === 'CFN' || h === 'MKI' || awalan.has(h) ? `${h} ` : m;
+    });
+    for (const [pola, ganti] of KATA_PERBAIKAN) t = t.replace(pola, ganti);
+    return t.replace(/\s+/g, ' ').trim();
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Memahami pertanyaan lanjutan. "Berapa sales hari ini?" lalu "kalau kemarin?" — orang tidak
+  // mengulang seluruh kalimat, tetapi backend memilih data lewat kata kunci di pesan itu sendiri,
+  // jadi "kalau kemarin" saja tidak membawa apa pun yang bisa dicari dan MIRA terpaksa menebak.
+  // Lanjutan itu dilengkapi di sini dengan MENGGANTI bagian yang berubah (waktu atau company) pada
+  // pertanyaan sebelumnya — bukan menggabungkan kedua kalimat, karena "hari ini; kemarin" membuat
+  // backend memilih salah satu tanpa tanda.
+  //
+  // Konservatif sengaja: hanya lanjutan pendek yang SELURUHNYA terdiri dari penanda + waktu/company.
+  // Bila ada kata lain yang tidak dipahami, atau lanjutan itu memuat topiknya sendiri, pertanyaan
+  // dibiarkan apa adanya — salah melengkapi lebih buruk daripada tidak melengkapi.
+  // ---------------------------------------------------------------------------------------------
+  const BULAN_NAMA = 'januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember';
+  const POLA_WAKTU = new RegExp('\\b(?:hari ini|kemarin|lusa|besok|minggu ini|minggu lalu|bulan ini|bulan lalu|tahun ini|tahun lalu|(?:tanggal )?\\d{1,2} (?:' + BULAN_NAMA + ')(?: \\d{4})?|(?:' + BULAN_NAMA + ')(?: \\d{4})?)\\b', 'i');
+  const POLA_COMPANY = /\b(?:mki|cfn)\b/i;
+  const POLA_TOPIK = /\b(?:sales|penjualan|omzet|revenue|pendapatan|invoice|faktur|piutang|tagihan|stok|stock|customer|pelanggan|retur|target|produk|barang|wilayah|zona|ekspedisi|koli|qty|rekor|kinerja|performa|personel|karyawan|ranking|peringkat|pembayaran|bayar)\b/i;
+  // Topik yang bermakna menurut waktu. "Stok kemarin" atau "piutang kemarin" bukan pertanyaan yang
+  // dijawab backend per tanggal, jadi waktu tidak boleh ditempelkan ke sana.
+  const POLA_TOPIK_WAKTU = /\b(?:sales|penjualan|omzet|revenue|pendapatan|invoice|faktur|retur|qty|koli|ekspedisi|pembayaran)\b/i;
+  const PENANDA_LANJUTAN = /^(?:kalau|kalo|bagaimana dengan|bagaimana kalau|gimana dengan|gimana kalau|lalu|terus|lantas|dan|untuk|sedangkan|bagaimana|gimana|coba|yang)\s+/i;
+
+  function lengkapiPertanyaanLanjutan(lanjutan, sebelumnya) {
+    const asli = String(lanjutan || '').trim();
+    const prev = String(sebelumnya || '').trim();
+    const hasil = (teks, dilengkapi) => ({ teks, dilengkapi });
+    if (!asli) return hasil(asli, false);
+    const adaPenanda = PENANDA_LANJUTAN.test(asli);
+    const inti = asli.replace(/[?.!]+$/, '').replace(PENANDA_LANJUTAN, '').trim();
+    const kata = inti.split(/\s+/).filter(Boolean);
+    if (!kata.length || kata.length > 6) return hasil(asli, false);
+    // Memuat topiknya sendiri ("kalau piutang CFN"): berdiri sendiri, cukup buang penandanya.
+    if (POLA_TOPIK.test(inti)) return hasil(adaPenanda ? inti : asli, false);
+    const waktu = inti.match(POLA_WAKTU);
+    const company = inti.match(POLA_COMPANY);
+    if (!waktu && !company) return hasil(asli, false);
+    const sisa = inti.replace(POLA_WAKTU, '').replace(POLA_COMPANY, '').replace(/\b(?:untuk|di|pada|saja|aja|juga|nya|ya|dong|kalau|kalo)\b/gi, '').trim();
+    if (sisa) return hasil(asli, false);
+    if (!prev || !POLA_TOPIK.test(prev)) return hasil(asli, false);
+    if (!adaPenanda && kata.length > 3) return hasil(asli, false);
+    if (waktu && !POLA_TOPIK_WAKTU.test(prev)) return hasil(asli, false);
+    let q = prev.replace(/[?.!]+$/, '').trim();
+    if (waktu) q = POLA_WAKTU.test(q) ? q.replace(POLA_WAKTU, waktu[0]) : `${q} ${waktu[0]}`;
+    if (company) q = POLA_COMPANY.test(q) ? q.replace(POLA_COMPANY, company[0].toUpperCase()) : `${q} untuk ${company[0].toUpperCase()}`;
+    return hasil(q, true);
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Alat ukur jarak: seberapa keras suara masuk ke mikrofon. Pengenal suara Chrome tidak bisa
+  // diatur penguatannya dari halaman web, jadi satu-satunya cara memperbaiki jangkauan adalah
+  // menyetel mikrofon di tingkat sistem (Mic Boost, perangkat masukan, jarak) — dan itu butuh
+  // angka untuk dilihat. Ambang ini pedoman, bukan jaminan pengenalan.
+  // ---------------------------------------------------------------------------------------------
+  function nilaiLevelMikrofon(puncak) {
+    const p = Math.max(Number(puncak) || 0, 1e-5);
+    const db = Math.round(20 * Math.log10(p));
+    let status;
+    if (db >= -6) status = 'terlalu keras';
+    else if (db >= -30) status = 'baik';
+    else if (db >= -45) status = 'pelan';
+    else status = 'hampir tidak terdengar';
+    return { db, status };
   }
 
   // Jawaban MIRA di layar boleh panjang, tapi yang DIBACAKAN harus ringkas: sapaan pembuka dan doa
@@ -668,16 +712,16 @@
   const $ = (id) => document.getElementById(id);
   const el = {
     orb: $('orb'), status: $('statusUtama'), rinci: $('statusRinci'), dengar: $('sedangDengar'),
-    log: $('log'), meter: $('meterIsi'), tombol: $('tombolUtama'), galat: $('galat'),
-    labelMik: $('labelMik'), segSens: $('segSens'), lengkap: $('tglLengkap'), bersihkan: $('bersihkan'),
+    log: $('log'), tombol: $('tombolUtama'), galat: $('galat'), labelMik: $('labelMik'),
+    lengkap: $('tglLengkap'), bersihkan: $('bersihkan'),
+    meter: $('meter'), meterIsi: $('meterIsi'), meterTeks: $('meterTeks'), saran: $('saranMik'),
     loginBox: $('loginBox'), kode: $('kodeInput'), loginBtn: $('loginBtn'),
   };
   const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
 
   const TEKS_STATE = {
     mati: 'Nonaktif',
-    siaga: 'Siaga — tepuk tangan 2×',
-    mendengar: 'Mendengarkan — ucapkan “Hai MIRA”',
+    siaga: 'Siaga — ucapkan “Hei MIRA”',
     sesi: 'Silakan, saya mendengarkan',
     berpikir: 'Memproses…',
     berbicara: 'Berbicara…',
@@ -689,37 +733,29 @@
 
   let aktif = false;
   let state = 'mati';
-  let ctx = null;
-  let stream = null;
-  let node = null;
-  let penyuntik = null;
   let rec = null;
+  let ctxBunyi = null;
   let wakeLock = null;
-  let timerDengar = null;
+  let timerRestart = null;
+  let timerSesi = null;
   let penjagaState = null;
   let penjagaBicara = null;
+  let timerTerdengar = null;
+  let galatBeruntun = 0;
+  let abaikanSampai = 0;
+  let selesaiBicaraPada = 0;
+  let terakhirDibacakan = '';
   let tingkat = 0;
-  let hitungPesan = 0;
-  let kilatTepuk = 0;
+  // Menunggu pertanyaan lanjutan lebih lama dari sebelumnya: dari jauh orang cenderung berhenti
+  // sejenak sebelum bicara lagi, dan sesi yang tertutup terlalu cepat memaksanya mengulang "Hei MIRA".
+  const WAKTU_SESI = 15;
+  const BATAS_KONTEKS_MS = 5 * 60 * 1000;
+  let pertanyaanTerakhir = '';
+  let waktuPertanyaanTerakhir = 0;
   const riak = [];
   const chatHistory = [];
 
-  let sensitivitas = ['rendah', 'sedang', 'tinggi'].includes(baca('miraJarvisSens')) ? baca('miraJarvisSens') : 'sedang';
-  const deteksi = buatPendeteksiTepuk({ sensitivitas });
   el.lengkap.checked = baca('miraJarvisLengkap') === '1';
-
-  function tampilSens() {
-    el.segSens.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.sens === sensitivitas)));
-  }
-  tampilSens();
-  el.segSens.addEventListener('click', (e) => {
-    const b = e.target.closest('button[data-sens]');
-    if (!b) return;
-    sensitivitas = b.dataset.sens;
-    deteksi.setSensitivitas(sensitivitas);
-    simpan('miraJarvisSens', sensitivitas);
-    tampilSens();
-  });
   el.lengkap.addEventListener('change', () => simpan('miraJarvisLengkap', el.lengkap.checked ? '1' : '0'));
 
   function tampilGalat(pesan) { el.galat.textContent = pesan || ''; }
@@ -729,17 +765,27 @@
     clearTimeout(penjagaState);
     // Penjaga: jawaban yang tak kunjung datang tidak boleh membuat mode ini menggantung selamanya.
     if (s === 'berpikir') penjagaState = setTimeout(() => { if (state === 'berpikir') keSiaga('Tidak ada jawaban — kembali siaga.'); }, 90000);
-    deteksi.setPengganda(s === 'berbicara' ? 1.8 : 1);
     el.status.textContent = TEKS_STATE[s] || s;
     el.rinci.textContent = rinci || '';
     document.body.dataset.state = s;
   }
   function keSiaga(rinci) {
-    clearTimeout(timerDengar);
+    clearTimeout(timerSesi);
     clearTimeout(penjagaBicara);
     if (!aktif) return;
-    el.dengar.textContent = '';
     setState('siaga', rinci || '');
+  }
+  function mulaiTimerSesi(detik) {
+    clearTimeout(timerSesi);
+    timerSesi = setTimeout(() => { if (state === 'sesi') keSiaga('Sesi selesai.'); }, detik * 1000);
+  }
+
+  // Teks yang terdengar ditampilkan sebentar supaya jelas mikrofon bekerja. Ucapan yang tidak
+  // diawali "Hei MIRA" ditandai diabaikan agar terlihat bahwa tidak ada yang dikirim.
+  function tampilTerdengar(teks, diabaikan) {
+    clearTimeout(timerTerdengar);
+    el.dengar.textContent = teks ? (diabaikan ? `terdengar: “${teks}” — diabaikan` : `“${teks}”`) : '';
+    if (teks) timerTerdengar = setTimeout(() => { el.dengar.textContent = ''; }, 6000);
   }
 
   // ---------- log percakapan ----------
@@ -756,109 +802,256 @@
   el.bersihkan.addEventListener('click', () => { el.log.innerHTML = ''; chatHistory.length = 0; });
 
   // ---------- bunyi konfirmasi ----------
-  function bunyi(nada) {
+  function bunyi() {
     try {
-      if (!ctx) return;
-      const t0 = ctx.currentTime;
+      if (!ctxBunyi) return;
+      const t0 = ctxBunyi.currentTime;
       const pasang = (freq, mulai, dur) => {
-        const o = ctx.createOscillator();
-        const g = ctx.createGain();
+        const o = ctxBunyi.createOscillator();
+        const g = ctxBunyi.createGain();
         o.type = 'sine';
         o.frequency.value = freq;
         g.gain.setValueAtTime(0.0001, t0 + mulai);
-        g.gain.exponentialRampToValueAtTime(0.16, t0 + mulai + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.12, t0 + mulai + 0.02);
         g.gain.exponentialRampToValueAtTime(0.0001, t0 + mulai + dur);
-        o.connect(g); g.connect(ctx.destination);
+        o.connect(g); g.connect(ctxBunyi.destination);
         o.start(t0 + mulai); o.stop(t0 + mulai + dur + 0.02);
       };
-      if (nada === 'aktif') { pasang(660, 0, 0.11); pasang(990, 0.09, 0.15); }
-      else { pasang(440, 0, 0.12); }
+      pasang(660, 0, 0.1); pasang(990, 0.08, 0.14);
     } catch { /* tidak kritis */ }
   }
 
-  // ---------- mendengarkan ----------
-  function mulaiMendengar({ wajibPanggil, batasDetik }) {
-    if (!aktif) return;
-    clearTimeout(timerDengar);
-    if (rec) { try { rec.abort(); } catch { /* sudah berhenti */ } rec = null; }
+  // ---------- pendengar yang terus menyala ----------
+  // Chrome menutup pengenalan suara sendiri setelah hening atau gangguan jaringan, jadi pendengar
+  // dinyalakan ulang setiap kali berhenti. Jeda antar-nyala bertambah bila gagal berturut-turut,
+  // supaya jaringan yang putus tidak membuat halaman ini menghujani layanan dengan percobaan.
+  function mulaiRec() {
+    if (!aktif || rec) return;
     const r = new SpeechRecognitionCtor();
     rec = r;
     r.lang = 'id-ID';
-    r.continuous = false;
+    r.continuous = true;
     r.interimResults = true;
-    r.maxAlternatives = 1;
-    let akhir = '';
-    let galatKode = '';
+    // Hipotesis ganda: dari jarak jauh hipotesis teratas sering keliru justru di kata panggilnya,
+    // sedangkan hipotesis berikutnya benar. Tanpa ini "Hai Mira" yang terbaca "Hai Nira" hilang.
+    r.maxAlternatives = 5;
     r.onresult = (ev) => {
-      let sementara = '';
+      galatBeruntun = 0;
+      if (el.galat.textContent.startsWith('Pengenal suara butuh internet')) tampilGalat('');
       for (let i = ev.resultIndex; i < ev.results.length; i++) {
-        const teks = ev.results[i][0].transcript;
-        if (ev.results[i].isFinal) akhir = (akhir + ' ' + teks).trim();
-        else sementara += teks;
+        const hasil = ev.results[i];
+        const alt = [];
+        for (let k = 0; k < hasil.length; k++) {
+          const tk = ((hasil[k] && hasil[k].transcript) || '').trim();
+          if (tk) alt.push(tk);
+        }
+        if (!alt.length) continue;
+        const yakin = hasil[0] && typeof hasil[0].confidence === 'number' ? hasil[0].confidence : 0;
+        tingkat = Math.max(tingkat, 0.55);
+        if (hasil.isFinal) ucapanFinal(alt, yakin); else ucapanSementara(alt);
       }
-      el.dengar.textContent = '“' + (akhir || sementara).trim() + '”';
     };
     r.onerror = (ev) => {
-      galatKode = ev.error || 'error';
-      if (galatKode === 'not-allowed' || galatKode === 'service-not-allowed') {
-        tampilGalat('Pengenalan suara ditolak browser. Izinkan mikrofon untuk halaman ini lalu aktifkan lagi.');
+      const k = (ev && ev.error) || 'error';
+      if (k === 'not-allowed' || k === 'service-not-allowed') {
+        tampilGalat('Izin mikrofon atau pengenal suara ditolak browser. Klik ikon gembok di alamat, izinkan Mikrofon, lalu aktifkan lagi.');
         matikan();
-      } else if (galatKode === 'network') {
-        tampilGalat('Pengenalan suara butuh internet — periksa koneksi PC ini.');
+      } else if (k === 'audio-capture') {
+        tampilGalat('Mikrofon tidak ditemukan atau sedang dipakai aplikasi lain.');
+        matikan();
+      } else if (k === 'network') {
+        tampilGalat('Pengenal suara butuh internet — mencoba lagi…');
+        galatBeruntun++;
+      } else if (k !== 'no-speech' && k !== 'aborted') {
+        galatBeruntun++;
       }
     };
     r.onend = () => {
-      clearTimeout(timerDengar);
       if (rec === r) rec = null;
-      if (!aktif || (state !== 'mendengar' && state !== 'sesi')) return;
-      prosesUcapan(akhir.trim(), wajibPanggil, galatKode);
+      if (aktif) jadwalRestart();
     };
-    setState(wajibPanggil ? 'mendengar' : 'sesi', wajibPanggil ? 'Menunggu “Hai MIRA, …”' : 'Lanjutkan pertanyaanmu');
-    el.dengar.textContent = '';
-    timerDengar = setTimeout(() => { try { r.stop(); } catch { /* sudah berhenti */ } }, batasDetik * 1000);
-    try { r.start(); } catch { keSiaga('Gagal memulai pendengaran.'); }
+    try { r.start(); } catch { rec = null; galatBeruntun++; jadwalRestart(); }
+  }
+  function jadwalRestart() {
+    clearTimeout(timerRestart);
+    timerRestart = setTimeout(mulaiRec, Math.min(10000, 300 * 2 ** Math.min(galatBeruntun, 5)));
   }
 
-  function prosesUcapan(mentah, wajibPanggil, galatKode) {
-    if (!mentah) {
-      return keSiaga(galatKode === 'network' ? 'Tidak ada koneksi pengenalan suara.' : wajibPanggil ? 'Tidak terdengar apa-apa.' : 'Sesi selesai.');
+  // Hasil sementara dipakai untuk dua hal: menampilkan apa yang terdengar, dan menyela MIRA
+  // secepat mungkin — begitu "Hei MIRA" terdengar saat MIRA bicara, ia diam tanpa menunggu
+  // ucapan selesai.
+  function ucapanSementara(alt) {
+    if (state === 'berpikir') return;
+    const teks = alt[0];
+    const p = ambilPanggilanDariAlternatif(alt);
+    if (state === 'berbicara' && p.dipanggil) {
+      hentikanBicara();
+      clearTimeout(penjagaBicara);
+      riak.push({ t0: performance.now(), besar: true });
+      setState('sesi', 'Menyela');
+      mulaiTimerSesi(WAKTU_SESI);
     }
-    const p = ambilPertanyaan(mentah);
-    if (wajibPanggil && !p.dipanggil) {
-      el.dengar.textContent = '';
-      return keSiaga('Tidak menyebut “Hai MIRA” — diabaikan.');
+    tampilTerdengar(teks, state === 'siaga' && !p.dipanggil);
+  }
+
+  function ucapanFinal(alt, yakin) {
+    if (state === 'berpikir' || state === 'mati') return;
+    const teks = alt[0];
+    const p = ambilPanggilanDariAlternatif(alt);
+    // Keyakinan pengenal ditampilkan: dari jauh nilainya turun, dan itu petunjuk bagi pengguna
+    // bahwa ia perlu mendekat atau menaikkan mikrofon — bukan bahwa MIRA yang salah.
+    if (yakin > 0 && p.dipanggil) tampilTerdengar(`${teks} (keyakinan ${Math.round(yakin * 100)}%)`, false);
+
+    if (state === 'berbicara') {
+      // Selama MIRA bicara, hanya "Hei MIRA" yang dianggap: yang lain hampir pasti suaranya
+      // sendiri dari speaker atau obrolan lain di ruangan.
+      if (!p.dipanggil) return;
+      hentikanBicara();
+      clearTimeout(penjagaBicara);
+      setState('sesi', 'Menyela');
+      return sesiMenerima(p.pertanyaan);
     }
-    const kalimat = p.dipanggil ? p.pertanyaan : mentah;
-    if (!kalimat) {
-      setState('berbicara', 'Memanggil');
-      return bicaraLalu('Ya, saya dengar.', lanjutSesi, 20);
+
+    // Ekor suara MIRA sendiri yang baru selesai: diabaikan keras sebentar, lalu disaring lewat
+    // kemiripan dengan yang baru dibacakan. Hanya untuk ucapan TANPA "Hei MIRA" — suara MIRA
+    // sendiri tidak pernah diawali panggilan itu, sedangkan ucapan yang diawalinya pasti dari
+    // orang. Tanpa pengecualian ini, menyela MIRA dengan "Hei MIRA, stok KSFO028" membuang
+    // pertanyaannya sendiri: membatalkan ucapan MIRA ikut memulai jendela abai.
+    if (!p.dipanggil) {
+      if (Date.now() < abaikanSampai) return;
+      if (Date.now() - selesaiBicaraPada < 3500 && apakahGemaSuaraSendiri(teks, terakhirDibacakan)) return;
     }
-    if (apakahAkhiriSesi(kalimat)) {
+
+    if (state === 'siaga') {
+      if (!p.dipanggil) return tampilTerdengar(teks, true);
+      riak.push({ t0: performance.now(), besar: true });
+      bunyi();
+      if (!p.pertanyaan) {
+        setState('berbicara', 'Memanggil');
+        return bicaraLalu('Ya, saya dengar.', lanjutSesi, 20);
+      }
+      return sesiMenerima(p.pertanyaan);
+    }
+
+    // state === 'sesi'
+    sesiMenerima(p.dipanggil ? p.pertanyaan : teks);
+  }
+
+  function sesiMenerima(kalimat) {
+    // Istilah kantor yang salah ditulis pengenal suara dirapikan lebih dulu, SEBELUM pemeriksaan
+    // apa pun: "k s f o nol dua delapan" harus sudah menjadi KSFO028 saat sampai ke backend.
+    const k = rapikanUcapanDomain(String(kalimat || '').trim(), KNOWN_ACRONYMS);
+    if (!k) { mulaiTimerSesi(WAKTU_SESI); return; } // hanya memanggil — tetap menunggu pertanyaannya
+    if (apakahPerintahDiam(k)) return keSiaga('Dihentikan.');
+    if (apakahAkhiriSesi(k)) {
       setState('berbicara', 'Menutup sesi');
       return bicaraLalu('Sama-sama.', () => keSiaga('Sesi ditutup.'), 20);
     }
-    kirim(kalimat);
+    // Pertanyaan lanjutan dilengkapi dari pertanyaan sebelumnya, tapi hanya bila percakapan masih
+    // baru — "kalau kemarin" lima menit setelah topik lain bukan lanjutan dari apa pun.
+    const konteks = (Date.now() - waktuPertanyaanTerakhir < BATAS_KONTEKS_MS) ? pertanyaanTerakhir : '';
+    const lengkap = lengkapiPertanyaanLanjutan(k, konteks);
+    kirim(lengkap.teks, lengkap.dilengkapi ? k : '');
   }
 
   // Berbicara lalu memanggil `lanjut` — dengan penjaga waktu, karena onend dari speechSynthesis
   // kadang tidak datang (bug lama Chrome pada ucapan panjang) dan mode ini tidak boleh macet.
   function bicaraLalu(teks, lanjut, panjangPerkiraan) {
     clearTimeout(penjagaBicara);
+    // Yang disimpan untuk penyaring gema adalah teks yang benar-benar DIUCAPKAN (sesudah aturan
+    // pengucapan: "Rp" menjadi "Rupiah", kode dieja), bukan teks aslinya — pengenal suara
+    // mendengar yang pertama.
+    terakhirDibacakan = buildSpeechSegments(teks).map((s) => s.text).join(' ');
     let jalan = false;
-    const sekali = () => { if (jalan) return; jalan = true; clearTimeout(penjagaBicara); if (state === 'berbicara') lanjut(); };
+    const sekali = () => {
+      if (jalan) return;
+      jalan = true;
+      clearTimeout(penjagaBicara);
+      selesaiBicaraPada = Date.now();
+      abaikanSampai = selesaiBicaraPada + 700;
+      if (state === 'berbicara') lanjut();
+    };
     penjagaBicara = setTimeout(sekali, Math.min(180000, 8000 + (panjangPerkiraan || teks.length) * 110));
     speak(teks, sekali);
   }
   function lanjutSesi() {
     if (!aktif || state !== 'berbicara') return;
-    mulaiMendengar({ wajibPanggil: false, batasDetik: 12 });
+    setState('sesi', 'Lanjutkan pertanyaanmu');
+    mulaiTimerSesi(WAKTU_SESI);
+  }
+
+  // ---------- alat ukur suara masuk ----------
+  // Aliran mikrofon ini HANYA dipakai untuk mengukur kerasnya suara; pengenalan suara tetap
+  // memakai aliran Chrome sendiri. Gunanya satu: memberi angka agar jarak/penguatan mikrofon
+  // bisa disetel, karena halaman web tidak bisa menaikkan penguatan pengenal suara.
+  let aliranMik = null;
+  let ctxMeter = null;
+  let timerMeter = null;
+  let puncakJendela = 0;
+  let tanpaSuaraSejak = 0;
+
+  function saranMikrofon(status) {
+    if (status === 'terlalu keras') return 'Suara terlalu keras/pecah — jauhkan mikrofon atau turunkan Mic Boost.';
+    if (status === 'pelan') return 'Suara masuk pelan — dekatkan mikrofon, atau naikkan Mic Boost di pengaturan suara Windows. Untuk ruangan luas, pakai mikrofon konferensi USB.';
+    if (status === 'hampir tidak terdengar') return 'Hampir tidak ada suara masuk — periksa perangkat masukan yang dipilih di Windows.';
+    return '';
+  }
+
+  async function mulaiMeter() {
+    if (aliranMik || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+    try {
+      aliranMik = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false } });
+    } catch (err) {
+      aliranMik = null;
+      if (aktif && err && (err.name === 'NotAllowedError' || err.name === 'SecurityError')) {
+        tampilGalat('Izin mikrofon ditolak. Klik ikon gembok di address bar Chrome, izinkan Mikrofon, lalu aktifkan lagi.');
+        matikan();
+      }
+      return; // alat ukur tidak kritis; tanpa dia mode ini tetap jalan
+    }
+    if (!aktif) { pelepasMeter(); return; }
+    try {
+      ctxMeter = new (window.AudioContext || window.webkitAudioContext)();
+      const an = ctxMeter.createAnalyser();
+      an.fftSize = 1024;
+      ctxMeter.createMediaStreamSource(aliranMik).connect(an);
+      const buf = new Float32Array(an.fftSize);
+      tanpaSuaraSejak = Date.now();
+      timerMeter = setInterval(() => {
+        an.getFloatTimeDomainData(buf);
+        let p = 0;
+        for (let i = 0; i < buf.length; i++) { const a = Math.abs(buf[i]); if (a > p) p = a; }
+        puncakJendela = Math.max(puncakJendela * 0.85, p); // turun perlahan agar terbaca mata
+        const { db, status } = nilaiLevelMikrofon(puncakJendela);
+        el.meterIsi.style.width = Math.max(0, Math.min(100, ((db + 60) / 60) * 100)) + '%';
+        el.meter.dataset.nilai = status;
+        el.meterTeks.textContent = `${db} dB · ${status}`;
+        if (puncakJendela > 0.02) tanpaSuaraSejak = Date.now();
+        // Saran hanya muncul bila suara pelan berlangsung lama; sesaat hening itu wajar.
+        el.saran.textContent = (Date.now() - tanpaSuaraSejak > 20000 && status !== 'baik') ? saranMikrofon(status) : (status === 'terlalu keras' ? saranMikrofon(status) : '');
+      }, 100);
+    } catch { pelepasMeter(); }
+  }
+  function pelepasMeter() {
+    clearInterval(timerMeter); timerMeter = null;
+    try { if (aliranMik) aliranMik.getTracks().forEach((t) => t.stop()); } catch { /* sudah berhenti */ }
+    aliranMik = null;
+    try { if (ctxMeter) ctxMeter.close(); } catch { /* sudah tertutup */ }
+    ctxMeter = null;
+    puncakJendela = 0;
+    el.meterIsi.style.width = '0'; el.meterTeks.textContent = '—'; el.meter.dataset.nilai = ''; el.saran.textContent = '';
   }
 
   // ---------- kirim ke MIRA ----------
-  async function kirim(kalimat) {
+  // asli: ucapan sebelum dilengkapi dari konteks (kosong bila tidak dilengkapi). Yang ditampilkan
+  // adalah apa yang BENAR-BENAR dikirim, plus apa yang diucapkan, supaya salah paham terlihat.
+  async function kirim(kalimat, asli) {
+    clearTimeout(timerSesi);
     setState('berpikir', 'Menanyakan ke MIRA');
-    el.dengar.textContent = '“' + kalimat + '”';
-    tambahLog('anda', escapeHtml(kalimat));
+    tampilTerdengar(kalimat, false);
+    pertanyaanTerakhir = kalimat;
+    waktuPertanyaanTerakhir = Date.now();
+    tambahLog('anda', escapeHtml(kalimat) + (asli ? `<div class="catatan">dipahami dari: “${escapeHtml(asli)}”</div>` : ''));
     let penuh = '';
     let galatPesan = '';
     try {
@@ -914,45 +1107,8 @@
     if (state !== 'berpikir') return;
     const ucap = ringkasUntukDibacakan(penuh, { lengkap: el.lengkap.checked });
     if (!ucap) return keSiaga('Jawaban kosong.');
-    setState('berbicara', el.lengkap.checked ? 'Membacakan lengkap' : 'Membacakan ringkasan — tepuk 2× untuk menyela');
+    setState('berbicara', el.lengkap.checked ? 'Membacakan lengkap — ucapkan “Hei MIRA” untuk menyela' : 'Membacakan ringkasan — ucapkan “Hei MIRA” untuk menyela');
     bicaraLalu(ucap, lanjutSesi, ucap.length);
-  }
-
-  // ---------- tepukan ----------
-  function onTepukGanda() {
-    if (state === 'siaga') {
-      bunyi('aktif');
-      riak.push({ t0: performance.now(), besar: true });
-      setTimeout(() => mulaiMendengar({ wajibPanggil: true, batasDetik: 10 }), 230);
-      setState('mendengar', 'Tepukan terdeteksi');
-    } else if (state === 'berbicara') {
-      // Menyela: tepuk 2× saat MIRA bicara menghentikannya dan langsung mendengarkan, tanpa
-      // perlu "Hai MIRA" lagi karena orangnya jelas sedang berbicara dengan MIRA.
-      setState('mendengar', 'Menyela');
-      hentikanBicara();
-      clearTimeout(penjagaBicara);
-      bunyi('aktif');
-      riak.push({ t0: performance.now(), besar: true });
-      setTimeout(() => mulaiMendengar({ wajibPanggil: false, batasDetik: 12 }), 230);
-    }
-  }
-
-  function terimaStat(d) {
-    const hasil = deteksi.proses({ puncak: d.p, rms: d.r, zcr: d.z }, d.t);
-    if ((++hitungPesan % 3) === 0) {
-      const ambang = deteksi.ambang();
-      const pct = Math.min(100, (d.p / ambang) * 50);
-      el.meter.style.width = pct + '%';
-      el.meter.style.background = pct >= 50 ? 'var(--marun-terang)' : 'var(--hijau)';
-    }
-    tingkat += (Math.min(1, d.p * 2.2) - tingkat) * 0.25;
-    if (hasil === 1) {
-      kilatTepuk = performance.now();
-      riak.push({ t0: kilatTepuk, besar: false });
-      if (state === 'siaga') el.rinci.textContent = 'Satu tepukan — tepuk sekali lagi…';
-    } else if (hasil === 2) {
-      onTepukGanda();
-    }
   }
 
   // ---------- nyalakan / matikan ----------
@@ -961,111 +1117,48 @@
   }
   document.addEventListener('visibilitychange', () => { if (aktif && document.visibilityState === 'visible') ambilWakeLock(); });
 
-  async function aktifkan() {
+  function aktifkan() {
     if (aktif) return;
     tampilGalat('');
     if (!getKode()) { document.body.dataset.perluLogin = '1'; return; }
     if (!SpeechRecognitionCtor) { tampilGalat('Browser ini tidak mendukung pengenalan suara. Pakai Google Chrome di PC.'); return; }
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.AudioWorkletNode) {
-      tampilGalat('Browser ini tidak mendukung akses mikrofon yang dibutuhkan. Pakai Google Chrome versi terbaru.');
-      return;
-    }
-    el.tombol.disabled = true;
-    try {
-      // Pemrosesan bawaan dimatikan: peredam derau memperlakukan tepukan sebagai derau dan
-      // menghilangkannya, dan penguat otomatis meratakan lonjakan yang justru dicari.
-      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
-    } catch {
-      el.tombol.disabled = false;
-      tampilGalat('Izin mikrofon ditolak. Klik ikon gembok di alamat, izinkan Mikrofon, lalu coba lagi.');
-      return;
-    }
-    try {
-      ctx = new (window.AudioContext || window.webkitAudioContext)();
-      await ctx.resume();
-      const kode = `
-        const hitung = ${hitungStatFrame.toString()};
-        class PenghitungTepuk extends AudioWorkletProcessor {
-          constructor() { super(); this.buf = new Float32Array(Math.max(64, Math.round(sampleRate * 0.01))); this.n = 0; }
-          process(inputs) {
-            const masuk = inputs[0] && inputs[0][0];
-            if (!masuk) return true;
-            for (let i = 0; i < masuk.length; i++) {
-              this.buf[this.n++] = masuk[i];
-              if (this.n === this.buf.length) {
-                const s = hitung(this.buf);
-                this.port.postMessage({ p: s.puncak, r: s.rms, z: s.zcr, t: currentTime });
-                this.n = 0;
-              }
-            }
-            return true;
-          }
-        }
-        registerProcessor('penghitung-tepuk', PenghitungTepuk);`;
-      // Dua cara memuat modul pemroses: alamat blob: lebih dulu (jalur biasa di https), lalu data:
-      // bila blob: ditolak — mis. halaman dibuka dari berkas lokal yang berasal "null". Bagian ini
-      // menentukan seluruh fitur, jadi tidak boleh bergantung pada satu cara saja.
-      let galatMuat = null;
-      let termuat = false;
-      for (const buat of [
-        () => URL.createObjectURL(new Blob([kode], { type: 'application/javascript' })),
-        () => 'data:application/javascript;charset=utf-8,' + encodeURIComponent(kode),
-      ]) {
-        const url = buat();
-        try { await ctx.audioWorklet.addModule(url); termuat = true; break; } catch (e) { galatMuat = e; } finally { if (url.startsWith('blob:')) URL.revokeObjectURL(url); }
-      }
-      if (!termuat) throw galatMuat;
-      node = new AudioWorkletNode(ctx, 'penghitung-tepuk');
-      node.port.onmessage = (e) => terimaStat(e.data);
-      const sumber = ctx.createMediaStreamSource(stream);
-      const bisu = ctx.createGain();
-      bisu.gain.value = 0;
-      // Dihubungkan ke tujuan lewat penguat bisu: simpul tanpa jalur ke tujuan tidak selalu
-      // diproses, dan suara mikrofon tidak boleh terdengar dari speaker.
-      sumber.connect(node); node.connect(bisu); bisu.connect(ctx.destination);
-      stream.getAudioTracks().forEach((tr) => { tr.onended = () => { tampilGalat('Mikrofon terputus.'); matikan(); }; });
-      ctx.onstatechange = () => { if (aktif && ctx && ctx.state === 'suspended') ctx.resume().catch(() => {}); };
-    } catch (err) {
-      tampilGalat('Gagal menyiapkan pemroses suara: ' + (err && err.message ? err.message : err));
-      matikan();
-      el.tombol.disabled = false;
-      return;
-    }
+    try { ctxBunyi = new (window.AudioContext || window.webkitAudioContext)(); ctxBunyi.resume().catch(() => {}); } catch { ctxBunyi = null; }
     aktif = true;
+    galatBeruntun = 0;
     document.body.dataset.aktif = '1';
-    el.labelMik.textContent = 'Mikrofon aktif';
+    el.labelMik.textContent = 'Mikrofon aktif — mendengarkan terus';
     el.tombol.textContent = 'Matikan mode Jarvis';
-    el.tombol.disabled = false;
     ambilWakeLock();
-    keSiaga('Tepuk tangan 2× untuk memanggil');
+    keSiaga('Ucapkan “Hei MIRA, …”');
+    mulaiRec();
+    mulaiMeter();
   }
 
   function matikan() {
     aktif = false;
-    clearTimeout(timerDengar); clearTimeout(penjagaState); clearTimeout(penjagaBicara);
-    if (rec) { try { rec.abort(); } catch { /* sudah berhenti */ } rec = null; }
+    clearTimeout(timerRestart); clearTimeout(timerSesi); clearTimeout(penjagaState); clearTimeout(penjagaBicara); clearTimeout(timerTerdengar);
+    if (rec) { const r = rec; rec = null; r.onend = null; try { r.abort(); } catch { /* sudah berhenti */ } }
     hentikanBicara();
-    try { if (node) { node.port.onmessage = null; node.disconnect(); } } catch { /* sudah putus */ }
-    node = null;
-    try { if (stream) stream.getTracks().forEach((tr) => { tr.onended = null; tr.stop(); }); } catch { /* sudah berhenti */ }
-    stream = null;
-    try { if (ctx) ctx.close(); } catch { /* sudah tertutup */ }
-    ctx = null;
+    pelepasMeter();
+    pertanyaanTerakhir = ''; waktuPertanyaanTerakhir = 0; // konteks tidak terbawa ke sesi berikutnya
+    try { if (ctxBunyi) ctxBunyi.close(); } catch { /* sudah tertutup */ }
+    ctxBunyi = null;
     try { if (wakeLock) wakeLock.release(); } catch { /* sudah dilepas */ }
     wakeLock = null;
     document.body.dataset.aktif = '0';
     el.labelMik.textContent = 'Mikrofon mati';
     el.tombol.textContent = 'Aktifkan mode Jarvis';
-    el.tombol.disabled = false;
-    el.meter.style.width = '0';
     el.dengar.textContent = '';
     setState('mati', '');
   }
 
   el.tombol.addEventListener('click', () => { if (aktif) matikan(); else aktifkan(); });
   window.addEventListener('keydown', (e) => {
-    // Esc menyela ucapan MIRA dari keyboard, sama seperti tepuk ganda.
-    if (e.key === 'Escape' && aktif && state === 'berbicara') { setState('mendengar', 'Menyela'); hentikanBicara(); clearTimeout(penjagaBicara); mulaiMendengar({ wajibPanggil: false, batasDetik: 12 }); }
+    // Esc menyela ucapan MIRA dari keyboard, sama seperti memanggilnya dengan suara.
+    if (e.key === 'Escape' && aktif && state === 'berbicara') {
+      hentikanBicara(); clearTimeout(penjagaBicara);
+      setState('sesi', 'Menyela'); mulaiTimerSesi(WAKTU_SESI);
+    }
   });
   window.addEventListener('beforeunload', () => { try { if (aktif) matikan(); } catch { /* menutup halaman */ } });
 
@@ -1088,12 +1181,12 @@
 
   // =========================================================================================
   // Orb — penunjuk keadaan. Satu-satunya elemen yang dianimasikan terus-menerus, dan setiap
-  // geraknya berarti sesuatu: redup saat siaga, riak setiap tepukan, lengkung berputar saat
-  // berpikir, denyut saat berbicara, dan jari-jari mengikuti kerasnya suara saat mendengarkan.
+  // geraknya berarti sesuatu: redup saat siaga, riak setiap kali "Hei MIRA" dikenali, lengkung
+  // berputar saat berpikir, denyut saat berbicara, dan menguat sesaat setiap ada suara terdengar.
   // =========================================================================================
   const kuas = el.orb.getContext('2d');
   const WARNA = {
-    mati: [100, 88, 78], siaga: [207, 155, 63], mendengar: [255, 196, 92], sesi: [255, 196, 92],
+    mati: [100, 88, 78], siaga: [207, 155, 63], sesi: [255, 196, 92],
     berpikir: [212, 88, 91], berbicara: [241, 228, 198],
   };
   const kurangiGerak = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -1123,18 +1216,16 @@
     let denyut = 0;
     if (!kurangiGerak) {
       if (state === 'berbicara') denyut = 0.5 + 0.5 * Math.sin(waktu * 7.5);
-      else if (state === 'siaga') denyut = 0.5 + 0.5 * Math.sin(waktu * 1.4);
+      else if (state === 'siaga' || state === 'sesi') denyut = 0.5 + 0.5 * Math.sin(waktu * 1.4);
     }
-    const dengar = (state === 'mendengar' || state === 'sesi' || state === 'siaga') ? tingkat : 0;
+    const dengar = (state === 'siaga' || state === 'sesi') ? tingkat : 0;
 
-    // cahaya
     const cahaya = kuas.createRadialGradient(cx, cy, R * 0.2, cx, cy, R * 3.1);
     cahaya.addColorStop(0, rgba(hidup ? 0.28 + denyut * 0.12 + dengar * 0.25 : 0.06));
     cahaya.addColorStop(1, rgba(0));
     kuas.fillStyle = cahaya;
     kuas.fillRect(0, 0, w, w);
 
-    // cincin
     for (let i = 0; i < 4; i++) {
       const rr = R * (1 + i * 0.52) + (i === 0 ? dengar * R * 0.5 : dengar * R * 0.14 * (4 - i)) + denyut * R * 0.06 * (i + 1);
       kuas.beginPath();
@@ -1146,7 +1237,6 @@
     }
     kuas.setLineDash([]);
 
-    // lengkung berputar saat berpikir
     if (state === 'berpikir') {
       const putar = kurangiGerak ? 0 : waktu * 2.4;
       for (let i = 0; i < 3; i++) {
@@ -1158,20 +1248,18 @@
       }
     }
 
-    // inti
     kuas.beginPath();
     kuas.arc(cx, cy, R * (0.42 + denyut * 0.08 + dengar * 0.12), 0, Math.PI * 2);
     kuas.fillStyle = rgba(hidup ? 0.85 : 0.2);
     kuas.fill();
 
-    // riak tepukan
     for (let i = riak.length - 1; i >= 0; i--) {
-      const umur = (now - riak[i].t0) / (riak[i].besar ? 1100 : 600);
+      const umur = (now - riak[i].t0) / 1100;
       if (umur >= 1) { riak.splice(i, 1); continue; }
       kuas.beginPath();
-      kuas.arc(cx, cy, R * (1 + umur * (riak[i].besar ? 2.6 : 1.4)), 0, Math.PI * 2);
-      kuas.lineWidth = riak[i].besar ? 3 : 2;
-      kuas.strokeStyle = `rgba(255,196,92,${(1 - umur) * (riak[i].besar ? 0.9 : 0.55)})`;
+      kuas.arc(cx, cy, R * (1 + umur * 2.6), 0, Math.PI * 2);
+      kuas.lineWidth = 3;
+      kuas.strokeStyle = `rgba(255,196,92,${(1 - umur) * 0.9})`;
       kuas.stroke();
     }
 
