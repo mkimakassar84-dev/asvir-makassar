@@ -11,7 +11,7 @@
  * YANG TIDAK DIUKUR: seberapa baik Google mengenali suara pada logat dan ruangan kantor. Tes ini
  * membuktikan bahwa GIVEN transkrip tertentu, MIRA bereaksi dengan benar — tidak lebih.
  *
- * Delapan belas skenario, termasuk yang menjaga keamanan: obrolan kantor tanpa "Hei MIRA" tidak pernah
+ * Dua puluh satu skenario, termasuk yang menjaga keamanan: obrolan kantor tanpa "Hei MIRA" tidak pernah
  * sampai ke MIRA, suara MIRA sendiri tidak dianggap pertanyaan, dan setelah dimatikan pendengar
  * tidak menyala lagi.
  *
@@ -59,10 +59,10 @@ const STUB = `
 
   // Pengendali yang dipanggil dari skenario.
   // alternatif: hipotesis tambahan dari pengenal suara (maxAlternatives), urutan terbaik dulu.
-  window.__ucapkan = (teks, final, alternatif) => {
+  window.__ucapkan = (teks, final, alternatif, yakin) => {
     const r = window.__rec;
     if (!r || !r.onresult) return false;
-    const daftar = [{ transcript: teks, confidence: 0.8 }].concat((alternatif || []).map((t) => ({ transcript: t, confidence: 0.4 })));
+    const daftar = [{ transcript: teks, confidence: yakin === undefined ? 0.8 : yakin }].concat((alternatif || []).map((t) => ({ transcript: t, confidence: 0.4 })));
     const item = Object.assign(daftar, { isFinal: final !== false });
     r.onresult({ resultIndex: 0, results: [item] });
     return true;
@@ -207,6 +207,54 @@ const SKENARIO = {
       'jawaban pertanyaan baru dibacakan': /15464900/.test(sesudahBatal),
       'sisa jawaban LAMA tidak pernah diucapkan': !/138|Stok kabel/.test(sesudahBatal),
       'berakhir siaga': (await s.state()) === 'siaga',
+    };
+  },
+
+  async 'konfirmasi-bila-ragu'(s) {
+    // Pengenal suara sendiri ragu (yakin 30%): MIRA membacakan ulang yang didengar dan menunggu "ya".
+    await s.aktifkan();
+    await s.ucapkan('MIRA berapa sales hari ini', true, [], 0.3);
+    await s.tungguState('sesi', 4000);
+    const log1 = await s.log();
+    await s.jedaManusia();
+    await s.ucapkan('nanti sore jadi rapat ya');              // obrolan saat menunggu: diabaikan
+    await tunggu(100);
+    const chatSetelahObrolan = jumlah(await s.log(), 'chat:');
+    await s.ucapkan('ya');
+    await s.tungguSelesai(1);
+    const log2 = await s.log();
+    return {
+      'belum menjawab, lebih dulu membaca ulang yang didengar': jumlah(log1, 'chat:') === 0 && log1.some((l) => /^bicara:Saya dengar/.test(l) && /sales hari ini/.test(l)),
+      'obrolan saat menunggu konfirmasi TIDAK terkirim': chatSetelahObrolan === 0,
+      '"ya" mengirim pertanyaan yang dikonfirmasi': log2.some((l) => l.startsWith('chat:berapa sales hari ini|')),
+    };
+  },
+
+  async 'konfirmasi-ditolak'(s) {
+    await s.aktifkan();
+    await s.ucapkan('MIRA berapa sales hari ini', true, [], 0.3);
+    await s.tungguState('sesi', 4000);
+    await s.jedaManusia();
+    await s.ucapkan('tidak');
+    await tunggu(150);
+    const log = await s.log();
+    // Sesudah dibatalkan, "ya" tanpa nama tak boleh menghidupkan pertanyaan lama.
+    await s.jedaManusia();
+    await s.ucapkan('ya');
+    await tunggu(150);
+    return {
+      '"tidak" membatalkan, tak ada pertanyaan terkirim': jumlah(log, 'chat:') === 0 && (await s.state()) === 'siaga',
+      '"ya" sesudah dibatalkan tidak menghidupkan pertanyaan lama': jumlah(await s.log(), 'chat:') === 0,
+    };
+  },
+
+  async 'yakin-tinggi-langsung-dijawab'(s) {
+    await s.aktifkan();
+    await s.ucapkan('MIRA berapa sales hari ini', true, [], 0.9);
+    await s.tungguSelesai(1);
+    const log = await s.log();
+    return {
+      'tanpa konfirmasi, langsung dijawab': log.some((l) => l.startsWith('chat:berapa sales hari ini|')) && !log.some((l) => /^bicara:Saya dengar/.test(l)),
     };
   },
 
@@ -527,7 +575,7 @@ async function jalankanSemua(daftar) {
       eval: ev,
       set: (kode) => ev(kode),
       aktifkan: async () => { await ev("document.getElementById('tombolUtama').click()", true); await tunggu(150); },
-      ucapkan: async (teks, final, alternatif) => { await ev(`window.__ucapkan(${JSON.stringify(teks)}, ${final === false ? 'false' : 'true'}, ${JSON.stringify(alternatif || [])})`); await tunggu(60); },
+      ucapkan: async (teks, final, alternatif, yakin) => { await ev(`window.__ucapkan(${JSON.stringify(teks)}, ${final === false ? 'false' : 'true'}, ${JSON.stringify(alternatif || [])}, ${yakin === undefined ? "undefined" : yakin})`); await tunggu(60); },
       log: async () => (await ev('window.__log')) || [],
       state: () => ev('document.body.dataset.state'),
       layar: () => ev("document.getElementById('log').innerText"),

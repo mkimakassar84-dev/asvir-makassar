@@ -311,13 +311,44 @@
   // hipotesis teratas sering salah di bagian yang justru menentukan — "Hai Nira" — sementara
   // hipotesis kedua atau ketiga benar. Kata panggil dicari di SEMUA hipotesis, dan pertanyaannya
   // diambil dari hipotesis yang memuat panggilan itu, karena itu satu kalimat utuh yang konsisten.
+  //
+  // Bila BEBERAPA hipotesis memuat panggilan, dipilih yang paling "terdengar seperti urusan kantor"
+  // (paling banyak kata bisnis dan kode barang): pengenal suara dilatih untuk bahasa sehari-hari,
+  // sehingga untuk "stok KSFO028" hipotesis kedua kadang lebih tepat daripada yang pertama. Hanya bila
+  // skornya LEBIH TINGGI; seri dimenangkan hipotesis teratas.
+  const KATA_BISNIS = /\b(?:sales|penjualan|omzet|revenue|pendapatan|invoice|faktur|piutang|tagihan|stok|stock|customer|pelanggan|retur|target|produk|barang|wilayah|zona|ekspedisi|kinerja|performa|tertinggi|terendah|terlaris|total|berapa|siapa)\b/gi;
+  function skorBisnis(teks) {
+    const t = String(teks || '');
+    const kata = new Set((t.match(KATA_BISNIS) || []).map((x) => x.toLowerCase()));
+    return kata.size + (/\b[a-z]{3,5}\s?\d{2,4}\b/i.test(t) ? 1 : 0);
+  }
   function ambilPanggilanDariAlternatif(daftar) {
     const semua = (Array.isArray(daftar) ? daftar : [daftar]).map((x) => String(x || '').trim()).filter(Boolean);
+    let terbaik = null;
     for (let i = 0; i < semua.length; i++) {
       const p = ambilPanggilan(semua[i]);
-      if (p.dipanggil) return { dipanggil: true, pertanyaan: p.pertanyaan, indeks: i };
+      if (!p.dipanggil) continue;
+      const skor = skorBisnis(p.pertanyaan);
+      if (!terbaik || skor > terbaik.skor) terbaik = { dipanggil: true, pertanyaan: p.pertanyaan, indeks: i, skor };
     }
+    if (terbaik) return { dipanggil: true, pertanyaan: terbaik.pertanyaan, indeks: terbaik.indeks };
     return { dipanggil: false, pertanyaan: semua[0] || '', indeks: 0 };
+  }
+
+  // Konfirmasi bila pengenal suara sendiri ragu. Tingkat yakin 0 berarti "tidak dilaporkan" (bukan
+  // "sangat ragu"), jadi tidak memicu apa pun. Pertanyaan satu kata dibiarkan: terlalu pendek untuk
+  // dibacakan ulang dengan berarti.
+  const AMBANG_YAKIN = 0.5;
+  function perluKonfirmasi(yakin, pertanyaan) {
+    return Number(yakin) > 0 && Number(yakin) < AMBANG_YAKIN && String(pertanyaan || '').trim().split(/\s+/).filter(Boolean).length >= 2;
+  }
+  function apakahYa(teks) {
+    const t = normalisasiUcapan(teks);
+    return !!t && t.split(' ').length <= 3 && /^(?:ya|iya|yap|yup|betul|benar|ok|oke|baik|siap|lanjut|boleh)(?: (?:betul|benar|ya|mira|lanjut|banget))*$/.test(t);
+  }
+  function apakahTidak(teks) {
+    const t = normalisasiUcapan(teks);
+    return !!t && t.split(' ').length <= 3 && /^(?:tidak|nggak|enggak|gak|bukan|salah|batal|jangan)(?: (?:ya|mira|itu|bukan|salah|betul|usah))*$/.test(t);
   }
 
   function normalisasiUcapan(teks) {
@@ -378,6 +409,16 @@
     [/\bpiutan\b/gi, 'piutang'],
     [/\b(?:se|ce)\s*ef\s*en\b/gi, 'CFN'],
     [/\bem\s*ka\s*i\b/gi, 'MKI'],
+    // Istilah kantor yang sering ditulis pengenal suara secara fonetis. Hanya ejaan yang hampir pasti
+    // salah; kata yang bisa sah di kalimat lain ("sale", "stock" aman karena backend mengenalinya) dibiarkan.
+    [/\b(?:kastemer|kostumer|kustomer|kastomer|kostemer)\b/gi, 'customer'],
+    [/\b(?:falkom|falkon|falcon|folkom)\b/gi, 'Falcom'],
+    [/\b(?:piutan|piutank|putang|biutang|piutam)\b/gi, 'piutang'],
+    [/\b(?:retor|returr|ritur)\b/gi, 'retur'],
+    [/\b(?:tarjet|targhet|tarjed)\b/gi, 'target'],
+    [/\b(?:inpois|in\s+voice|invoys)\b/gi, 'invoice'],
+    [/\b(?:omset)\b/gi, 'omzet'],
+    [/\b(?:ekspidisi|ekspedissi|ekspidissi)\b/gi, 'ekspedisi'],
   ];
   // awalanKode: himpunan awalan kode barang yang dikenal (di halaman: KNOWN_ACRONYMS). Tanpanya,
   // hanya CFN dan MKI yang dirapikan dari huruf-huruf terpisah.
@@ -831,6 +872,7 @@
   // -> "Ya, saya dengar."). Berlaku untuk SATU ucapan saja lalu padam, jadi obrolan yang menyusul
   // tidak ikut terkirim.
   let tanpaPanggilSekali = false;
+  let konfirmasi = null; // {teks, asli}: pertanyaan yang menunggu "ya"/"tidak"
   let pertanyaanTerakhir = '';
   let waktuPertanyaanTerakhir = 0;
   const riak = [];
@@ -880,6 +922,7 @@
   }
   function keSiaga(rinci) {
     tanpaPanggilSekali = false;
+    konfirmasi = null;
     clearTimeout(timerSesi);
     clearTimeout(penjagaBicara);
     if (!aktif) return;
@@ -1022,7 +1065,7 @@
       hentikanBicara();
       clearTimeout(penjagaBicara);
       setState('sesi', 'Menyela');
-      return sesiMenerima(p.pertanyaan);
+      return sesiMenerima(p.pertanyaan, yakin);
     }
 
     // Ekor suara MIRA sendiri yang baru selesai: diabaikan keras sebentar, lalu disaring lewat
@@ -1046,7 +1089,25 @@
         setState('berbicara', 'Memanggil');
         return bicaraLalu('Ya, saya dengar.', lanjutSesi, 20);
       }
-      return sesiMenerima(p.pertanyaan);
+      return sesiMenerima(p.pertanyaan, yakin);
+    }
+
+    // Menunggu jawaban "ya"/"tidak" atas konfirmasi: hanya jawaban pendek itu yang diterima tanpa
+    // nama; obrolan lain diabaikan, dan pertanyaan baru bernama MIRA menggantikan yang menunggu.
+    if (konfirmasi) {
+      const jawab = p.dipanggil ? p.pertanyaan : teks;
+      if (apakahYa(jawab)) {
+        const k = konfirmasi; konfirmasi = null;
+        catatDengar(alt, yakin, 'dikonfirmasi: ya', true);
+        return kirim(k.teks, k.asli);
+      }
+      if (apakahTidak(jawab)) {
+        konfirmasi = null;
+        catatDengar(alt, yakin, 'dikonfirmasi: tidak — dibatalkan');
+        return keSiaga('Dibatalkan — ulangi dengan “MIRA, …”');
+      }
+      if (!p.dipanggil) return catatDengar(alt, yakin, 'diabaikan: menunggu jawaban ya/tidak');
+      konfirmasi = null;
     }
 
     // state === 'sesi' (MIRA baru dipanggil sendirian, atau sedang menyela): nama tetap WAJIB,
@@ -1055,11 +1116,11 @@
       if (!tanpaPanggilSekali) { catatDengar(alt, yakin, 'diabaikan: tidak ada kata MIRA'); return tampilTerdengar(teks, true); }
       tanpaPanggilSekali = false;
       catatDengar(alt, yakin, 'diteruskan: satu ucapan tanpa nama sesudah dipanggil', true);
-      return sesiMenerima(teks);
+      return sesiMenerima(teks, yakin);
     }
     tanpaPanggilSekali = false;
     catatDengar(alt, yakin, 'diteruskan: "' + p.pertanyaan + '"', true);
-    sesiMenerima(p.pertanyaan);
+    sesiMenerima(p.pertanyaan, yakin);
   }
 
   // Jawaban MIRA kadang menyebut namanya, dan speaker PC masuk lagi ke mikrofon: tanpa penyaring
@@ -1073,7 +1134,7 @@
     return Date.now() - selesaiBicaraPada < 3500 && apakahGemaSuaraSendiri(pertanyaan, terakhirDibacakan);
   }
 
-  function sesiMenerima(kalimat) {
+  function sesiMenerima(kalimat, yakin) {
     // Istilah kantor yang salah ditulis pengenal suara dirapikan lebih dulu, SEBELUM pemeriksaan
     // apa pun: "k s f o nol dua delapan" harus sudah menjadi KSFO028 saat sampai ke backend.
     const k = rapikanUcapanDomain(String(kalimat || '').trim(), KNOWN_ACRONYMS);
@@ -1087,7 +1148,21 @@
     // baru — "kalau kemarin" lima menit setelah topik lain bukan lanjutan dari apa pun.
     const konteks = (Date.now() - waktuPertanyaanTerakhir < BATAS_KONTEKS_MS) ? pertanyaanTerakhir : '';
     const lengkap = lengkapiPertanyaanLanjutan(k, konteks);
+    // Pengenal suara sendiri ragu: bacakan ulang yang didengar dan minta "ya"/"tidak", daripada
+    // menjawab pertanyaan yang salah dengar.
+    if (perluKonfirmasi(yakin, lengkap.teks)) return mintaKonfirmasi(lengkap.teks, lengkap.dilengkapi ? k : '');
     kirim(lengkap.teks, lengkap.dilengkapi ? k : '');
+  }
+
+  function mintaKonfirmasi(teks, asli) {
+    konfirmasi = { teks, asli };
+    tambahLog('anda', escapeHtml(teks) + '<div class="catatan">pengenal suara kurang yakin — menunggu konfirmasi</div>');
+    setState('berbicara', 'Memastikan yang terdengar');
+    bicaraLalu('Saya dengar: ' + teks + '. Benar?', () => {
+      if (!konfirmasi) return;
+      setState('sesi', 'Jawab “ya” atau “tidak”');
+      mulaiTimerSesi(WAKTU_SESI);
+    }, teks.length + 20);
   }
 
   // Berbicara lalu memanggil `lanjut` — dengan penjaga waktu, karena onend dari speechSynthesis
@@ -1345,6 +1420,7 @@
   function matikan() {
     aktif = false;
     clearTimeout(timerRestart); clearTimeout(timerSesi); clearTimeout(penjagaState); clearTimeout(penjagaBicara); clearTimeout(timerTerdengar);
+    konfirmasi = null; alir = null;
     if (rec) { const r = rec; rec = null; r.onend = null; try { r.abort(); } catch { /* sudah berhenti */ } }
     hentikanBicara();
     pelepasMeter();

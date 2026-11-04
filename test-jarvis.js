@@ -21,7 +21,7 @@ const mulai = html.indexOf('// ==== JARVIS-LOGIKA-MULAI ====');
 const selesai = html.indexOf('// ==== JARVIS-LOGIKA-SELESAI ====');
 if (mulai < 0 || selesai < 0) { console.error('Penanda logika tidak ditemukan di jarvis.html.'); process.exit(1); }
 const L = new Function(`${html.slice(mulai, selesai)}
-  return { ambilPanggilan, ambilPanggilanDariAlternatif, rapikanUcapanDomain, lengkapiPertanyaanLanjutan, nilaiLevelMikrofon, apakahAkhiriSesi, apakahPerintahDiam, apakahGemaSuaraSendiri, ringkasUntukDibacakan, rencanaBicara, markdownKeHtml, escapeHtml };`)();
+  return { ambilPanggilan, ambilPanggilanDariAlternatif, perluKonfirmasi, apakahYa, apakahTidak, rapikanUcapanDomain, lengkapiPertanyaanLanjutan, nilaiLevelMikrofon, apakahAkhiriSesi, apakahPerintahDiam, apakahGemaSuaraSendiri, ringkasUntukDibacakan, rencanaBicara, markdownKeHtml, escapeHtml };`)();
 
 let lulus = 0;
 let gagal = 0;
@@ -343,6 +343,41 @@ t('pertanyaan yang sudah punya topik sendiri TIDAK dilengkapi', () => {
 t('waktu tidak ditempelkan ke topik yang tak bermakna menurut waktu (stok)', () => {
   const r = lanj('kalau kemarin', 'stok KSFO028');
   return !r.dilengkapi && r.teks === 'kalau kemarin' ? null : JSON.stringify(r);
+});
+
+grup('Salah dengar: memilih hipotesis terbaik, koreksi istilah, konfirmasi');
+t('beberapa hipotesis memuat panggilan: dipilih yang paling berbau urusan kantor', () => {
+  const r = L.ambilPanggilanDariAlternatif(['mira stop kabel satu kor', 'mira stok KSFO028 berapa', 'mira tolong kabel']);
+  return r.indeks === 1 && /KSFO028/.test(r.pertanyaan) ? null : JSON.stringify(r);
+});
+t('skor seri: hipotesis teratas menang', () => {
+  const r = L.ambilPanggilanDariAlternatif(['mira target hari ini', 'mira target bulan ini']);
+  return r.indeks === 0 ? null : JSON.stringify(r);
+});
+t('koreksi istilah fonetis: kastemer, falkom, piutan, tarjet, retor', () => {
+  const kasus = { 'kastemer baru bulan ini': 'customer baru bulan ini', 'katalog falkom': 'katalog Falcom', 'piutan cfn': 'piutang cfn', 'tarjet hari ini': 'target hari ini', 'retor bulan ini': 'retur bulan ini' };
+  for (const [dari, harus] of Object.entries(kasus)) {
+    const r = L.rapikanUcapanDomain(dari, new Set());
+    if (r !== harus) return '"' + dari + '" -> "' + r + '"';
+  }
+  return null;
+});
+t('kata yang sah tidak dirusak oleh koreksi istilah', () => {
+  const k = 'berapa sales target customer retur piutang hari ini';
+  return L.rapikanUcapanDomain(k, new Set()) === k ? null : L.rapikanUcapanDomain(k, new Set());
+});
+t('konfirmasi hanya bila pengenal suara ragu DAN pertanyaan cukup panjang', () => {
+  const hasil = [L.perluKonfirmasi(0.3, 'berapa sales hari ini'), L.perluKonfirmasi(0.9, 'berapa sales hari ini'), L.perluKonfirmasi(0, 'berapa sales hari ini'), L.perluKonfirmasi(0.3, 'stok')].join('|');
+  return hasil === 'true|false|false|false' ? null : hasil;
+});
+t('"ya" dan "tidak" dikenali, kalimat lain tidak', () => {
+  const ya = ['ya', 'iya', 'Betul', 'benar mira', 'oke lanjut', 'ya betul'];
+  const tidak = ['tidak', 'bukan', 'salah', 'nggak', 'batal'];
+  const lain = ['ya sudah nanti sore kita rapat', 'tidak usah dulu kita makan siang', 'berapa sales hari ini', ''];
+  for (const x of ya) if (!L.apakahYa(x) || L.apakahTidak(x)) return 'ya salah: ' + x;
+  for (const x of tidak) if (!L.apakahTidak(x) || L.apakahYa(x)) return 'tidak salah: ' + x;
+  for (const x of lain) if (L.apakahYa(x) || L.apakahTidak(x)) return 'obrolan dianggap jawaban: ' + x;
+  return null;
 });
 
 grup('Alat ukur suara masuk');

@@ -112,6 +112,11 @@ tetap dibuang, dan angka tak pernah dibacakan separuh. Yang sudah terlanjur diuc
 diterima. Disela di tengah aliran: sisa jawaban hanya tampil di layar. Mode "bacakan selengkapnya" tetap
 menunggu jawaban utuh.
 
+Mengurangi salah dengar:
+- Bila beberapa hipotesis pengenal suara memuat nama MIRA, dipilih yang paling berbau urusan kantor (kata bisnis, kode barang); seri dimenangkan hipotesis teratas.
+- Ejaan fonetis istilah kantor dikoreksi (kastemer, falkom, piutan, tarjet, retor, dst).
+- Bila pengenal suara sendiri ragu (tingkat yakin di bawah 50%), MIRA membacakan ulang "Saya dengar: …. Benar?" dan menunggu "ya"/"tidak" sebelum menjawab. Tingkat yakin tak dilaporkan (0) tidak memicu ini. Obrolan saat menunggu diabaikan.
+
 Riwayat pendengaran (panel kanan bawah): semua yang tertangkap mikrofon beserta hipotesis lain, tingkat
 yakin, dan alasan diteruskan/diabaikan, dengan tombol Salin. Dipakai untuk menelusuri salah dengar nyata.
 
@@ -207,6 +212,6 @@ Mode Jarvis punya penjaga sendiri:
 
 ```bash
 node test-jarvis.js        # logika: "Hei MIRA" + hipotesis ganda, perapian istilah, konteks lanjutan, gema, ringkasan, keamanan HTML
-node test-jarvis-e2e.js    # Chrome sungguhan + pengenal suara tiruan, 18 skenario (butuh Chrome)
+node test-jarvis-e2e.js    # Chrome sungguhan + pengenal suara tiruan, 21 skenario (butuh Chrome)
 node sinkron-tts-jarvis.js # bila aturan pengucapan di index.html berubah, salin ke jarvis.html
 ```
